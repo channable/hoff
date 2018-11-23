@@ -28,6 +28,7 @@ import qualified Data.Text.Format as Text
 import Git (Branch (..), Sha (..))
 import Project (ProjectInfo, ProjectState, Push (..))
 
+import qualified Git
 import qualified Project
 
 -- Conversion function because of Haskell string type madness. This is just
@@ -125,12 +126,13 @@ viewProjectQueues info state = do
 
 -- Renders the contents of a list item with a link to the commit log.
 viewPush :: ProjectInfo -> Push -> Html
-viewPush info (Push (Sha sha) (Branch ref) commitTitle author) =
+viewPush info (Push (Sha sha) ref commitTitle author) =
   let
+    Branch unqualifiedRef = Git.unqualify ref
     url = format "https://github.com/{}/{}/commits/{}"
       (Project.owner info, Project.repository info, sha)
   in do
-    a ! href (toValue url) $ toHtml $ Text.concat [sha, " ", ref, " ", commitTitle]
+    a ! href (toValue url) $ toHtml $ Text.concat [sha, " ", unqualifiedRef, " ", commitTitle]
     span ! class_ "review" $ toHtml $ Text.append "Authored by " author
 
 -- Render all pull requests in the list with the given view function.

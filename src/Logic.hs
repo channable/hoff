@@ -38,6 +38,7 @@ import Control.Monad.STM (atomically)
 import Data.Text (Text)
 import Data.Text.Format.Params (Params)
 import Data.Text.Lazy (toStrict)
+import System.FilePath ((</>))
 
 import qualified Data.Text.Format as Text
 
@@ -75,12 +76,25 @@ runAction config action =
     continueWith = runAction config
   in case action of
     Pure result -> pure result
-    Free (StartBuild branch _sha cont) -> do
+    Free (StartBuild branch sha cont) -> do
       ensureCloned config
-      Git.fetchBranch branch
-      -- TODO: Create a second checkout.
-      -- TODO: Create the log file.
-      -- TODO: Start the build supervisor.
+      let Sha textSha = sha
+      -- Fetch both the exact commit, and the branch, so we have a label
+      -- pointing to the branch. There is an opportunity for a race here, when
+      -- there are multiple pushes to that branch. TODO: create it locally
+      -- instead.
+      Git.fetchBranch (Branch textSha)
+      -- Name the build directory after the commit: the commit is unique, so if
+      -- we can do builds for different commits in parallel.
+      -- TODO: Clean them up at some point. This is where DeleteBuildDirectory
+      -- would come in.
+      let buildDir = (Config.buildDir config) </> (show sha)
+      result <- Git.cloneLocal sha branch buildDir
+      case result of
+        Git.CloneFailed -> pure () -- TODO: Handle errors.
+        Git.CloneOk -> do
+          -- TODO: Start the build script.
+          pure ()
       continueWith cont
     Free (DeleteBuildDirectory _sha cont) -> do
       -- TODO: Actually clean up the build dir.

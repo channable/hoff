@@ -9,6 +9,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Git
 (
@@ -20,6 +21,7 @@ module Git
   Sha (..),
   callGit,
   clone,
+  cloneLocal,
   doesGitDirectoryExist,
   fetchBranch,
   forcePush,
@@ -28,6 +30,7 @@ module Git
   rebase,
   runGit,
   tryIntegrate,
+  unqualify,
 )
 where
 
@@ -116,10 +119,18 @@ data GitOperationFree a
   | Push Sha Branch (PushResult -> a)
   | Rebase Sha Branch (Maybe Sha -> a)
   | Clone RemoteUrl (CloneResult -> a)
+  | CloneLocal Sha Branch FilePath (CloneResult -> a)
   | DoesGitDirectoryExist (Bool -> a)
   deriving (Functor)
 
 type GitOperation = Free GitOperationFree
+
+-- Strip the refs/heads/ or refs/tags/ prefix.
+unqualify :: Branch -> Branch
+unqualify (Branch refname) = case refname of
+  (Text.stripPrefix "refs/heads/" -> Just suff) -> Branch suff
+  (Text.stripPrefix "refs/tags/" -> Just suff) -> Branch suff
+  _ -> Branch refname
 
 fetchBranch :: Branch -> GitOperation ()
 fetchBranch remoteBranch = liftF $ FetchBranch remoteBranch ()
@@ -138,6 +149,9 @@ rebase sha ontoBranch = liftF $ Rebase sha ontoBranch id
 
 clone :: RemoteUrl -> GitOperation CloneResult
 clone url = liftF $ Clone url id
+
+cloneLocal :: Sha -> Branch -> FilePath -> GitOperation CloneResult
+cloneLocal targetHead targetBranch targetDir = liftF $ CloneLocal targetHead targetBranch targetDir id
 
 doesGitDirectoryExist :: GitOperation Bool
 doesGitDirectoryExist = liftF $ DoesGitDirectoryExist id
@@ -277,6 +291,32 @@ runGit userConfig repoDir operation =
         Right _ -> do
           logInfoN $ format "cloned {} succesfully" [show url]
           continueWith (cont CloneOk)
+
+    Free (CloneLocal sha branch targetPath cont) -> do
+      result <- callGit userConfig
+        -- Clone with --local and --reference to make the clone share its Git
+        -- objects with the original repository. This makes the checkout use
+        -- very little additional space. Check out the desired commit afterwards.
+        ["clone" , "--local", "--reference", repoDir, "--", repoDir, targetPath]
+      case result of
+        Left (code, message) -> do
+          logWarnN $ format "git clone failed with code {}: {}" (show code, message)
+          continueWith (cont CloneFailed)
+        Right _ -> do
+          refResult <- callGit userConfig ["-C", targetPath, "update-ref", show branch, show sha]
+          case refResult of
+            Left (code, message) -> do
+              logWarnN $ format "git update-ref failed with code {}: {}" (show code, message)
+              continueWith (cont CloneFailed)
+            Right _ -> do
+              checkoutResult <- callGit userConfig ["-C", targetPath, "checkout", show $ unqualify branch]
+              case checkoutResult of
+                Left (code, message) -> do
+                  logWarnN $ format "git checkout failed with code {}: {}" (show code, message)
+                  continueWith (cont CloneFailed)
+                Right _ -> do
+                  logInfoN $ format "local checkout {} created succesfully" [targetPath]
+                  continueWith (cont CloneOk)
 
     Free (DoesGitDirectoryExist cont) -> do
       exists <- liftIO $ doesDirectoryExist (repoDir </> ".git")
