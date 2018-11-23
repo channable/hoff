@@ -137,7 +137,7 @@ viewPush info (Push (Sha sha) ref message author) status =
       Project.Failed -> "build failed"
   in
     p ! class_  statusClass $ do
-      a ! href (toValue logsUrl) $ toHtml $ commitSummary message
+      a ! href (toValue logsUrl) ! class_ statusClass$ toHtml $ commitSummary message
       span ! class_ "detail" $ do
         a ! href (toValue branchUrl) $ toHtml unqualifiedRef
         " · "

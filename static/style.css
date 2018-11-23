@@ -19,8 +19,8 @@
    #313638 (Onyx -- currently not used)
 
    #56656d (Black coral -- body text)
-   #2679b4 (Steel blue -- Pending builds)
-   #a1b526 (Citron -- for passed builds)
+   #2682b5 (Steel blue -- Pending builds)
+   #78a021 (Citron -- for passed builds)
    #b52626 (Firebrick -- for failed builds)
 
    #8c8e81 (Dolphin gray -- light text accent)
@@ -115,6 +115,6 @@ p.build::before
 }
 
 p.build.pending::before { color: #56656d; }
-p.build.started::before { color: #2679b4; }
-p.build.succeeded::before { color: #a1b526; }
-p.build.failed::before { color: #b52626; }
+p.build.started::before, a.build.started { color: #2682b5; }
+p.build.succeeded::before, a.build.succeeded { color: #78a021; }
+p.build.failed::before, a.build.failed { color: #b52626; }
