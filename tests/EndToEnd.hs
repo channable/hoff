@@ -6,7 +6,6 @@
 -- A copy of the License has been included in the root of the repository.
 
 import Test.Hspec (hspec)
-import EventLoopSpec (eventLoopSpec)
 import ServerSpec (serverSpec)
 
 -- This test suite tests interaction of the system with the outside world, as
@@ -18,5 +17,4 @@ import ServerSpec (serverSpec)
 
 main :: IO ()
 main = hspec $ do
-  eventLoopSpec
   serverSpec

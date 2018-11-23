@@ -25,9 +25,9 @@ import qualified Data.UUID.V4 as Uuid
 import Configuration (ProjectConfiguration)
 import EventLoop (convertGithubEvent)
 import Git (Branch (..), PushResult(..), Sha (..))
-import Github (CommentPayload, CommitStatusPayload, PullRequestPayload)
+import Github (CommitStatusPayload, PushPayload)
 import Logic hiding (runAction)
-import Project (ProjectState (ProjectState), PullRequest (PullRequest), PullRequestId (PullRequestId))
+import Project (ProjectState (ProjectState))
 
 import qualified Configuration as Config
 import qualified Github
