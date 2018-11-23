@@ -49,20 +49,22 @@ eventFromCommitStatusPayload payload =
   in
     Logic.BuildStatusChanged sha (mapCommitStatus status)
 
-eventFromPushPayload :: PushPayload -> Logic.Event
-eventFromPushPayload payload =
-  let
-    branch = Github.branch (payload :: PushPayload)
-    sha    = Github.sha    (payload :: PushPayload)
-    title  = Github.title  (payload :: PushPayload)
-    author = Github.author (payload :: PushPayload)
-  in
-    Logic.Pushed $ Project.Push sha branch title author
+eventFromPushPayload :: PushPayload -> Maybe Logic.Event
+eventFromPushPayload payload = case Github.commits payload of
+  [] -> Nothing
+  commit : _ ->
+    let
+      branch  = Github.branch (payload :: PushPayload)
+      sha     = Github.sha    (payload :: PushPayload)
+      message = Github.message commit
+      author  = Github.authorName commit
+    in
+      Just $ Logic.Pushed $ Project.Push sha branch message author
 
 convertGithubEvent :: Github.WebhookEvent -> Maybe Logic.Event
 convertGithubEvent event = case event of
   Ping                 -> Nothing
-  Push payload         -> Just $ eventFromPushPayload payload
+  Push payload         -> eventFromPushPayload payload
   CommitStatus payload -> Just $ eventFromCommitStatusPayload payload
 
 -- The event loop that converts GitHub webhook events into logic events.

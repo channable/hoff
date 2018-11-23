@@ -170,7 +170,7 @@ proceed state = case Project.pushesPending state of
   -- No pending pushes, nothing to build.
   [] -> pure state
 
-  (Push sha branch _title _author) : _ -> do
+  (Push sha branch _message _author) : _ -> do
     startBuild branch sha
     pure $ Project.setBuildStatus sha Started state
 

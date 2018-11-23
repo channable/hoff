@@ -10,7 +10,7 @@
 
 module WebInterface (renderPage, viewIndex, viewProject) where
 
-import Control.Monad (forM_, unless, void)
+import Control.Monad (forM_, void)
 import Data.FileEmbed (embedStringFile)
 import Data.Text (Text)
 import Data.Text.Format.Params (Params)
@@ -22,11 +22,12 @@ import Text.Blaze.Html5 (Html, a, body, div, docTypeHtml, h1, h2, head, meta, p,
 import Text.Blaze.Html5.Attributes (class_, charset, content, href, id, name)
 
 import qualified Data.ByteString.Lazy as LazyByteString
+import qualified Data.List as List
 import qualified Data.Text as Text
 import qualified Data.Text.Format as Text
 
 import Git (Branch (..), Sha (..))
-import Project (ProjectInfo, ProjectState, Push (..))
+import Project (BuildStatus, ProjectInfo, ProjectState, Push (..))
 
 import qualified Git
 import qualified Project
@@ -73,11 +74,11 @@ viewIndex :: [ProjectInfo] -> Html
 viewIndex infos =
   let
   in do
-    h1 "Hoff"
+    h1 "Bob"
     h2 "About"
     p $ do
-      void "Hoff is a gatekeeper for your commits. See "
-      a ! href "https://github.com/ruuda/hoff" $ "github.com/ruuda/hoff"
+      void "Bob the build server. See "
+      a ! href "https://github.com/channable/hoff" $ "github.com/channable/hoff"
       void " for more information."
     h2 "Tracked repositories"
     mapM_ viewProjectInfo infos
@@ -88,11 +89,10 @@ viewProject info state =
   let
     owner = Project.owner info
     repo  = Project.repository info
-    ownerUrl = format "https://github.com/{}" [owner]
     repoUrl  = format "https://github.com/{}/{}" (owner, repo)
   in do
     h1 $ do
-      a ! href (toValue ownerUrl) $ toHtml owner
+      a ! href "/" $ toHtml ("bob" :: Text)
       void "\x2009/\x2009" -- U+2009 is a thin space.
       a ! href (toValue repoUrl) $ toHtml repo
 
@@ -102,44 +102,52 @@ viewProject info state =
 viewProjectQueues :: ProjectInfo -> ProjectState -> Html
 viewProjectQueues info state = do
   let
-    building = Project.pushesStarted state
-    pending = Project.pushesPending state
-    succeeded = Project.pushesSucceeded state
-    failed = Project.pushesFailed state
+    pushes = Project.pushesWithStatus state
 
-  h2 "Building"
-  if null building
-    then p "There are no builds in progress at the moment."
-    else viewList viewPush info building
+  h2 "Builds"
+  if null pushes
+    then p "There are no builds yet."
+    else viewList viewPush info pushes
 
-  unless (null pending) $ do
-    h2 "Pending"
-    viewList viewPush info pending
-
-  unless (null succeeded) $ do
-    h2 "Succeeded"
-    viewList viewPush info succeeded
-
-  unless (null failed) $ do
-    h2 "Failed"
-    viewList viewPush info failed
+-- Extract the summary line of a commit, possibly truncated to 52 characters.
+commitSummary :: Text -> Text
+commitSummary message =
+  let
+    summaryLine = List.head $ Text.lines message
+  in
+    if Text.length summaryLine <= 52
+      then summaryLine
+      else Text.append (Text.take 52 summaryLine) "…"
 
 -- Renders the contents of a list item with a link to the commit log.
-viewPush :: ProjectInfo -> Push -> Html
-viewPush info (Push (Sha sha) ref commitTitle author) =
+viewPush :: ProjectInfo -> Push -> BuildStatus -> Html
+viewPush info (Push (Sha sha) ref message author) status =
   let
     Branch unqualifiedRef = Git.unqualify ref
-    url = format "https://github.com/{}/{}/commits/{}"
+    commitUrl = format "https://github.com/{}/{}/commits/{}"
       (Project.owner info, Project.repository info, sha)
-  in do
-    a ! href (toValue url) $ toHtml commitTitle
-    span ! class_ "review" $ toHtml $ Text.concat [unqualifiedRef, " · ", Text.take 12 sha]
-    span ! class_ "review" $ toHtml $ Text.append "Authored by " author
+    branchUrl = format "https://github.com/{}/{}/tree/{}"
+      (Project.owner info, Project.repository info, unqualifiedRef)
+    logsUrl = format "/{}/{}/{}"
+      (Project.owner info, Project.repository info, sha)
+    statusClass = case status of
+      Project.Pending -> "build pending"
+      Project.Started -> "build started"
+      Project.Succeeded -> "build succeeded"
+      Project.Failed -> "build failed"
+  in
+    p ! class_  statusClass $ do
+      a ! href (toValue logsUrl) $ toHtml $ commitSummary message
+      span ! class_ "detail" $ do
+        a ! href (toValue branchUrl) $ toHtml unqualifiedRef
+        " · "
+        a ! href (toValue commitUrl) $ toHtml $ Text.take 12 sha
+      span ! class_ "detail" $ toHtml $ Text.append "Authored by " author
 
 -- Render all pull requests in the list with the given view function.
 viewList
-  :: (ProjectInfo -> Push -> Html)
+  :: (ProjectInfo -> Push -> BuildStatus -> Html)
   -> ProjectInfo
-  -> [Push]
+  -> [(Push, BuildStatus)]
   -> Html
-viewList view info pushes = forM_ pushes (p . view info)
+viewList view info pushes = forM_ pushes (uncurry $ view info)

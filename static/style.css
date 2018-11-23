@@ -18,6 +18,11 @@
    #43494c (Outer space -- body text) // Unused
    #313638 (Onyx -- currently not used)
 
+   #56656d (Black coral -- body text)
+   #2679b4 (Steel blue -- Pending builds)
+   #a1b526 (Citron -- for passed builds)
+   #b52626 (Firebrick -- for failed builds)
+
    #8c8e81 (Dolphin gray -- light text accent)
 */
 
@@ -80,18 +85,36 @@ h2
   padding-bottom: 0.4rem;
 }
 
-p
-{
-  clear: both;
-}
-
-span.review
+span.detail
 {
   color: #adaca4;
   display: block;
 }
 
-span.review a
+span.detail a
 {
   color: #8c8e81;
 }
+
+span.detail a:hover
+{
+  text-decoration: underline;
+}
+
+p.build
+{
+  margin-bottom: 1em;
+}
+
+p.build::before
+{
+  content: '●';
+  display: inline-block;
+  width: 1em;
+  margin-left: -1em;
+}
+
+p.build.pending::before { color: #56656d; }
+p.build.started::before { color: #2679b4; }
+p.build.succeeded::before { color: #a1b526; }
+p.build.failed::before { color: #b52626; }

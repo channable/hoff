@@ -21,6 +21,7 @@ module Project
   pushesPending,
   pushesStarted,
   pushesSucceeded,
+  pushesWithStatus,
   saveProjectState,
   setBuildStatus,
 )
@@ -50,13 +51,13 @@ data BuildStatus
 data Push = Push
   {
     -- The new HEAD of the branch.
-    pushSha    :: Sha,
+    pushSha     :: Sha,
     -- The ref pushed to, e.g. "refs/heads/master".
-    pushRef    :: Branch,
-    -- Summary line of the head commit.
-    pushTitle  :: Text,
+    pushRef     :: Branch,
+    -- Commit message of the head commit.
+    pushMessage :: Text,
     -- Author of the head commit.
-    pushAuthor :: Text
+    pushAuthor  :: Text
   }
   deriving (Eq, Generic, Show)
 

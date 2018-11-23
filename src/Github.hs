@@ -12,6 +12,7 @@ module Github
 (
   CommitStatus (..),
   CommitStatusPayload (..),
+  Commit (..),
   EventQueue,
   PushPayload (..),
   WebhookEvent (..),
@@ -37,12 +38,18 @@ data CommitStatus
   deriving (Eq, Show)
 
 data PushPayload = PushPayload {
-  owner      :: Text,   -- Corresponds to "repository.name".
-  repository :: Text,   -- Corresponds to "repository.owner.name".
-  branch     :: Branch, -- Corresponds to "ref".
-  sha        :: Sha,    -- Corresponds to "after".
-  title      :: Text,   -- Corresponds to "commits[0].message".
-  author     :: Text    -- Corresponds to "commits[0].author.name".
+  owner      :: Text,    -- Corresponds to "repository.name".
+  repository :: Text,    -- Corresponds to "repository.owner.name".
+  branch     :: Branch,  -- Corresponds to "ref".
+  sha        :: Sha,     -- Corresponds to "after".
+  commits    :: [Commit] -- Corresponds to "commits".
+} deriving (Eq, Show)
+
+data Commit = Commit {
+  sha         :: Sha,
+  message     :: Text,
+  authorName  :: Text,
+  authorEmail :: Text
 } deriving (Eq, Show)
 
 data CommitStatusPayload = CommitStatusPayload {
@@ -76,9 +83,16 @@ instance FromJSON PushPayload where
     <*> getNested v ["repository", "name"]
     <*> (v .: "ref")
     <*> (v .: "after")
-    <*> pure "TODO: Title"
-    <*> pure "TODO: Author"
+    <*> (v .: "commits")
   parseJSON nonObject = typeMismatch "push payload" nonObject
+
+instance FromJSON Commit where
+  parseJSON (Object v) = Commit
+    <$> (v .: "id")
+    <*> (v .: "message")
+    <*> getNested v ["author", "name"]
+    <*> getNested v ["author", "email"]
+  parseJSON nonObject = typeMismatch "commit" nonObject
 
 instance FromJSON CommitStatusPayload where
   parseJSON (Object v) = CommitStatusPayload
