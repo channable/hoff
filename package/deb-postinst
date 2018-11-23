@@ -14,7 +14,7 @@ case "$1" in
     # of the example), tell the user to do so.
     # TODO: Update that hash, and automate computing it.
     if sha256sum /etc/hoff.json | grep -q "^8e38e15f2eadc4c6f09669d0ba40a"; then
-        echo "You should now edit /etc/hoff.json."
+        echo "You should now edit /etc/hoff/config.json."
     fi
 
   ;;
