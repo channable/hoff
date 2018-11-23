@@ -96,7 +96,7 @@ runAction config action =
         Git.CloneFailed -> continueWith cont -- TODO: Handle errors.
         Git.CloneOk -> do
           -- TODO: Move to different free monad.
-          Git.runBuild (Config.owner config) (Config.repository config) logFile sha buildDir
+          Git.runBuild (Config.owner config) (Config.repository config) logFile sha buildDir (Config.builder config)
           continueWith cont
     Free (DeleteBuildDirectory _sha cont) -> do
       -- TODO: Actually clean up the build dir.

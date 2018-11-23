@@ -4,7 +4,8 @@
     "repository": "your-repo",
     "checkout": "/home/git/checkouts/your-username/your-repo",
     "buildDir": "/var/cache/build/your-repo",
-    "stateFile": "/home/git/state/your-username/your-repo.json"
+    "stateFile": "/home/git/state/your-username/your-repo.json",
+    "builder": "/path/to/your/run_build.py"
   }],
   "secret": "run 'head --bytes 32 /dev/urandom | base64' and paste output here",
   "port": 443,
@@ -13,5 +14,5 @@
     "name": "CI Bot",
     "email": "cibot@example.com",
     "sshConfigFile": "/home/git/.ssh/config"
-  }
+  },
 }

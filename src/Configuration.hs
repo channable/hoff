@@ -29,7 +29,11 @@ data ProjectConfiguration = ProjectConfiguration
     repository :: Text,     -- The name of the repository.
     checkout   :: FilePath, -- The path to a local checkout of the repository.
     buildDir   :: FilePath, -- The directory in which to create build subdirs.
-    stateFile  :: FilePath  -- The file where project state is stored.
+    stateFile  :: FilePath, -- The file where project state is stored.
+
+    -- The build agent binary. Should really be a global option, but this is a
+    -- hackathon, so meh.
+    builder :: FilePath
   }
   deriving (Generic)
 
