@@ -132,7 +132,8 @@ viewPush info (Push (Sha sha) ref commitTitle author) =
     url = format "https://github.com/{}/{}/commits/{}"
       (Project.owner info, Project.repository info, sha)
   in do
-    a ! href (toValue url) $ toHtml $ Text.concat [sha, " ", unqualifiedRef, " ", commitTitle]
+    a ! href (toValue url) $ toHtml commitTitle
+    span ! class_ "review" $ toHtml $ Text.concat [unqualifiedRef, " · ", Text.take 12 sha]
     span ! class_ "review" $ toHtml $ Text.append "Authored by " author
 
 -- Render all pull requests in the list with the given view function.
