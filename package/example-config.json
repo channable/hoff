@@ -3,6 +3,7 @@
     "owner": "your-github-username-or-organization",
     "repository": "your-repo",
     "checkout": "/home/git/checkouts/your-username/your-repo",
+    "buildDir": "/var/cache/build/your-repo",
     "stateFile": "/home/git/state/your-username/your-repo.json"
   }],
   "secret": "run 'head --bytes 32 /dev/urandom | base64' and paste output here",

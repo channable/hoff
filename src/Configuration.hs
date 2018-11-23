@@ -28,6 +28,7 @@ data ProjectConfiguration = ProjectConfiguration
     owner      :: Text,     -- The GitHub user or organization who owns the repo.
     repository :: Text,     -- The name of the repository.
     checkout   :: FilePath, -- The path to a local checkout of the repository.
+    buildDir   :: FilePath, -- The directory in which to create build subdirs.
     stateFile  :: FilePath  -- The file where project state is stored.
   }
   deriving (Generic)
