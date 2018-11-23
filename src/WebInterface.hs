@@ -25,7 +25,8 @@ import qualified Data.ByteString.Lazy as LazyByteString
 import qualified Data.Text as Text
 import qualified Data.Text.Format as Text
 
-import Project (ProjectInfo, ProjectState, PullRequest, PullRequestId (..))
+import Git (Branch (..), Sha (..))
+import Project (ProjectInfo, ProjectState, Push (..))
 
 import qualified Project
 
@@ -100,73 +101,42 @@ viewProject info state =
 viewProjectQueues :: ProjectInfo -> ProjectState -> Html
 viewProjectQueues info state = do
   let
-    pullRequests = Project.classifyPullRequests state
-    filterPrs predicate = fmap fst $ filter (predicate . snd) pullRequests
+    building = Project.pushesStarted state
+    pending = Project.pushesPending state
+    succeeded = Project.pushesSucceeded state
+    failed = Project.pushesFailed state
 
-  let building = filterPrs (== Project.PrStatusBuildPending)
   h2 "Building"
   if null building
     then p "There are no builds in progress at the moment."
-    else viewList viewPullRequestWithApproval info state building
+    else viewList viewPush info building
 
-  let approved = filterPrs (== Project.PrStatusApproved)
-  unless (null approved) $ do
-    h2 "Approved"
-    viewList viewPullRequestWithApproval info state approved
+  unless (null pending) $ do
+    h2 "Pending"
+    viewList viewPush info pending
 
-  let awaitingApproval = filterPrs (== Project.PrStatusAwaitingApproval)
-  unless (null awaitingApproval) $ do
-    h2 "Awaiting approval"
-    viewList viewPullRequest info state awaitingApproval
+  unless (null succeeded) $ do
+    h2 "Succeeded"
+    viewList viewPush info succeeded
 
-  let failed = filterPrs $ \ st ->
-        (st == Project.PrStatusFailedConflict) || (st == Project.PrStatusFailedBuild)
   unless (null failed) $ do
     h2 "Failed"
-    -- TODO: Also render failure reason: conflicted or build failed.
-    viewList viewPullRequestWithApproval info state failed
+    viewList viewPush info failed
 
-  -- TODO: Keep a list of the last n integrated pull requests, so they stay
-  -- around for a bit after they have been closed.
-  let integrated = filterPrs (== Project.PrStatusIntegrated)
-  unless (null integrated) $ do
-    h2 "Recently integrated"
-    viewList viewPullRequestWithApproval info state integrated
-
--- Renders the contents of a list item with a link for a pull request.
-viewPullRequest :: ProjectInfo -> PullRequestId -> PullRequest -> Html
-viewPullRequest info (PullRequestId n) pullRequest =
+-- Renders the contents of a list item with a link to the commit log.
+viewPush :: ProjectInfo -> Push -> Html
+viewPush info (Push (Sha sha) (Branch ref) commitTitle author) =
   let
-    url = format "https://github.com/{}/{}/pull/{}"
-      (Project.owner info, Project.repository info, n)
-  in
-    a ! href (toValue url) $ toHtml $ Project.title pullRequest
-
-viewPullRequestWithApproval :: ProjectInfo -> PullRequestId -> PullRequest -> Html
-viewPullRequestWithApproval info prId pullRequest = do
-  viewPullRequest info prId pullRequest
-  case Project.approvedBy pullRequest of
-    Just username ->
-      span ! class_ "review" $ do
-        void "Approved by "
-        -- TODO: Link to approval comment, not just username.
-        let url = Text.append "https://github.com/" username
-        a ! href (toValue url) $ toHtml username
-    Nothing ->
-      fail $
-        "Tried to render approval link for pull request " ++ (show prId) ++
-        " which was not approved. This is a programming error."
+    url = format "https://github.com/{}/{}/commits/{}"
+      (Project.owner info, Project.repository info, sha)
+  in do
+    a ! href (toValue url) $ toHtml $ Text.concat [sha, " ", ref, " ", commitTitle]
+    span ! class_ "review" $ toHtml $ Text.append "Authored by " author
 
 -- Render all pull requests in the list with the given view function.
--- TODO: Use a safer abstraction, than a list of IDs for which it is not clear
--- from the types that lookup will not fail.
-viewList :: (ProjectInfo -> PullRequestId -> PullRequest -> Html)
-         -> ProjectInfo
-         -> ProjectState
-         -> [PullRequestId]
-         -> Html
-viewList view info state prIds = forM_ prIds $ \ prId ->
-  let
-    Just pr = Project.lookupPullRequest prId state
-  in
-    p $ view info prId pr
+viewList
+  :: (ProjectInfo -> Push -> Html)
+  -> ProjectInfo
+  -> [Push]
+  -> Html
+viewList view info pushes = forM_ pushes (p . view info)

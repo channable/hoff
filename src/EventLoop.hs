@@ -23,9 +23,9 @@ import Control.Monad.Logger (MonadLogger, logDebugN, logInfoN)
 import Control.Monad.STM (atomically)
 
 import Configuration (ProjectConfiguration, UserConfiguration)
-import Github (PullRequestPayload, CommentPayload, CommitStatusPayload, WebhookEvent (..))
+import Github (PushPayload, CommitStatusPayload, WebhookEvent (..))
 import Github (eventProjectInfo)
-import Project (ProjectInfo, ProjectState, PullRequestId (..))
+import Project (ProjectInfo, ProjectState)
 
 import qualified Configuration as Config
 import qualified Data.Text as Text
@@ -34,55 +34,36 @@ import qualified Github
 import qualified Logic
 import qualified Project
 
-eventFromPullRequestPayload :: PullRequestPayload -> Logic.Event
-eventFromPullRequestPayload payload =
-  let
-    number = Github.number (payload :: PullRequestPayload) -- TODO: Use PullRequestId wrapper from beginning.
-    title  = Github.title  (payload :: PullRequestPayload)
-    author = Github.author (payload :: PullRequestPayload) -- TODO: Wrapper type
-    branch = Github.branch (payload :: PullRequestPayload)
-    sha    = Github.sha    (payload :: PullRequestPayload)
-  in
-    case Github.action (payload :: PullRequestPayload) of
-      Github.Opened      -> Logic.PullRequestOpened (PullRequestId number) branch sha title author
-      Github.Reopened    -> Logic.PullRequestOpened (PullRequestId number) branch sha title author
-      Github.Closed      -> Logic.PullRequestClosed (PullRequestId number)
-      -- TODO: Also deal with title updates.
-      Github.Synchronize -> Logic.PullRequestCommitChanged (PullRequestId number) sha
-
-eventFromCommentPayload :: CommentPayload -> Maybe Logic.Event
-eventFromCommentPayload payload =
-  let number = Github.number (payload :: CommentPayload) -- TODO: Use PullRequestId wrapper from beginning.
-      author = Github.author (payload :: CommentPayload) -- TODO: Wrapper type
-      body   = Github.body   (payload :: CommentPayload)
-  in case Github.action (payload :: CommentPayload) of
-    Github.Created -> Just $ Logic.CommentAdded (PullRequestId number) author body
-    -- Do not bother with edited and deleted comments, as it would tremendously
-    -- complicate handling of approval. Once approved, this cannot be undone.
-    -- And if approval undo is desired, it would be better implemented as a
-    -- separate magic comment, rather than editing the approval comment.
-    Github.Edited  -> Nothing
-    Github.Deleted -> Nothing
-
 mapCommitStatus :: Github.CommitStatus -> Project.BuildStatus
 mapCommitStatus status = case status of
-  Github.Pending -> Project.BuildPending
-  Github.Success -> Project.BuildSucceeded
-  Github.Failure -> Project.BuildFailed
-  Github.Error   -> Project.BuildFailed
+  Github.Pending -> Project.Pending
+  Github.Success -> Project.Succeeded
+  Github.Failure -> Project.Failed
+  Github.Error   -> Project.Failed
 
 eventFromCommitStatusPayload :: CommitStatusPayload -> Logic.Event
 eventFromCommitStatusPayload payload =
-  let sha    = Github.sha    (payload :: CommitStatusPayload)
-      status = Github.status (payload :: CommitStatusPayload)
-  in  Logic.BuildStatusChanged sha (mapCommitStatus status)
+  let
+    sha    = Github.sha    (payload :: CommitStatusPayload)
+    status = Github.status (payload :: CommitStatusPayload)
+  in
+    Logic.BuildStatusChanged sha (mapCommitStatus status)
+
+eventFromPushPayload :: PushPayload -> Logic.Event
+eventFromPushPayload payload =
+  let
+    branch = Github.branch (payload :: PushPayload)
+    sha    = Github.sha    (payload :: PushPayload)
+    title  = Github.title  (payload :: PushPayload)
+    author = Github.author (payload :: PushPayload)
+  in
+    Logic.Pushed $ Project.Push sha branch title author
 
 convertGithubEvent :: Github.WebhookEvent -> Maybe Logic.Event
 convertGithubEvent event = case event of
-  Ping                 -> Nothing -- TODO: What to do with this one?
-  PullRequest payload  -> Just $ eventFromPullRequestPayload payload
+  Ping                 -> Nothing
+  Push payload         -> Just $ eventFromPushPayload payload
   CommitStatus payload -> Just $ eventFromCommitStatusPayload payload
-  Comment payload      -> eventFromCommentPayload payload
 
 -- The event loop that converts GitHub webhook events into logic events.
 runGithubEventLoop
@@ -127,11 +108,13 @@ runLogicEventLoop userConfig projectConfig getNextEvent publish initialState =
       -- perform).
       logInfoN  $ Text.append "logic loop received event: " (Text.pack $ show event)
       logDebugN $ Text.append "state before: " (Text.pack $ show state0)
-      state1 <- runGit $ runAction $ Logic.handleEvent projectConfig event state0
-      state2 <- runGit $ runAction $ Logic.proceedUntilFixedPoint state1
-      publish state2
-      logDebugN $ Text.append "state after: " (Text.pack $ show state2)
-      runLoop state2
+      state1 <- runGit
+                $ runAction
+                $ Logic.proceedUntilFixedPoint
+                $ Logic.handleEvent projectConfig event state0
+      publish state1
+      logDebugN $ Text.append "state after: " (Text.pack $ show state1)
+      runLoop state1
     runLoop state = do
       -- Before anything, clone the repository if there is no clone.
       runGit $ Logic.ensureCloned projectConfig

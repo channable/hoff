@@ -10,13 +10,10 @@
 
 module Github
 (
-  CommentAction (..),
-  CommentPayload (..),
   CommitStatus (..),
   CommitStatusPayload (..),
   EventQueue,
-  PullRequestAction (..),
-  PullRequestPayload (..),
+  PushPayload (..),
   WebhookEvent (..),
   eventProjectInfo,
   newEventQueue,
@@ -32,19 +29,6 @@ import Data.Text (Text)
 import Git (Sha (..), Branch (..))
 import Project (ProjectInfo (..))
 
-data PullRequestAction
-  = Opened
-  | Closed
-  | Reopened
-  | Synchronize
-  deriving (Eq, Show)
-
-data CommentAction
-  = Created
-  | Edited
-  | Deleted
-  deriving (Eq, Show)
-
 data CommitStatus
   = Pending
   | Success
@@ -52,24 +36,13 @@ data CommitStatus
   | Error
   deriving (Eq, Show)
 
-data PullRequestPayload = PullRequestPayload {
-  action     :: PullRequestAction, -- Corresponds to "action".
-  owner      :: Text,   -- Corresponds to "pull_request.base.repo.owner.login".
-  repository :: Text,   -- Corresponds to "pull_request.base.repo.name".
-  number     :: Int,    -- Corresponds to "pull_request.number".
-  branch     :: Branch, -- Corresponds to "pull_request.head.ref".
-  sha        :: Sha,    -- Corresponds to "pull_request.head.sha".
-  title      :: Text,   -- Corresponds to "pull_request.title".
-  author     :: Text    -- Corresponds to "pull_request.user.login".
-} deriving (Eq, Show)
-
-data CommentPayload = CommentPayload {
-  action     :: CommentAction, -- Corresponds to "action".
-  owner      :: Text, -- Corresponds to "repository.owner.login".
-  repository :: Text, -- Corresponds to "repository.name".
-  number     :: Int,  -- Corresponds to "issue.number".
-  author     :: Text, -- Corresponds to "sender.login".
-  body       :: Text  -- Corresponds to "comment.body".
+data PushPayload = PushPayload {
+  owner      :: Text,   -- Corresponds to "repository.name".
+  repository :: Text,   -- Corresponds to "repository.owner.name".
+  branch     :: Branch, -- Corresponds to "ref".
+  sha        :: Sha,    -- Corresponds to "after".
+  title      :: Text,   -- Corresponds to "commits[0].message".
+  author     :: Text    -- Corresponds to "commits[0].author.name".
 } deriving (Eq, Show)
 
 data CommitStatusPayload = CommitStatusPayload {
@@ -79,19 +52,6 @@ data CommitStatusPayload = CommitStatusPayload {
   url        :: Maybe Text,   -- Corresponds to "target_url".
   sha        :: Sha           -- Corresponds to "sha".
 } deriving (Eq, Show)
-
-instance FromJSON PullRequestAction where
-  parseJSON (String "opened")      = return Opened
-  parseJSON (String "closed")      = return Closed
-  parseJSON (String "reopened")    = return Opened
-  parseJSON (String "synchronize") = return Synchronize
-  parseJSON _                      = fail "unexpected pull_request action"
-
-instance FromJSON CommentAction where
-  parseJSON (String "created") = return Created
-  parseJSON (String "edited")  = return Edited
-  parseJSON (String "deleted") = return Deleted
-  parseJSON _                  = fail "unexpected issue_comment action"
 
 instance FromJSON CommitStatus where
   parseJSON (String "pending") = return Pending
@@ -110,27 +70,15 @@ getNested rootObject fields =
       object  = foldl (>>=) (return rootObject) parsers
   in  object >>= (.: (last fields))
 
-instance FromJSON PullRequestPayload where
-  parseJSON (Object v) = PullRequestPayload
-    <$> (v .: "action")
-    <*> getNested v ["pull_request", "base", "repo", "owner", "login"]
-    <*> getNested v ["pull_request", "base", "repo", "name"]
-    <*> getNested v ["pull_request", "number"]
-    <*> getNested v ["pull_request", "head", "ref"]
-    <*> getNested v ["pull_request", "head", "sha"]
-    <*> getNested v ["pull_request", "title"]
-    <*> getNested v ["pull_request", "user", "login"]
-  parseJSON nonObject = typeMismatch "pull_request payload" nonObject
-
-instance FromJSON CommentPayload where
-  parseJSON (Object v) = CommentPayload
-    <$> (v .: "action")
-    <*> getNested v ["repository", "owner", "login"]
+instance FromJSON PushPayload where
+  parseJSON (Object v) = PushPayload
+    <$> getNested v ["repository", "owner", "name"]
     <*> getNested v ["repository", "name"]
-    <*> getNested v ["issue", "number"]
-    <*> getNested v ["sender", "login"]
-    <*> getNested v ["comment", "body"]
-  parseJSON nonObject = typeMismatch "issue_comment payload" nonObject
+    <*> (v .: "ref")
+    <*> (v .: "after")
+    <*> pure "TODO: Title"
+    <*> pure "TODO: Author"
+  parseJSON nonObject = typeMismatch "push payload" nonObject
 
 instance FromJSON CommitStatusPayload where
   parseJSON (Object v) = CommitStatusPayload
@@ -145,8 +93,7 @@ instance FromJSON CommitStatusPayload where
 -- pull request comment event is actually "issue_comment".
 data WebhookEvent
   = Ping
-  | PullRequest PullRequestPayload
-  | Comment CommentPayload
+  | Push PushPayload
   | CommitStatus CommitStatusPayload
   deriving (Eq, Show)
 
@@ -154,16 +101,14 @@ data WebhookEvent
 eventRepositoryOwner :: WebhookEvent -> Text
 eventRepositoryOwner event = case event of
   Ping                 -> error "ping event must not be processed"
-  PullRequest payload  -> owner (payload :: PullRequestPayload)
-  Comment payload      -> owner (payload :: CommentPayload)
+  Push payload         -> owner (payload :: PushPayload)
   CommitStatus payload -> owner (payload :: CommitStatusPayload)
 
 -- Returns the name of the repository for which the webhook was triggered.
 eventRepository :: WebhookEvent -> Text
 eventRepository event = case event of
   Ping                 -> error "ping event must not be processed"
-  PullRequest payload  -> repository (payload :: PullRequestPayload)
-  Comment payload      -> repository (payload :: CommentPayload)
+  Push payload         -> repository (payload :: PushPayload)
   CommitStatus payload -> repository (payload :: CommitStatusPayload)
 
 eventProjectInfo :: WebhookEvent -> ProjectInfo

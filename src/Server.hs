@@ -96,12 +96,9 @@ serveGithubWebhook :: (Github.WebhookEvent -> ActionM ()) -> ActionM ()
 serveGithubWebhook serveEnqueueEvent = do
   eventName <- header "X-GitHub-Event"
   case eventName of
-    Just "pull_request" -> do
-      payload <- jsonData :: ActionM Github.PullRequestPayload
-      serveEnqueueEvent $ Github.PullRequest payload
-    Just "issue_comment" -> do
-      payload <- jsonData :: ActionM Github.CommentPayload
-      serveEnqueueEvent $ Github.Comment payload
+    Just "push" -> do
+      payload <- jsonData :: ActionM Github.PushPayload
+      serveEnqueueEvent $ Github.Push payload
     Just "status" -> do
       payload <- jsonData :: ActionM Github.CommitStatusPayload
       serveEnqueueEvent $ Github.CommitStatus payload

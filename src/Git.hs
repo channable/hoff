@@ -6,6 +6,8 @@
 -- A copy of the License has been included in the root of the repository.
 
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Git
@@ -33,11 +35,13 @@ import Control.Monad (mzero, when)
 import Control.Monad.Free (Free (Free, Pure), liftF)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Logger (MonadLogger, logInfoN, logWarnN)
-import Data.Aeson
+import Data.Aeson (FromJSON (..), FromJSONKey, ToJSON (..), ToJSONKey, Value (String))
+import Data.Hashable (Hashable)
 import Data.List (intersperse)
 import Data.Text (Text)
 import Data.Text.Format.Params (Params)
 import Data.Text.Lazy (toStrict)
+import GHC.Generics (Generic)
 import System.Directory (doesDirectoryExist)
 import System.Environment (getEnvironment)
 import System.Exit (ExitCode (ExitSuccess))
@@ -61,7 +65,7 @@ format formatString params = toStrict $ Text.format formatString params
 newtype Branch = Branch Text deriving (Eq)
 
 -- A commit hash is stored as its hexadecimal representation.
-newtype Sha = Sha Text deriving (Eq)
+newtype Sha = Sha Text deriving (Eq, FromJSONKey, Ord, Generic, Hashable, ToJSONKey)
 
 newtype RemoteUrl = RemoteUrl Text deriving (Eq)
 
