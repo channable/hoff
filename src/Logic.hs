@@ -88,14 +88,16 @@ runAction config action =
       -- we can do builds for different commits in parallel.
       -- TODO: Clean them up at some point. This is where DeleteBuildDirectory
       -- would come in.
-      let buildDir = (Config.buildDir config) </> (show sha)
+      let
+        buildDir = (Config.buildDir config) </> (show sha)
+        logFile  = buildDir ++ ".log"
       result <- Git.cloneLocal sha branch buildDir
       case result of
-        Git.CloneFailed -> pure () -- TODO: Handle errors.
+        Git.CloneFailed -> continueWith cont -- TODO: Handle errors.
         Git.CloneOk -> do
-          -- TODO: Start the build script.
-          pure ()
-      continueWith cont
+          -- TODO: Move to different free monad.
+          Git.runBuild (Config.owner config) (Config.repository config) logFile sha buildDir
+          continueWith cont
     Free (DeleteBuildDirectory _sha cont) -> do
       -- TODO: Actually clean up the build dir.
       continueWith cont

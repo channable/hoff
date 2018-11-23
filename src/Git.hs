@@ -29,6 +29,7 @@ module Git
   pushDelete,
   rebase,
   runGit,
+  runBuild,
   tryIntegrate,
   unqualify,
 )
@@ -121,6 +122,8 @@ data GitOperationFree a
   | Clone RemoteUrl (CloneResult -> a)
   | CloneLocal Sha Branch FilePath (CloneResult -> a)
   | DoesGitDirectoryExist (Bool -> a)
+    -- TODO: Should be in a different free monad, but meh.
+  | RunBuild Text Text FilePath Sha FilePath a
   deriving (Functor)
 
 type GitOperation = Free GitOperationFree
@@ -155,6 +158,9 @@ cloneLocal targetHead targetBranch targetDir = liftF $ CloneLocal targetHead tar
 
 doesGitDirectoryExist :: GitOperation Bool
 doesGitDirectoryExist = liftF $ DoesGitDirectoryExist id
+
+runBuild :: Text -> Text -> FilePath -> Sha -> FilePath -> GitOperation ()
+runBuild owner repo logFile sha buildDir = liftF $ RunBuild owner repo logFile sha buildDir ()
 
 isLeft :: Either a b -> Bool
 isLeft (Left _)  = True
@@ -321,6 +327,21 @@ runGit userConfig repoDir operation =
     Free (DoesGitDirectoryExist cont) -> do
       exists <- liftIO $ doesDirectoryExist (repoDir </> ".git")
       continueWith (cont exists)
+
+    Free (RunBuild owner repo logFile sha buildDir cont) ->
+      let
+        args =
+          [ "--owner", show owner
+          , "--repo", show repo
+          , "--sha", show sha
+          , "--log-file", logFile
+          ]
+        argStr = concat $ intersperse " " args
+        proc = (Process.proc "run_build.py" args) { Process.cwd = Just buildDir }
+      in do
+        logInfoN $ format "Starting build command in {} with args {}." (buildDir, argStr)
+        _ <- liftIO $ Process.createProcess proc
+        continueWith cont
 
 -- Fetches the target branch, rebases the candidate on top of the target branch,
 -- and if that was successfull, force-pushses the resulting commits to the test
