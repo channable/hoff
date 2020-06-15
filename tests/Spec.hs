@@ -99,31 +99,44 @@ defaultResults = Results
 takeFromList
   :: HasCallStack
   => Monoid w
-  => (Results -> [a])
+  => String
+  -> (Results -> [a])
   -> ([a] -> Results -> Results)
   -> RWS r w Results a
-takeFromList getField setField = do
+takeFromList name getField setField = do
   values <- Rws.gets getField
   Rws.modify $ setField $ tail values
   case values of
-    []  -> error "Not enough results supplied for test, list is empty already."
+    []  -> error $ "Not enough results supplied for " <> name <> "."
     v:_ -> pure v
 
 takeResultIntegrate :: (HasCallStack, Monoid w) => RWS r w Results (Either IntegrationFailure Sha)
 takeResultIntegrate =
-  takeFromList resultIntegrate $ \v res -> res { resultIntegrate = v }
+  takeFromList
+    "resultIntegrate"
+    resultIntegrate
+    (\v res -> res { resultIntegrate = v })
 
 takeResultPush :: (HasCallStack, Monoid w) => RWS r w Results PushResult
 takeResultPush =
-  takeFromList resultPush $ \v res -> res { resultPush = v }
+  takeFromList
+    "resultPush"
+    resultPush
+    (\v res -> res { resultPush = v })
 
 takeResultGetPullRequest :: (HasCallStack, Monoid w) => RWS r w Results (Maybe GithubApi.PullRequest)
 takeResultGetPullRequest =
-  takeFromList resultGetPullRequest $ \v res -> res { resultGetPullRequest = v }
+  takeFromList
+    "resultGetPullRequest"
+    resultGetPullRequest
+    (\v res -> res { resultGetPullRequest = v })
 
 takeResultGetOpenPullRequests :: (HasCallStack, Monoid w) => RWS r w Results (Maybe IntSet)
 takeResultGetOpenPullRequests =
-  takeFromList resultGetOpenPullRequests $ \v res -> res { resultGetOpenPullRequests = v }
+  takeFromList
+    "resultGetOpenPullRequests"
+    resultGetOpenPullRequests
+    (\v res -> res { resultGetOpenPullRequests = v })
 
 -- This function simulates running the actions, and returns the final state,
 -- together with a list of all actions that would have been performed. Some
@@ -606,6 +619,55 @@ main = hspec $ do
         [ ATryPromote (Branch "results/rachael") (Sha "38d")
         , ATryIntegrate "Merge #1\n\nApproved-by: deckard" (Branch "refs/pull/1/head", Sha "f35")
         , ALeaveComment (PullRequestId 1) "Rebased as 38e, waiting for CI \x2026"
+        ]
+
+    it "can handle a rebase failure after a failed push" $ do
+      -- This is a regression test for the following scenario:
+      -- - A pull request goes through the approve-rebase-build cycle.
+      -- - Pushing to master fails.
+      -- - After restarting the cycle, rebasing fails.
+      -- In the past this would trigger an inconsistent state because we forgot
+      -- to clear the build status.
+      let
+        state
+          = Project.insertPullRequest
+              (PullRequestId 1)
+              (Branch "n7")
+              (Sha "a39")
+              "Add Nexus 7 experiment"
+              (Username "tyrell")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "b71") Project.BuildPending
+          , BuildStatusChanged (Sha "b71") Project.BuildSucceeded
+          ]
+        -- For this test, the first integration succeeds. Then we push, which
+        -- fails. Then we try to integrate again, but that fails.
+        results = defaultResults
+          { resultIntegrate =
+            [ Right $ Sha "b71"
+            , Left $ Logic.IntegrationFailure (Branch "master")
+            ]
+          , resultPush =
+            [ PushRejected
+              -- TODO(ruuda): Why is this second result needed? We should not do
+              -- a second push.
+            , PushOk
+            ]
+          }
+        (_state', actions) = runActionCustom results $ handleEventsTest events state
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 1) "??"
+        , ATryIntegrate "Merge #1\n\nApproved-by: deckard" (Branch "refs/pull/1/head", Sha "a39")
+          -- The first rebase succeeds.
+        , ALeaveComment (PullRequestId 1) "Rebased as b71, waiting for CI \x2026"
+          -- The first promotion attempt fails
+        , ATryPromote (Branch "n7") (Sha "b71")
+          -- The second rebase fails.
+        , ALeaveComment (PullRequestId 1) "Rebase failed, please rebase manually using "
         ]
 
     it "picks a new candidate from the queue after a successful push" $ do
