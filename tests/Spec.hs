@@ -10,7 +10,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import Control.Monad.Free (foldFree)
-import Control.Monad.Trans.Writer (Writer, tell, runWriter)
+import Control.Monad.Trans.RWS.Strict (RWS)
 import Data.Aeson (decode, encode)
 import Data.ByteString.Lazy (readFile)
 import Data.Foldable (foldlM)
@@ -22,6 +22,7 @@ import System.Directory (getTemporaryDirectory, removeFile)
 import System.FilePath ((</>))
 import Test.Hspec
 
+import qualified Control.Monad.Trans.RWS.Strict as Rws
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.UUID.V4 as Uuid
@@ -77,57 +78,87 @@ data ActionFlat
 -- Results to return from various operations during the tests. There is a
 -- default, but specific tests can override some results, to test failure cases.
 data Results = Results
-  { resultIntegrate :: Either IntegrationFailure Sha
-  , resultPush :: PushResult
-  , resultGetPullRequest :: Maybe GithubApi.PullRequest
-  , resultGetOpenPullRequests :: Maybe IntSet
+  { resultIntegrate :: [Either IntegrationFailure Sha]
+  , resultPush :: [PushResult]
+  , resultGetPullRequest :: [Maybe GithubApi.PullRequest]
+  , resultGetOpenPullRequests :: [Maybe IntSet]
   }
 
 defaultResults :: Results
 defaultResults = Results
     -- Pretend that integration always conflicts.
-  { resultIntegrate = Left $ Logic.IntegrationFailure $ Branch "master"
+  { resultIntegrate = repeat $ Left $ Logic.IntegrationFailure $ Branch "master"
     -- Pretend that pushing is always successful.
-  , resultPush = PushOk
+  , resultPush = repeat $ PushOk
     -- Pretend that these two calls to GitHub always fail.
-  , resultGetPullRequest = Nothing
-  , resultGetOpenPullRequests = Nothing
+  , resultGetPullRequest = repeat $ Nothing
+  , resultGetOpenPullRequests = repeat $ Nothing
   }
+
+-- Consume the head of the field with given getter and setter in the Results.
+takeFromList
+  :: HasCallStack
+  => Monoid w
+  => (Results -> [a])
+  -> ([a] -> Results -> Results)
+  -> RWS r w Results a
+takeFromList getField setField = do
+  values <- Rws.gets getField
+  Rws.modify $ setField $ tail values
+  case values of
+    []  -> error "Not enough results supplied for test, list is empty already."
+    v:_ -> pure v
+
+takeResultIntegrate :: (HasCallStack, Monoid w) => RWS r w Results (Either IntegrationFailure Sha)
+takeResultIntegrate =
+  takeFromList resultIntegrate $ \v res -> res { resultIntegrate = v }
+
+takeResultPush :: (HasCallStack, Monoid w) => RWS r w Results PushResult
+takeResultPush =
+  takeFromList resultPush $ \v res -> res { resultPush = v }
+
+takeResultGetPullRequest :: (HasCallStack, Monoid w) => RWS r w Results (Maybe GithubApi.PullRequest)
+takeResultGetPullRequest =
+  takeFromList resultGetPullRequest $ \v res -> res { resultGetPullRequest = v }
+
+takeResultGetOpenPullRequests :: (HasCallStack, Monoid w) => RWS r w Results (Maybe IntSet)
+takeResultGetOpenPullRequests =
+  takeFromList resultGetOpenPullRequests $ \v res -> res { resultGetOpenPullRequests = v }
 
 -- This function simulates running the actions, and returns the final state,
 -- together with a list of all actions that would have been performed. Some
 -- actions require input from the outside world. Simulating these actions will
--- return the pushResult and rebaseResult passed in here.
-runActionWithInit :: Results -> Action a -> Writer [ActionFlat] a
-runActionWithInit results =
+-- consume one entry from the `Results` in the state.
+runActionRws :: HasCallStack => Action a -> RWS () [ActionFlat] Results a
+runActionRws =
   let
     -- In the tests, only "deckard" is a reviewer.
     isReviewer username = username == "deckard"
   in
     foldFree $ \case
       TryIntegrate msg candidate cont -> do
-        tell [ATryIntegrate msg candidate]
-        pure $ cont $ resultIntegrate results
+        Rws.tell [ATryIntegrate msg candidate]
+        cont <$> takeResultIntegrate
       TryPromote prBranch headSha cont -> do
-        tell [ATryPromote prBranch headSha]
-        pure $ cont $ resultPush results
+        Rws.tell [ATryPromote prBranch headSha]
+        cont <$> takeResultPush
       LeaveComment pr body cont -> do
-        tell [ALeaveComment pr body]
+        Rws.tell [ALeaveComment pr body]
         pure cont
       IsReviewer username cont -> do
-        tell [AIsReviewer username]
+        Rws.tell [AIsReviewer username]
         pure $ cont $ isReviewer username
       GetPullRequest pr cont -> do
-        tell [AGetPullRequest pr]
-        pure $ cont $ resultGetPullRequest results
+        Rws.tell [AGetPullRequest pr]
+        cont <$> takeResultGetPullRequest
       GetOpenPullRequests cont -> do
-        tell [AGetOpenPullRequests]
-        pure $ cont $ resultGetOpenPullRequests results
+        Rws.tell [AGetOpenPullRequests]
+        cont <$> takeResultGetOpenPullRequests
 
--- Simulates running the action. Use the provided sha as result when integration
--- is attempted, and use the provided push result when a push is attempted.
-runActionCustom :: Results -> Action a -> (a, [ActionFlat])
-runActionCustom results = runWriter . runActionWithInit results
+-- Simulates running the action. Use the provided results as result for various
+-- operations. Results are consumed one by one.
+runActionCustom :: HasCallStack => Results -> Action a -> (a, [ActionFlat])
+runActionCustom results action = Rws.evalRWS (runActionRws action) () results
 
 -- Simulates running the action with default results.
 runAction :: Action a -> (a, [ActionFlat])
@@ -339,7 +370,7 @@ main = hspec $ do
           , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
           ]
         -- For this test, we assume all integrations and pushes succeed.
-        results = defaultResults { resultIntegrate = Right (Sha "b71") }
+        results = defaultResults { resultIntegrate = [Right (Sha "b71")] }
         run = runActionCustom results
         actions = snd $ run $ handleEventsTest events state
       actions `shouldBe`
@@ -385,7 +416,9 @@ main = hspec $ do
           , PullRequestClosed (PullRequestId 1)
           ]
         -- For this test, we assume all integrations and pushes succeed.
-        results = defaultResults { resultIntegrate = Right (Sha "b71") }
+        results = defaultResults
+          { resultIntegrate = [Right (Sha "b71"), Right (Sha "b72")]
+          }
         run = runActionCustom results
         (state', actions) = run $ handleEventsTest events state
 
@@ -402,7 +435,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 2) "Pull request approved by @deckard, waiting for rebase at the front of the queue."
         , ALeaveComment (PullRequestId 1) "Abandoning this pull request because it was closed."
         , ATryIntegrate "Merge #2\n\nApproved-by: deckard" (Branch "refs/pull/2/head", Sha "dec")
-        , ALeaveComment (PullRequestId 2) "Rebased as b71, waiting for CI …"
+        , ALeaveComment (PullRequestId 2) "Rebased as b72, waiting for CI …"
         ]
 
     it "ignores comments on unknown pull requests" $ do
@@ -418,7 +451,9 @@ main = hspec $ do
     it "checks whether pull requests are still open on synchronize" $ do
       let
         state = singlePullRequestState (PullRequestId 1) (Branch "p") (Sha "b7332ba") "tyrell"
-        results = defaultResults { resultGetOpenPullRequests = Just $ IntSet.singleton 1 }
+        results = defaultResults
+          { resultGetOpenPullRequests = [Just $ IntSet.singleton 1]
+          }
         (state', actions) = runActionCustom results $ handleEventTest Synchronize state
       -- Pull request 1 is open, so the state should not have changed.
       state' `shouldBe` state
@@ -428,7 +463,9 @@ main = hspec $ do
     it "closes pull requests that are no longer open on synchronize" $ do
       let
         state = singlePullRequestState (PullRequestId 10) (Branch "p") (Sha "b7332ba") "tyrell"
-        results = defaultResults { resultGetOpenPullRequests = Just $ IntSet.empty }
+        results = defaultResults
+          { resultGetOpenPullRequests = [Just $ IntSet.empty]
+          }
         (state', actions) = runActionCustom results $ handleEventTest Synchronize state
       -- No pull requests are open on GitHub, so synchronize should have removed
       -- the single initial PR.
@@ -439,7 +476,9 @@ main = hspec $ do
       let
         state = singlePullRequestState (PullRequestId 19) (Branch "p") (Sha "b7332ba") "tyrell"
         -- Set up some custom results where we simulate that the GitHub API fails.
-        results = defaultResults { resultGetOpenPullRequests = Nothing }
+        results = defaultResults
+          { resultGetOpenPullRequests = [Nothing]
+          }
         (state', actions) = runActionCustom results $ handleEventTest Synchronize state
       -- We should not have modified anything on error.
       state' `shouldBe` state
@@ -449,13 +488,15 @@ main = hspec $ do
       let
         state = Project.emptyProjectState
         results = defaultResults
-          { resultGetOpenPullRequests = Just $ IntSet.singleton 17
-          , resultGetPullRequest = Just $ GithubApi.PullRequest
-            { GithubApi.sha    = Sha "7faa52318"
-            , GithubApi.branch = Branch "nexus-7"
-            , GithubApi.title  = "Add Nexus 7 experiment"
-            , GithubApi.author = Username "tyrell"
-            }
+          { resultGetOpenPullRequests = [Just $ IntSet.singleton 17]
+          , resultGetPullRequest =
+            [ Just $ GithubApi.PullRequest
+              { GithubApi.sha    = Sha "7faa52318"
+              , GithubApi.branch = Branch "nexus-7"
+              , GithubApi.title  = "Add Nexus 7 experiment"
+              , GithubApi.author = Username "tyrell"
+              }
+            ]
           }
         (state', actions) = runActionCustom results $ handleEventTest Synchronize state
         Just pr17 = Project.lookupPullRequest (PullRequestId 17) state'
@@ -477,7 +518,9 @@ main = hspec $ do
     it "does not query details of existing pull requests on synchronize" $ do
       let
         state = singlePullRequestState (PullRequestId 19) (Branch "p") (Sha "b7332ba") "tyrell"
-        results = defaultResults { resultGetOpenPullRequests = Just $ IntSet.singleton 19 }
+        results = defaultResults
+          { resultGetOpenPullRequests = [Just $ IntSet.singleton 19]
+          }
         actions = snd $ runActionCustom results $ handleEventTest Synchronize state
 
       -- We should only obtain pull request details for pull requests that were
@@ -493,8 +536,8 @@ main = hspec $ do
           = Project.setApproval (PullRequestId 1) (Just "fred")
           $ singlePullRequestState (PullRequestId 1) (Branch "p") (Sha "f34") "sally"
         results = defaultResults
-          { resultIntegrate = Right (Sha "38c")
-          , resultPush = PushRejected
+          { resultIntegrate = [Right (Sha "38c")]
+          , resultPush = [PushRejected]
           }
         (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
         (prId, pullRequest) = fromJust $ Project.getIntegrationCandidate state'
@@ -522,7 +565,7 @@ main = hspec $ do
           { Project.pullRequests         = IntMap.singleton 1 pullRequest
           , Project.integrationCandidate = Just $ PullRequestId 1
           }
-        results = defaultResults { resultIntegrate = Right (Sha "38e") }
+        results = defaultResults { resultIntegrate = [Right (Sha "38e")] }
         (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
         candidate = Project.getIntegrationCandidate state'
       -- After a successful push, the candidate should be gone.
@@ -550,8 +593,8 @@ main = hspec $ do
         -- Run 'proceedUntilFixedPoint', and pretend that pushes fail (because
         -- something was pushed in the mean time, for instance).
         results = defaultResults
-          { resultIntegrate = Right (Sha "38e")
-          , resultPush = PushRejected
+          { resultIntegrate = [Right (Sha "38e")]
+          , resultPush = [PushRejected]
           }
         (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
         (_, pullRequest') = fromJust $ Project.getIntegrationCandidate state'
@@ -597,7 +640,7 @@ main = hspec $ do
               Project.integrationCandidate = Nothing
             }
           -- Proceeding should pick the next pull request as candidate.
-          results = defaultResults { resultIntegrate = Right (Sha "38e") }
+          results = defaultResults { resultIntegrate = [Right (Sha "38e")] }
           (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
           Just (cId, _candidate) = Project.getIntegrationCandidate state'
       cId     `shouldBe` PullRequestId 2
