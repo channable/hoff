@@ -223,9 +223,9 @@ runGit userConfig repoDir operation =
       -- Note: the remote branch is prefixed with 'refs/heads/' to specify the
       -- branch unambiguously. This will make Git create the branch if it does
       -- not exist.
-      result <- callGitInRepo ["push", "--force", "origin", (show sha) ++ ":refs/heads/" ++ (show branch)]
+      result <- callGitInRepo ["push", "--force-with-lease", "origin", (show sha) ++ ":refs/heads/" ++ (show branch)]
       case result of
-        Left  _ -> logWarnN "warning: git push --force failed"
+        Left  _ -> logWarnN "warning: git push --force-with-lease failed"
         Right _ -> return ()
       pure cont
 
