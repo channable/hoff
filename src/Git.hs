@@ -266,7 +266,7 @@ runGit userConfig repoDir operation =
       -- Note: the remote branch is prefixed with 'refs/heads/' to specify the
       -- branch unambiguously. This will make Git create the branch if it does
       -- not exist.
-      result <- callGitInRepo ["push", "--force-with-lease", "--porcelain", "origin", (show sha) ++ ":refs/heads/" ++ (show branch)]
+      result <- callGitInRepo ["push", "--force", "--porcelain", "origin", (show sha) ++ ":refs/heads/" ++ (show branch)]
       -- Capture the git output and attempt to parse it
       let pushResult = case result of
             Right _ -> PushOk
@@ -276,7 +276,7 @@ runGit userConfig repoDir operation =
       -- Log if the push was rejected, include the reason why.
       case pushResult of
         PushOk -> return ()
-        PushRejected summary reason -> logWarnN $ format "warning: git push --force-with-lease failed because: {} {}" (summary, reason)
+        PushRejected summary reason -> logWarnN $ format "warning: git push --force failed because: {} {}" (summary, reason)
 
       pure $ cont pushResult
 

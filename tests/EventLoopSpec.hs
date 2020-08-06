@@ -633,7 +633,7 @@ eventLoopSpec = parallel $ do
         -- the bad commit c7 is already on master. Note that origin/master is
         -- not a parent of c8, so we force-push.
         git ["fetch", "origin", "fixup"] -- The ref for commit c7f.
-        git ["push", "--force-with-lease", "origin", (show c8) ++ ":refs/heads/master"]
+        git ["push", "--force", "origin", (show c8) ++ ":refs/heads/master"]
 
         state <- runLoop Project.emptyProjectState
           [
