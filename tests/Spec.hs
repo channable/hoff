@@ -23,12 +23,13 @@ import System.FilePath ((</>))
 import Test.Hspec
 
 import qualified Control.Monad.Trans.RWS.Strict as Rws
+import qualified Data.Text as Text
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.UUID.V4 as Uuid
 
 import EventLoop (convertGithubEvent)
-import Git (Branch (..), PushResult(..), Sha (..))
+import Git (Branch (..), PushResult(..), Sha (..), parsePorcelainPushOutput)
 import Github (CommentPayload, CommitStatusPayload, PullRequestPayload)
 import Logic (Action, ActionFree (..), Event (..), IntegrationFailure (..))
 import Project (ProjectState (ProjectState), PullRequest (PullRequest))
@@ -563,7 +564,7 @@ main = hspec $ do
           $ singlePullRequestState (PullRequestId 1) (Branch "p") (Sha "f34") "sally"
         results = defaultResults
           { resultIntegrate = [Right (Sha "38c")]
-          , resultPush = [PushRejected]
+          , resultPush = [ PushRejected  (Text.pack "Push output parsing failed") (Text.pack "No reason specified")]
           }
         (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
         (prId, pullRequest) = fromJust $ Project.getIntegrationCandidate state'
@@ -619,7 +620,7 @@ main = hspec $ do
         -- something was pushed in the mean time, for instance).
         results = defaultResults
           { resultIntegrate = [Right (Sha "38e")]
-          , resultPush = [PushRejected]
+          , resultPush = [ PushRejected  (Text.pack "Push output parsing failed") (Text.pack "No reason specified")]
           }
         (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
         (_, pullRequest') = fromJust $ Project.getIntegrationCandidate state'
@@ -660,7 +661,7 @@ main = hspec $ do
             [ Right $ Sha "b71"
             , Left $ Logic.IntegrationFailure (Branch "master")
             ]
-          , resultPush = [ PushRejected ]
+          , resultPush = [ PushRejected  (Text.pack "Push output parsing failed") (Text.pack "No reason specified")]
           }
         (_state', actions) = runActionCustom results $ handleEventsTest events state
 
@@ -958,3 +959,34 @@ main = hspec $ do
       Just state' <- Project.loadProjectState fname
       state `shouldBe` state'
       removeFile fname
+
+  describe "Git.parsePorcelainPushOutput" $ do
+    it "can parse succesfull push results (force push output)" $ do
+      let raw = Text.pack "To github.com:foo/bar.git\n+\trefs/heads/master:refs/heads/master\t33b4e8a...bf59dbb (forced update)\nDone\n"
+          actual = parsePorcelainPushOutput raw
+          expected = Just (Text.pack "33b4e8a...bf59dbb ", Just $ Text.pack "(forced update)")
+      actual `shouldBe` expected
+
+    it "can parse failed push results (file to big)" $ do
+      let raw = Text.pack "To github.com:foo/bar.git\n!\trefs/heads/master:refs/heads/master\t[remote rejected] (pre-receive hook declined)\n"
+          actual = parsePorcelainPushOutput raw
+          expected = Just (Text.pack "[remote rejected] ", Just $ Text.pack "(pre-receive hook declined)")
+      actual `shouldBe` expected
+
+    it "can parse results when no reason is presest" $ do
+      let raw = Text.pack "To github.com:foo/bar.git\n=\trefs/heads/foobar:refs/heads/foobar\t[up to date]\nDone\n"
+          actual = parsePorcelainPushOutput raw
+          expected = Just (Text.pack "[up to date]", Nothing)
+      actual `shouldBe` expected
+
+    it "can parse when newlines are missing (by returning Nothing)" $ do
+      let raw = Text.pack "To github.com:foo/bar.git=\trefs/heads/foobar:refs/heads/foobar\t[up to date]Done"
+          actual = parsePorcelainPushOutput raw
+          expected = Nothing
+      actual `shouldBe` expected
+
+    it "can handle gibberish input (by returning Nothing)" $ do
+      let raw = Text.pack "askjdlfhaosdyuro3\t\t\t\n\n\n\t\t\tasasdkjaslkdjalksjd"
+          actual = parsePorcelainPushOutput raw
+          expected = Nothing
+      actual `shouldBe` expected

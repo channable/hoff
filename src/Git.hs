@@ -8,6 +8,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Git
 (
@@ -28,6 +29,7 @@ module Git
   runGit,
   runGitReadOnly,
   tryIntegrate,
+  parsePorcelainPushOutput
 )
 where
 
@@ -51,6 +53,7 @@ import Configuration (UserConfiguration)
 import Format (format)
 
 import qualified Configuration as Config
+import Data.Maybe (fromMaybe)
 
 -- A branch is identified by its name.
 newtype Branch = Branch Text deriving (Eq)
@@ -90,9 +93,10 @@ instance FromJSON RemoteUrl where
 instance ToJSON RemoteUrl where
   toJSON (RemoteUrl url) = String url
 
+-- Push result with the summary and the failure reason in text.
 data PushResult
   = PushOk
-  | PushRejected
+  | PushRejected Text Text
   deriving (Eq, Show)
 
 data CloneResult
@@ -148,13 +152,50 @@ isLeft :: Either a b -> Bool
 isLeft (Left _)  = True
 isLeft (Right _) = False
 
+
+-- | Parse the porcelain output of a push command. It will extract the
+-- this is based on 'https://git-scm.com/docs/git-push#_output'
+-- Example of a failed push:
+-- ``` txt
+-- To github.com:foo/bar.git
+-- !	refs/heads/master:refs/heads/master	[remote rejected] (pre-receive hook declined)
+-- ```
+--
+-- Example of a succesfull force push
+-- ``` txt
+-- To github.com:foo/bar.git
+-- +	refs/heads/master:refs/heads/master	33b4e8a...bf59dbb (forced update)
+-- Done
+-- ```
+parsePorcelainPushOutput :: Text -> Maybe (Text, Maybe Text)
+parsePorcelainPushOutput input = do
+  -- We do not care about the first line, we just skip it.
+  line <- case Text.lines input of
+    (_ : l : _) -> Just l
+    _ -> Nothing
+
+  -- Skip past the `flag` and `from:to` to the last section containing the summary and reason
+  message <- case Text.split (== '\t') line of
+    [] -> Nothing
+    (last -> x) -> Just x
+
+  -- If the summary is empty we return Nothing
+  let summaryText = Text.takeWhile (/= '(') message
+  summary <- if (Text.length summaryText) > 0 then Just summaryText else Nothing
+
+  -- Parse the reason, if it is absent we set it to Nothing
+  let reasonText = Text.dropWhile (/= '(') message
+  let reason = if (Text.length reasonText) > 0 then Just reasonText else Nothing
+
+  pure (summary, reason)
+
 -- Invokes Git with the given arguments. Returns its output on success, or the
--- exit code and stderr on error.
+-- exit code, stdout and stderr on error.
 callGit
   :: (MonadIO m, MonadLogger m)
   => UserConfiguration
   -> [String]
-  -> m (Either (ExitCode, Text) Text)
+  -> m (Either (ExitCode, Text, Text) Text)
 callGit userConfig args = do
   currentEnv <- liftIO getEnvironment
   let
@@ -178,10 +219,10 @@ callGit userConfig args = do
     }
     runProcess = readCreateProcessWithExitCode process stdinContent
   logInfoN logMessage
-  (exitCode, output, errors) <- liftIO runProcess
+  (exitCode, std_out, std_err) <- liftIO runProcess
   if exitCode == ExitSuccess
-    then return $ Right output
-    else return $ Left (exitCode, errors)
+    then return $ Right $ std_out
+    else return $ Left (exitCode, std_out, std_err)
 
 -- Interpreter for the GitOperation free monad that starts Git processes and
 -- parses its output.
@@ -223,18 +264,24 @@ runGit userConfig repoDir operation =
       -- Note: the remote branch is prefixed with 'refs/heads/' to specify the
       -- branch unambiguously. This will make Git create the branch if it does
       -- not exist.
-      result <- callGitInRepo ["push", "--force-with-lease", "origin", (show sha) ++ ":refs/heads/" ++ (show branch)]
+      result <- callGitInRepo ["push", "--force-with-lease", "--porcelain", "origin", (show sha) ++ ":refs/heads/" ++ (show branch)]
       case result of
-        Left  _ -> logWarnN "warning: git push --force-with-lease failed"
         Right _ -> return ()
+        Left  _ -> logWarnN "warning: git push --force-with-lease failed"
       pure cont
 
     Push sha branch cont -> do
-      result <- callGitInRepo ["push", "origin", (show sha) ++ ":refs/heads/" ++ (show branch)]
+      result <- callGitInRepo ["push", "--porcelain", "origin", (show sha) ++ ":refs/heads/" ++ (show branch)]
       let pushResult = case result of
-            Left  _ -> PushRejected
             Right _ -> PushOk
-      when (pushResult == PushRejected) $ logInfoN "push was rejected"
+            Left (_, output, _) -> PushRejected summary $ fromMaybe "No reason specified" reason
+              where (summary, reason) = fromMaybe ("Push output parsing failed", Nothing) $ parsePorcelainPushOutput output
+
+      -- Log if the push was rejected, include the reason why.
+      case pushResult of
+        PushOk -> pure ()
+        PushRejected summary reason -> logInfoN $ format "Push was rejected because: {} {}" (summary, reason)
+
       pure $ cont pushResult
 
     Rebase sha branch cont -> do
@@ -247,11 +294,11 @@ runGit userConfig repoDir operation =
         , "origin/" ++ (show branch), show sha
         ]
       case result of
-        Left (code, message) -> do
+        Left (code, _, stderr) -> do
           -- Rebase failed, call the continuation with no rebased sha, but first
           -- abort the rebase.
           -- TODO: Don't spam the log with these, a failed rebase is expected.
-          logInfoN $ format "git rebase failed with code {}: {}" (show code, message)
+          logInfoN $ format "git rebase failed with code {}: {}" (show code, stderr)
           abortResult <- callGitInRepo ["rebase", "--abort"]
           when (isLeft abortResult) $ logWarnN "warning: git rebase --abort failed"
           pure $ cont Nothing
@@ -268,10 +315,10 @@ runGit userConfig repoDir operation =
         , show sha
         ]
       case result of
-        Left (code, output) -> do
+        Left (code, _, stderr)-> do
           -- Merge failed, call the continuation with no rebased sha, but first
           -- abort the merge, if any.
-          logInfoN $ format "git merge failed with code {}: {}" (show code, output)
+          logInfoN $ format "git merge failed with code {}: {}" (show code, stderr)
           abortResult <- callGitInRepo ["merge", "--abort"]
           when (isLeft abortResult) $ logWarnN "git merge --abort failed"
           pure $ cont Nothing
@@ -313,8 +360,8 @@ runGit userConfig repoDir operation =
         , show url, repoDir
         ]
       case result of
-        Left (code, message) -> do
-          logWarnN $ format "git clone failed with code {}: {}" (show code, message)
+        Left (code, _, stderr) -> do
+          logWarnN $ format "git clone failed with code {}: {}" (show code, stderr)
           pure $ cont CloneFailed
         Right _ -> do
           logInfoN $ format "cloned {} succesfully" [show url]
@@ -356,7 +403,7 @@ runGitReadOnly userConfig repoDir operation =
         pure $ cont
       Push (Sha sha) (Branch branch) cont -> do
         logInfoN $ Text.concat ["Would have pushed ", sha, " to ", branch]
-        pure $ cont PushRejected
+        pure $ cont $ PushRejected "Push failed" "Not pushing in readonly"
 
 -- Fetches the target branch, rebases the candidate on top of the target branch,
 -- and if that was successfull, force-pushses the resulting commits to the test

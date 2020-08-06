@@ -403,7 +403,7 @@ proceedCandidate (pullRequestId, pullRequest) state =
 
     Integrated _sha buildStatus -> case buildStatus of
       BuildPending   -> pure state
-      BuildSucceeded -> pushCandidate (pullRequestId, pullRequest) state
+      BuildSucceeded -> pushCandidate pullRequestId state
       BuildFailed    -> do
         -- If the build failed, this is no longer a candidate.
         pure $ Pr.setIntegrationCandidate Nothing $
@@ -447,21 +447,22 @@ tryIntegratePullRequest pr state =
 -- Pushes the integrated commits of the given candidate pull request to the
 -- target branch. If the push fails, restarts the integration cycle for the
 -- candidate.
--- TODO: Get rid of the tuple; just pass the ID and do the lookup with fromJust.
-pushCandidate :: (PullRequestId, PullRequest) -> ProjectState -> Action ProjectState
-pushCandidate (pullRequestId, pullRequest) state = do
+pushCandidate :: PullRequestId -> ProjectState -> Action ProjectState
+pushCandidate pullRequestId state = do
   -- Look up the sha that will be pushed to the target branch. Also assert that
   -- the pull request has really been approved and built successfully. If it was
   -- not, there is a bug in the program.
-  let approved  = isJust $ Pr.approvedBy pullRequest
-      status    = Pr.integrationStatus pullRequest
-      prBranch  = Pr.branch pullRequest
-      newHead   = assert approved $ case status of
-        Integrated sha BuildSucceeded -> sha
-        Integrated _ _notSucceeded ->
-          error "Trying to push a candidate for which the build did not pass."
-        _notIntegrated ->
-          error "Trying to push a candidate that is not integrated."
+  let
+    pullRequest = fromJust $ Pr.lookupPullRequest pullRequestId state
+    approved  = isJust $ Pr.approvedBy pullRequest
+    status    = Pr.integrationStatus pullRequest
+    prBranch  = Pr.branch pullRequest
+    newHead   = assert approved $ case status of
+      Integrated sha BuildSucceeded -> sha
+      Integrated _ _notSucceeded ->
+        error "Trying to push a candidate for which the build did not pass."
+      _notIntegrated ->
+        error "Trying to push a candidate that is not integrated."
   pushResult <- tryPromote prBranch newHead
   case pushResult of
     -- If the push worked, then this was the final stage of the pull request.
@@ -472,7 +473,7 @@ pushCandidate (pullRequestId, pullRequest) state = do
     -- If something was pushed to the target branch while the candidate was
     -- being tested, try to integrate again and hope that next time the push
     -- succeeds.
-    PushRejected -> tryIntegratePullRequest pullRequestId state
+    PushRejected _ _ -> tryIntegratePullRequest pullRequestId state
 
 -- Keep doing a proceed step until the state doesn't change any more. For this
 -- to work properly, it is essential that "proceed" does not have any side
