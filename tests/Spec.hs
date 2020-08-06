@@ -985,6 +985,12 @@ main = hspec $ do
           expected = Nothing
       actual `shouldBe` expected
 
+    it "can parse when tabs are missing (by returning Nothing)" $ do
+      let raw = Text.pack "To github.com:foo/bar.git\n=trefs/heads/foobar:refs/heads/foobar[up to date]\nDone"
+          actual = parsePorcelainPushOutput raw
+          expected = Nothing
+      actual `shouldBe` expected
+
     it "can handle gibberish input (by returning Nothing)" $ do
       let raw = Text.pack "askjdlfhaosdyuro3\t\t\t\n\n\n\t\t\tasasdkjaslkdjalksjd"
           actual = parsePorcelainPushOutput raw

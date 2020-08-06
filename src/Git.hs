@@ -170,11 +170,13 @@ isLeft (Right _) = False
 parsePorcelainPushOutput :: Text -> Maybe (Text, Maybe Text)
 parsePorcelainPushOutput input = do
   -- We do not care about the first line, we just skip it.
+  -- Only return the line if there are tabs in the line, if there are
+  -- not the line does not contain the expected data.
   line <- case Text.lines input of
-    (_ : l : _) -> Just l
+    (_ : l : _) | Text.isInfixOf (Text.singleton '\t') l -> Just l
     _ -> Nothing
 
-  -- Skip past the `flag` and `from:to` to the last section containing the summary and reason
+  -- Skip past the `flag` and `from:to` to the last section containing the summary and reason.
   message <- case Text.split (== '\t') line of
     [] -> Nothing
     (last -> x) -> Just x
@@ -415,7 +417,7 @@ runGitReadOnly userConfig repoDir operation =
         pure $ cont $ PushRejected "Push failed" "Not pushing in read-only"
 
 -- Fetches the target branch, rebases the candidate on top of the target branch,
--- and if that was successfull, force-pushses the resulting commits to the test
+-- and if that was successful, force-pushes the resulting commits to the test
 -- branch.
 tryIntegrate :: Text -> Branch -> Sha -> Branch -> Branch -> GitOperation (Either Text (Maybe Sha))
 tryIntegrate message candidateRef candidateSha targetBranch testBranch = do
@@ -453,8 +455,9 @@ tryIntegrate message candidateRef candidateSha targetBranch testBranch = do
         Just tipSha -> do
           pushResult <- forcePush tipSha testBranch
           case pushResult of
+            -- Force push went off without any trouble, return the hash.
             PushOk -> pure $ Right newTip
             -- We should post a comment in this case.
             PushRejected s r -> pure $ Left $ s <> r
-        -- Pretend that the push when well if there was no new tip to push
+        -- Nothing to push
         Nothing -> pure $ Right Nothing
