@@ -106,7 +106,7 @@ data CloneResult
 
 data GitOperationFree a
   = FetchBranch Branch a
-  | ForcePush Sha Branch a
+  | ForcePush Sha Branch (PushResult -> a)
   | Push Sha Branch (PushResult -> a)
   | Rebase Sha Branch (Maybe Sha -> a)
   | Merge Sha Text (Maybe Sha -> a)
@@ -121,8 +121,8 @@ type GitOperation = Free GitOperationFree
 fetchBranch :: Branch -> GitOperation ()
 fetchBranch remoteBranch = liftF $ FetchBranch remoteBranch ()
 
-forcePush :: Sha -> Branch -> GitOperation ()
-forcePush sha remoteBranch = liftF $ ForcePush sha remoteBranch ()
+forcePush :: Sha -> Branch -> GitOperation PushResult
+forcePush sha remoteBranch = liftF $ ForcePush sha remoteBranch id
 
 push :: Sha -> Branch -> GitOperation PushResult
 push sha remoteBranch = liftF $ Push sha remoteBranch id
@@ -265,13 +265,22 @@ runGit userConfig repoDir operation =
       -- branch unambiguously. This will make Git create the branch if it does
       -- not exist.
       result <- callGitInRepo ["push", "--force-with-lease", "--porcelain", "origin", (show sha) ++ ":refs/heads/" ++ (show branch)]
-      case result of
-        Right _ -> return ()
-        Left  _ -> logWarnN "warning: git push --force-with-lease failed"
-      pure cont
+      -- Capture the git output and attempt to parse it
+      let pushResult = case result of
+            Right _ -> PushOk
+            Left (_, output, _) -> PushRejected summary $ fromMaybe "No reason specified" reason
+              where (summary, reason) = fromMaybe ("Push output parsing failed", Nothing) $ parsePorcelainPushOutput output
+
+      -- Log if the push was rejected, include the reason why.
+      case pushResult of
+        PushOk -> return ()
+        PushRejected summary reason -> logWarnN $ format "warning: git push --force-with-lease failed because: {} {}" (summary, reason)
+
+      pure $ cont pushResult
 
     Push sha branch cont -> do
       result <- callGitInRepo ["push", "--porcelain", "origin", (show sha) ++ ":refs/heads/" ++ (show branch)]
+      -- Capture the git output and attempt to parse it
       let pushResult = case result of
             Right _ -> PushOk
             Left (_, output, _) -> PushRejected summary $ fromMaybe "No reason specified" reason
@@ -280,7 +289,7 @@ runGit userConfig repoDir operation =
       -- Log if the push was rejected, include the reason why.
       case pushResult of
         PushOk -> pure ()
-        PushRejected summary reason -> logInfoN $ format "Push was rejected because: {} {}" (summary, reason)
+        PushRejected summary reason -> logWarnN $ format "warning: git push failed because: {} {}" (summary, reason)
 
       pure $ cont pushResult
 
@@ -400,15 +409,15 @@ runGitReadOnly userConfig repoDir operation =
       -- read-only mode.
       ForcePush (Sha sha) (Branch branch) cont -> do
         logInfoN $ Text.concat ["Would have force-pushed ", sha, " to ", branch]
-        pure $ cont
+        pure $ cont $ PushRejected "Force push failed" "Not pushing in read-only"
       Push (Sha sha) (Branch branch) cont -> do
         logInfoN $ Text.concat ["Would have pushed ", sha, " to ", branch]
-        pure $ cont $ PushRejected "Push failed" "Not pushing in readonly"
+        pure $ cont $ PushRejected "Push failed" "Not pushing in read-only"
 
 -- Fetches the target branch, rebases the candidate on top of the target branch,
 -- and if that was successfull, force-pushses the resulting commits to the test
 -- branch.
-tryIntegrate :: Text -> Branch -> Sha -> Branch -> Branch -> GitOperation (Maybe Sha)
+tryIntegrate :: Text -> Branch -> Sha -> Branch -> Branch -> GitOperation (Either Text (Maybe Sha))
 tryIntegrate message candidateRef candidateSha targetBranch testBranch = do
   -- Fetch the ref for the target commit that needs to be rebased, we might not
   -- have it yet. Although Git supports fetching single commits, GitHub does
@@ -424,7 +433,7 @@ tryIntegrate message candidateRef candidateSha targetBranch testBranch = do
   case rebaseResult of
     -- If the rebase succeeded, then this is our new integration candidate.
     -- Push it to the remote integration branch to trigger a build.
-    Nothing  -> pure Nothing
+    Nothing  -> pure $ Right Nothing
     Just sha -> do
       -- After the rebase, we also do a (non-fast-forward) merge, to clarify
       -- that this is a single unit of change; a way to fake "chapters" in the
@@ -441,7 +450,11 @@ tryIntegrate message candidateRef candidateSha targetBranch testBranch = do
       -- If both the rebase, and the (potential) merge went well, push it to the
       -- testing branch so CI will build it.
       case newTip of
-        Just tipSha -> forcePush tipSha testBranch
-        Nothing     -> pure ()
-
-      pure newTip
+        Just tipSha -> do
+          pushResult <- forcePush tipSha testBranch
+          case pushResult of
+            PushOk -> pure $ Right newTip
+            -- We should post a comment in this case.
+            PushRejected s r -> pure $ Left $ s <> r
+        -- Pretend that the push when well if there was no new tip to push
+        Nothing -> pure $ Right Nothing

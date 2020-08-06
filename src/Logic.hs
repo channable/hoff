@@ -79,7 +79,7 @@ type Operation = Free (Sum GitOperationFree GithubOperationFree)
 
 -- | Error returned when 'TryIntegrate' fails.
 -- It contains the name of the target branch that the PR was supposed to be integrated into.
-data IntegrationFailure = IntegrationFailure Branch
+data IntegrationFailure = IntegrationFailure Branch | IntegrationPushFailure Text
 
 doGit :: GitOperation a -> Operation a
 doGit = hoistFree InL
@@ -116,21 +116,24 @@ runAction :: ProjectConfiguration -> Action a -> Operation a
 runAction config = foldFree $ \case
   TryIntegrate message (ref, sha) cont -> do
     doGit $ ensureCloned config
-    maybeSha <- doGit $ Git.tryIntegrate
+    integrateResult <- doGit $ Git.tryIntegrate
       message
       ref
       sha
       (Git.Branch $ Config.branch config)
       (Git.Branch $ Config.testBranch config)
-    pure $ cont $ maybe
-      (Left $ IntegrationFailure $ Branch $ Config.branch config)
-      Right
-      maybeSha
+
+    case integrateResult of
+      Right maybeSha -> pure $ cont $ maybe (Left $ IntegrationFailure $ Branch $ Config.branch config) Right maybeSha
+      Left err -> pure $ cont $ Left $ IntegrationPushFailure err
 
   TryPromote prBranch sha cont -> do
     doGit $ ensureCloned config
-    doGit $ Git.forcePush sha prBranch
-    pushResult <- doGit $ Git.push sha (Git.Branch $ Config.branch config)
+    forcePushResult <- doGit $ Git.forcePush sha prBranch
+    pushResult <- case forcePushResult of
+      PushRejected _ _ -> pure forcePushResult
+      PushOk -> doGit $ Git.push sha (Git.Branch $ Config.branch config)
+
     pure $ cont pushResult
 
   LeaveComment pr body cont -> do
@@ -429,6 +432,12 @@ tryIntegratePullRequest pr state =
   in do
     result <- tryIntegrate mergeMessage candidate
     case result of
+      Left (IntegrationPushFailure reason) -> do
+        -- The push failed during the integrate, post a comment and mark the
+        -- state as conflicted
+        leaveComment pr $ "Push failed while integrating: " <> reason
+        pure $ Pr.setIntegrationStatus pr (NotIntegrated) $ Pr.setNeedsFeedback pr True state
+
       Left (IntegrationFailure targetBranch) ->
         -- If integrating failed, perform no further actions but do set the
         -- state to conflicted.
@@ -473,6 +482,7 @@ pushCandidate pullRequestId state = do
     -- If something was pushed to the target branch while the candidate was
     -- being tested, try to integrate again and hope that next time the push
     -- succeeds.
+    -- TODO: Do we want to comment that a push failed here?
     PushRejected _ _ -> tryIntegratePullRequest pullRequestId state
 
 -- Keep doing a proceed step until the state doesn't change any more. For this
