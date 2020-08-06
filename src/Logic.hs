@@ -63,7 +63,6 @@ import qualified Git
 import qualified GithubApi
 import qualified Project as Pr
 import qualified Configuration as Config
-import Debug.Trace (trace)
 
 data ActionFree a
   = TryIntegrate Text (Branch, Sha) (Either IntegrationFailure Sha -> a)
@@ -132,7 +131,7 @@ runAction config = foldFree $ \case
     doGit $ ensureCloned config
     forcePushResult <- doGit $ Git.forcePush sha prBranch
     pushResult <- case forcePushResult of
-      PushRejected _ _ -> pure (trace ("TryPromote force push resulted in: " ++ show forcePushResult) forcePushResult)
+      PushRejected _ _ -> pure forcePushResult
       PushOk -> doGit $ Git.push sha (Git.Branch $ Config.branch config)
 
     pure $ cont pushResult
