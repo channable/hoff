@@ -323,13 +323,14 @@ eventLoopSpec = parallel $ do
           -- Note that at the remote, refs/pull/4/head points to c4.
           pr4 = PullRequestId 4
           branch = Branch "ahead"
+          base = Branch "master"
 
         -- Commit c4 is one commit ahead of master, so integrating it can be done
         -- with a fast-forward merge. Run the main event loop for these events
         -- and discard the final state by using 'void'.
         void $ runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr4 branch c4 "Add Leon test results" "deckard",
+            Logic.PullRequestOpened pr4 branch c4 base "Add Leon test results" "deckard",
             Logic.CommentAdded pr4 "rachael" "@bot merge",
             Logic.BuildStatusChanged c4 BuildSucceeded
           ]
@@ -353,12 +354,13 @@ eventLoopSpec = parallel $ do
             -- Note that at the remote, refs/pull/6/head points to c6.
             pr6 = PullRequestId 6
             branch = Branch "intro"
+            base = Branch "master"
 
         -- Commit c6 is two commits ahead and one behind of master, so
         -- integrating it produces new rebased commits.
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr6 branch c6 "Add Leon test results" "deckard",
+            Logic.PullRequestOpened pr6 branch c6 base "Add Leon test results" "deckard",
             Logic.CommentAdded pr6 "rachael" "@bot merge"
           ]
 
@@ -396,11 +398,12 @@ eventLoopSpec = parallel $ do
             pr6 = PullRequestId 6
             br4 = Branch "ahead"
             br6 = Branch "intro"
+            base = Branch "master"
 
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr4 br4 c4 "Add Leon test results" "deckard",
-            Logic.PullRequestOpened pr6 br6 c6 "Add Rachael test results" "deckard",
+            Logic.PullRequestOpened pr4 br4 c4 base "Add Leon test results" "deckard",
+            Logic.PullRequestOpened pr6 br6 c6 base "Add Rachael test results" "deckard",
             -- Note that although c4 has a lower pull request number, c6 should
             -- still be integrated first because it was approved earlier.
             Logic.CommentAdded pr6 "rachael" "@bot merge",
@@ -443,13 +446,14 @@ eventLoopSpec = parallel $ do
             pr4 = PullRequestId 4
             br3 = Branch "alternative"
             br4 = Branch "ahead"
+            base = Branch "master"
 
         -- Commit c3' conflicts with master, so a rebase should be attempted, but
         -- because it conflicts, the next pull request should be considered.
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr3 br3 c3' "Add Leon test results" "deckard",
-            Logic.PullRequestOpened pr4 br4 c4 "Add Rachael test results" "deckard",
+            Logic.PullRequestOpened pr3 br3 c3' base "Add Leon test results" "deckard",
+            Logic.PullRequestOpened pr4 br4 c4 base "Add Rachael test results" "deckard",
             Logic.CommentAdded pr3 "rachael" "@bot merge",
             Logic.CommentAdded pr4 "rachael" "@bot merge"
           ]
@@ -485,10 +489,11 @@ eventLoopSpec = parallel $ do
           [_c0, _c1, _c2, _c3, _c3', c4, _c5, c6, _c7, _c7f, _c8] = shas
           pr6 = PullRequestId 6
           branch = Branch "intro"
+          base = Branch "master"
 
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr6 branch c6 "Add test results" "deckard",
+            Logic.PullRequestOpened pr6 branch c6 base "Add test results" "deckard",
             Logic.CommentAdded pr6 "rachael" "@bot merge"
           ]
 
@@ -541,10 +546,11 @@ eventLoopSpec = parallel $ do
           [_c0, _c1, _c2, _c3, _c3', _c4, _c5, _c6, _c7, c7f, _c8] = shas
           pr8 = PullRequestId 8
           branch = Branch "fixup"
+          base = Branch "master"
 
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr8 branch c7f "Add test results" "deckard",
+            Logic.PullRequestOpened pr8 branch c7f base "Add test results" "deckard",
             Logic.CommentAdded pr8 "rachael" "@bot merge"
           ]
 
@@ -579,10 +585,11 @@ eventLoopSpec = parallel $ do
           [_c0, _c1, _c2, _c3, _c3', c4, _c5, _c6, _c7, c7f, _c8] = shas
           pr8 = PullRequestId 8
           branch = Branch "fixup"
+          base = Branch "master"
 
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr8 branch c7f "Add test results" "deckard",
+            Logic.PullRequestOpened pr8 branch c7f base "Add test results" "deckard",
             Logic.CommentAdded pr8 "rachael" "@bot merge"
           ]
 
@@ -626,6 +633,7 @@ eventLoopSpec = parallel $ do
           [_c0, _c1, _c2, _c3, _c3', _c4, _c5, _c6, _c7, c7f, c8] = shas
           pr8 = PullRequestId 8
           branch = Branch "fixup"
+          base = Branch "master"
 
         -- The commit graph looks like "c7 -- c8 -- c7f", where c7 needs to be
         -- fixed up. We now already push c8 to master, so the only thing left in
@@ -637,7 +645,7 @@ eventLoopSpec = parallel $ do
 
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr8 branch c7f "Add test results" "deckard",
+            Logic.PullRequestOpened pr8 branch c7f base "Add test results" "deckard",
             Logic.CommentAdded pr8 "rachael" "@bot merge"
           ]
 

@@ -169,7 +169,7 @@ ensureCloned config =
 
 data Event
   -- GitHub events
-  = PullRequestOpened PullRequestId Branch Sha Text Username -- PR, branch, sha, title, author.
+  = PullRequestOpened PullRequestId Branch Sha Branch Text Username -- PR, branch, sha, title, author.
   -- The commit changed event may contain false positives: it may be received
   -- even if the commit did not really change. This is because GitHub just
   -- sends a "something changed" event along with the new state.
@@ -223,7 +223,7 @@ handleEventInternal
   -> ProjectState
   -> Action ProjectState
 handleEventInternal triggerConfig event = case event of
-  PullRequestOpened pr branch sha title author -> handlePullRequestOpened pr branch sha title author
+  PullRequestOpened pr branch sha base title author -> handlePullRequestOpened pr branch sha base title author
   PullRequestCommitChanged pr sha -> handlePullRequestCommitChanged pr sha
   PullRequestClosed pr            -> handlePullRequestClosed pr
   CommentAdded pr author body     -> handleCommentAdded triggerConfig pr author body
@@ -234,12 +234,13 @@ handlePullRequestOpened
   :: PullRequestId
   -> Branch
   -> Sha
+  -> Branch
   -> Text
   -> Username
   -> ProjectState
   -> Action ProjectState
-handlePullRequestOpened pr branch sha title author =
-  return . Pr.insertPullRequest pr branch sha title author
+handlePullRequestOpened pr branch sha base title author =
+  return . Pr.insertPullRequest pr branch sha base title author
 
 handlePullRequestCommitChanged :: PullRequestId -> Sha -> ProjectState -> Action ProjectState
 handlePullRequestCommitChanged pr newSha state =
@@ -253,8 +254,9 @@ handlePullRequestCommitChanged pr newSha state =
         branch = Pr.branch pullRequest
         title  = Pr.title pullRequest
         author = Pr.author pullRequest
+        base   = Pr.base pullRequest
       in
-        closedState >>= handlePullRequestOpened pr branch newSha title author
+        closedState >>= handlePullRequestOpened pr branch newSha base title author
   in
     case Pr.lookupPullRequest pr state of
       -- If the change notification was a false positive, ignore it.
@@ -361,6 +363,7 @@ synchronizeState stateInitial =
             pr
             (GithubApi.branch details)
             (GithubApi.sha details)
+            (GithubApi.base details)
             (GithubApi.title details)
             (GithubApi.author details)
             state

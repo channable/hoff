@@ -90,6 +90,7 @@ data PullRequestStatus
 data PullRequest = PullRequest
   { sha                 :: Sha
   , branch              :: Branch
+  , base                :: Branch
   , title               :: Text
   , author              :: Username
   , approvedBy          :: Maybe Username
@@ -160,14 +161,16 @@ insertPullRequest
   :: PullRequestId
   -> Branch
   -> Sha
+  -> Branch
   -> Text
   -> Username
   -> ProjectState
   -> ProjectState
-insertPullRequest (PullRequestId n) prBranch prSha prTitle prAuthor state =
+insertPullRequest (PullRequestId n) prBranch prSha prBase prTitle prAuthor state =
   let pullRequest = PullRequest {
         sha                 = prSha,
         branch              = prBranch,
+        base                = prBase,
         title               = prTitle,
         author              = prAuthor,
         approvedBy          = Nothing,

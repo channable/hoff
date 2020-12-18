@@ -60,8 +60,9 @@ data PullRequestPayload = PullRequestPayload {
   owner      :: Text,     -- Corresponds to "pull_request.base.repo.owner.login".
   repository :: Text,     -- Corresponds to "pull_request.base.repo.name".
   number     :: Int,      -- Corresponds to "pull_request.number".
-  branch     :: Branch,   -- Corresponds to "pull_request.head.ref".
+  branch     :: Branch,   -- Corresponds to "pull_request.head.ref",
   sha        :: Sha,      -- Corresponds to "pull_request.head.sha".
+  base       :: Branch,   -- Corresponds to "pull_request.base.ref"
   title      :: Text,     -- Corresponds to "pull_request.title".
   author     :: Username  -- Corresponds to "pull_request.user.login".
 } deriving (Eq, Show)
@@ -121,6 +122,7 @@ instance FromJSON PullRequestPayload where
     <*> getNested v ["pull_request", "number"]
     <*> getNested v ["pull_request", "head", "ref"]
     <*> getNested v ["pull_request", "head", "sha"]
+    <*> getNested v ["pull_request", "base", "ref"]
     <*> getNested v ["pull_request", "title"]
     <*> getNested v ["pull_request", "user", "login"]
   parseJSON nonObject = typeMismatch "pull_request payload" nonObject

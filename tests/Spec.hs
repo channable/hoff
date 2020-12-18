@@ -51,7 +51,7 @@ testTriggerConfig = Config.TriggerConfiguration {
 singlePullRequestState :: PullRequestId -> Branch -> Sha -> Username -> ProjectState
 singlePullRequestState pr prBranch prSha prAuthor =
   let
-    event = PullRequestOpened pr prBranch prSha "Untitled" prAuthor
+    event = PullRequestOpened pr prBranch prSha (Branch "master") "Untitled" prAuthor
   in
     fst $ runAction $ handleEventTest event Project.emptyProjectState
 
@@ -193,7 +193,7 @@ main = hspec $ do
   describe "Logic.handleEvent" $ do
 
     it "handles PullRequestOpened" $ do
-      let event = PullRequestOpened (PullRequestId 3) (Branch "p") (Sha "e0f") "title" "lisa"
+      let event = PullRequestOpened (PullRequestId 3) (Branch "p") (Sha "e0f") (Branch "master") "title" "lisa"
           state = fst $ runAction $ handleEventTest event Project.emptyProjectState
       state `shouldSatisfy` Project.existsPullRequest (PullRequestId 3)
       let pr = fromJust $ Project.lookupPullRequest (PullRequestId 3) state
@@ -203,8 +203,8 @@ main = hspec $ do
       Project.integrationStatus pr `shouldBe` Project.NotIntegrated
 
     it "handles PullRequestClosed" $ do
-      let event1 = PullRequestOpened (PullRequestId 1) (Branch "p") (Sha "abc") "title" "peter"
-          event2 = PullRequestOpened (PullRequestId 2) (Branch "q") (Sha "def") "title" "jack"
+      let event1 = PullRequestOpened (PullRequestId 1) (Branch "p") (Sha "abc") (Branch "master") "title" "peter"
+          event2 = PullRequestOpened (PullRequestId 2) (Branch "q") (Sha "def") (Branch "master") "title" "jack"
           event3 = PullRequestClosed (PullRequestId 1)
           state  = fst $ runAction $ handleEventsTest [event1, event2, event3] Project.emptyProjectState
       state `shouldSatisfy` not . Project.existsPullRequest (PullRequestId 1)
@@ -355,7 +355,7 @@ main = hspec $ do
 
     it "ignores a build status change for commits that are not the integration candidate" $ do
       let
-        event0 = PullRequestOpened (PullRequestId 2) (Branch "p") (Sha "0ad") "title" "harry"
+        event0 = PullRequestOpened (PullRequestId 2) (Branch "p") (Sha "0ad") (Branch "master") "title" "harry"
         event1 = BuildStatusChanged (Sha "0ad") Project.BuildSucceeded
         state  = candidateState (PullRequestId 1) (Branch "p") (Sha "a38") "harry" "deckard" (Sha "84c")
         state' = fst $ runAction $ handleEventsTest [event0, event1] state
@@ -386,9 +386,9 @@ main = hspec $ do
     it "notifies approvers about queue position" $ do
       let
         state
-          = Project.insertPullRequest (PullRequestId 1) (Branch "p") (Sha "a38") "Add Nexus 7 experiment" (Username "tyrell")
-          $ Project.insertPullRequest (PullRequestId 2) (Branch "s") (Sha "dec") "Some PR" (Username "rachael")
-          $ Project.insertPullRequest (PullRequestId 3) (Branch "s") (Sha "f16") "Another PR" (Username "rachael")
+          = Project.insertPullRequest (PullRequestId 1) (Branch "p") (Sha "a38") (Branch "master") "Add Nexus 7 experiment" (Username "tyrell")
+          $ Project.insertPullRequest (PullRequestId 2) (Branch "s") (Sha "dec") (Branch "master") "Some PR" (Username "rachael")
+          $ Project.insertPullRequest (PullRequestId 3) (Branch "s") (Sha "f16") (Branch "master") "Another PR" (Username "rachael")
           $ Project.emptyProjectState
         -- Approve pull request in order of ascending id.
         events =
@@ -433,8 +433,8 @@ main = hspec $ do
     it "abandons integration when a pull request is closed" $ do
       let
         state
-          = Project.insertPullRequest (PullRequestId 1) (Branch "p") (Sha "a38") "Add Nexus 7 experiment" (Username "tyrell")
-          $ Project.insertPullRequest (PullRequestId 2) (Branch "s") (Sha "dec") "Some PR" (Username "rachael")
+          = Project.insertPullRequest (PullRequestId 1) (Branch "p") (Sha "a38") (Branch "master") "Add Nexus 7 experiment" (Username "tyrell")
+          $ Project.insertPullRequest (PullRequestId 2) (Branch "s") (Sha "dec") (Branch "master") "Some PR" (Username "rachael")
           $ Project.emptyProjectState
         -- Approve both pull requests, then close the first.
         events =
@@ -520,6 +520,7 @@ main = hspec $ do
             [ Just $ GithubApi.PullRequest
               { GithubApi.sha    = Sha "7faa52318"
               , GithubApi.branch = Branch "nexus-7"
+              , GithubApi.base   = Branch "master"
               , GithubApi.title  = "Add Nexus 7 experiment"
               , GithubApi.author = Username "tyrell"
               }
@@ -579,6 +580,7 @@ main = hspec $ do
         pullRequest = PullRequest
           { Project.branch              = Branch "results/rachael"
           , Project.sha                 = Sha "f35"
+          , Project.base                = Branch "master"
           , Project.title               = "Add my test results"
           , Project.author              = "rachael"
           , Project.approvedBy          = Just "deckard"
@@ -604,6 +606,7 @@ main = hspec $ do
         pullRequest = PullRequest
           { Project.branch              = Branch "results/rachael"
           , Project.sha                 = Sha "f35"
+          , Project.base                = Branch "master"
           , Project.title               = "Add my test results"
           , Project.author              = "rachael"
           , Project.approvedBy          = Just "deckard"
@@ -645,6 +648,7 @@ main = hspec $ do
               (PullRequestId 1)
               (Branch "n7")
               (Sha "a39")
+              (Branch "master")
               "Add Nexus 7 experiment"
               (Username "tyrell")
           $ Project.emptyProjectState
@@ -684,6 +688,7 @@ main = hspec $ do
             {
               Project.branch              = Branch "results/leon",
               Project.sha                 = Sha "f35",
+              Project.base                = Branch "master",
               Project.title               = "Add Leon test results",
               Project.author              = "rachael",
               Project.approvedBy          = Just "deckard",
@@ -695,6 +700,7 @@ main = hspec $ do
             {
               Project.branch              = Branch "results/rachael",
               Project.sha                 = Sha "f37",
+              Project.base                = Branch "master",
               Project.title               = "Add my test results",
               Project.author              = "rachael",
               Project.approvedBy          = Just "deckard",
@@ -727,6 +733,7 @@ main = hspec $ do
               (PullRequestId 1)
               (Branch "n7")
               (Sha "a39")
+              (Branch "master")
               "Add Nexus 7 experiment"
               (Username "tyrell")
           $ Project.emptyProjectState
@@ -853,6 +860,7 @@ main = hspec $ do
           , number     = 1
           , branch     = Branch "results"
           , sha        = Sha "b26354"
+          , base       = Branch "master"
           , title      = "Add test results"
           , author     = "rachael"
           }
@@ -861,14 +869,14 @@ main = hspec $ do
       let payload = testPullRequestPayload Github.Opened
           Just event = convertGithubEvent $ Github.PullRequest payload
       event `shouldBe`
-        (PullRequestOpened (PullRequestId 1) (Branch "results") (Sha "b26354") "Add test results" "rachael")
+        (PullRequestOpened (PullRequestId 1) (Branch "results") (Sha "b26354") (Branch "master") "Add test results" "rachael")
 
     it "converts a pull request reopened event" $ do
       let payload = testPullRequestPayload Github.Reopened
           Just event = convertGithubEvent $ Github.PullRequest payload
       -- Reopened is treated just like opened, there is no memory in the system.
       event `shouldBe`
-        (PullRequestOpened (PullRequestId 1) (Branch "results") (Sha "b26354") "Add test results" "rachael")
+        (PullRequestOpened (PullRequestId 1) (Branch "results") (Sha "b26354") (Branch "master") "Add test results" "rachael")
 
     it "converts a pull request closed event" $ do
       let payload = testPullRequestPayload Github.Closed

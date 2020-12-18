@@ -54,6 +54,7 @@ import qualified Project
 data PullRequest = PullRequest
   { sha    :: Sha
   , branch :: Branch
+  , base   :: Branch
   , title  :: Text
   , author :: Username
   }
@@ -150,6 +151,7 @@ runGithub auth projectInfo operation =
         Right details -> pure $ cont $ Just $ PullRequest
           { sha    = Sha $ Github3.pullRequestCommitSha $ Github3.pullRequestHead details
           , branch = Branch $ Github3.pullRequestCommitRef $ Github3.pullRequestHead details
+          , base   = Branch $ Github3.pullRequestCommitRef $ Github3.pullRequestBase details
           , title  = Github3.pullRequestTitle details
           , author = Username $ Github3.untagName $ Github3.simpleUserLogin $ Github3.pullRequestUser details
           }

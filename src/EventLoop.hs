@@ -47,10 +47,11 @@ eventFromPullRequestPayload payload =
     author = Github.author (payload :: PullRequestPayload)
     branch = Github.branch (payload :: PullRequestPayload)
     sha    = Github.sha    (payload :: PullRequestPayload)
+    base   = Github.base   (payload :: PullRequestPayload)
   in
     case Github.action (payload :: PullRequestPayload) of
-      Github.Opened      -> Logic.PullRequestOpened (PullRequestId number) branch sha title author
-      Github.Reopened    -> Logic.PullRequestOpened (PullRequestId number) branch sha title author
+      Github.Opened      -> Logic.PullRequestOpened (PullRequestId number) branch sha base title author
+      Github.Reopened    -> Logic.PullRequestOpened (PullRequestId number) branch sha base title author
       Github.Closed      -> Logic.PullRequestClosed (PullRequestId number)
       -- TODO: Also deal with title updates.
       Github.Synchronize -> Logic.PullRequestCommitChanged (PullRequestId number) sha
