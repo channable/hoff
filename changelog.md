@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.1
+
+Released 2021-02-17.
+
+ * Fix a bug that prevented pull request review webhooks from being processed.
+
 ## 0.19.0
 
 Released 2021-02-12.
