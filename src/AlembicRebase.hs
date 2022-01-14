@@ -1,12 +1,13 @@
 module AlembicRebase where
 
-import Control.Exception (Exception (..), SomeException (..), catch)
+import Control.Exception (Exception (..), SomeException (..), catch, handle)
 import Data.Char (isAlphaNum)
 import Data.List (find)
 import Data.Maybe (mapMaybe)
 import Data.String (IsString (..))
 
 import qualified Data.Map as M
+import qualified Data.Text as Text
 import qualified Language.Python.Common.AST as Python
 import qualified Language.Python.Version3.Parser as Python
 
@@ -159,3 +160,15 @@ rebaseInstructions existingAlembics newAlembics = do
       , rebaseInstructionOld = newestFirstAlembicDown
       , rebaseInstructionNew = latestExistingAlembic
       }
+
+executeRebaseInstructions :: RebaseInstructions -> IO (Maybe AlembicRebaseError)
+executeRebaseInstructions instructions =
+  let file = rebaseInstructionsFile instructions
+      RevisionId oldRevision = rebaseInstructionOld instructions
+      RevisionId newRevision = rebaseInstructionNew instructions
+  in handle (\e@SomeException{} -> pure $ Just $ AlembicRebasePythonFileError file (displayException e)) $
+    do
+      contents <- readFile file
+      let replaced = Text.unpack $ Text.replace (Text.pack oldRevision) (Text.pack newRevision) $ Text.pack $! contents
+      writeFile file $! replaced
+      pure Nothing

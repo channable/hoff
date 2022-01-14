@@ -3,6 +3,8 @@ module AlembicRebaseSpec where
 
 import Test.Hspec
 import Data.Either (isRight)
+import System.IO.Temp (withSystemTempFile)
+import System.IO (hClose, hPutStr)
 
 import qualified AlembicRebase as AR
 
@@ -89,3 +91,34 @@ alembicSpec = do
     it "should break with conflicting revisions in new alembics" $
       AR.rebaseInstructions [noDownRevision, alembic2, alembic4] [alembic3, alembic3wrong, alembic5, alembic6]
         `shouldBe` (Left $ AR.AlembicRebaseConflictingRevisions ["3"])
+
+    it "should correctly execute the instructions" $ do
+      let contents = "hello\n1\n2\n3"
+      withSystemTempFile "rebase_file.py" $
+        \fp h -> do
+          hPutStr h contents
+          hClose h
+          let rebaseInstructions = AR.RebaseInstructions
+                { AR.rebaseInstructionsFile = fp
+                , AR.rebaseInstructionOld = "2"
+                , AR.rebaseInstructionNew = "4"
+                }
+          res <- AR.executeRebaseInstructions rebaseInstructions
+          res `shouldBe` Nothing
+          newContents <- readFile fp
+          newContents `shouldBe` "hello\n1\n4\n3"
+    it "should correctly rewrite multiple entries the instructions" $ do
+      let contents = "hello, we are rewriting 2\n1\ndown_revision='2'\n3"
+      withSystemTempFile "rebase_file.py" $
+        \fp h -> do
+          hPutStr h contents
+          hClose h
+          let rebaseInstructions = AR.RebaseInstructions
+                { AR.rebaseInstructionsFile = fp
+                , AR.rebaseInstructionOld = "2"
+                , AR.rebaseInstructionNew = "4"
+                }
+          res <- AR.executeRebaseInstructions rebaseInstructions
+          res `shouldBe` Nothing
+          newContents <- readFile fp
+          newContents `shouldBe` "hello, we are rewriting 4\n1\ndown_revision='4'\n3"
