@@ -49,6 +49,7 @@ module Git
   tag,
   tag',
   tryIntegrate,
+  rebaseAlembicAndCommit,
 )
 where
 
@@ -74,6 +75,7 @@ import Configuration (UserConfiguration)
 import Format (format)
 
 import qualified Configuration as Config
+import qualified AlembicRebase as AR
 import GitHub.Internal.Prelude (Generic)
 
 -- | A branch is identified by its name.
@@ -182,7 +184,7 @@ instance FromJSON GitIntegrationFailure
 
 instance ToJSON GitIntegrationFailure where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 
-data GitOperationFree a
+data GitOperationFree b a
   = FetchBranch Branch FetchWithTags a
   | ForcePush Sha Branch a
   | Push Sha Branch (PushResult -> a)
@@ -198,67 +200,83 @@ data GitOperationFree a
   | Tag Sha TagName TagMessage (TagResult -> a)
   | DeleteTag TagName a
   | CheckOrphanFixups Sha RemoteBranch (Bool -> a)
-  | ListRecentlyTouchedFiles SomeRefSpec SomeRefSpec FilePath (Maybe [FilePath] -> a)
+  | ListRecentlyTouchedFiles String String FilePath (Maybe [FilePath] -> a)
+  | GetGitDirectory (FilePath -> a)
+  | RunIOAction (IO b) (b -> a)
+  | Add [FilePath] a
+  | Commit Text (Maybe Sha -> a)
   deriving (Functor)
 
-type GitOperation = Free GitOperationFree
+type GitOperation b = Free (GitOperationFree b)
 
-fetchBranch :: Branch -> GitOperation ()
+fetchBranch :: Branch -> GitOperation b ()
 fetchBranch remoteBranch = liftF $ FetchBranch remoteBranch NoTags ()
 
-fetchBranchWithTags :: Branch -> GitOperation ()
+fetchBranchWithTags :: Branch -> GitOperation b ()
 fetchBranchWithTags remoteBranch = liftF $ FetchBranch remoteBranch WithTags ()
 
-forcePush :: Sha -> Branch -> GitOperation ()
+forcePush :: Sha -> Branch -> GitOperation b ()
 forcePush sha remoteBranch = liftF $ ForcePush sha remoteBranch ()
 
-push :: Sha -> Branch -> GitOperation PushResult
+push :: Sha -> Branch -> GitOperation b PushResult
 push sha remoteBranch = liftF $ Push sha remoteBranch id
 
-pushAtomic :: [SomeRefSpec] -> GitOperation PushResult
+pushAtomic :: [SomeRefSpec] -> GitOperation b PushResult
 pushAtomic refs = liftF $ PushAtomic refs id
 
-rebase :: Sha -> RemoteBranch -> GitOperation (Maybe Sha)
+rebase :: Sha -> RemoteBranch -> GitOperation b (Maybe Sha)
 rebase sha ontoBranch = liftF $ Rebase sha ontoBranch id
 
-merge :: Sha -> Text -> GitOperation (Maybe Sha)
+merge :: Sha -> Text -> GitOperation b (Maybe Sha)
 merge sha message = liftF $ Merge sha message id
 
 -- Check out the commit that origin/<branch> points to. So we end up in a
 -- detached HEAD state. Returns the sha of the checked out commit.
-checkout :: RemoteBranch -> GitOperation (Maybe Sha)
+checkout :: RemoteBranch -> GitOperation b (Maybe Sha)
 checkout branch = liftF $ Checkout branch id
 
 -- Return the parent of the given commit.
-getParent :: Sha -> GitOperation (Maybe Sha)
+getParent :: Sha -> GitOperation b (Maybe Sha)
 getParent sha = liftF $ GetParent sha id
 
-clone :: RemoteUrl -> GitOperation CloneResult
+clone :: RemoteUrl -> GitOperation b CloneResult
 clone url = liftF $ Clone url id
 
-doesGitDirectoryExist :: GitOperation Bool
+doesGitDirectoryExist :: GitOperation b Bool
 doesGitDirectoryExist = liftF $ DoesGitDirectoryExist id
 
-lastTag :: Sha -> GitOperation (Maybe TagName)
+lastTag :: Sha -> GitOperation b (Maybe TagName)
 lastTag sha = liftF $ LastTag sha (TagName . Text.strip <$>)
 
-shortlog :: SomeRefSpec -> SomeRefSpec -> GitOperation (Maybe Text)
+shortlog :: SomeRefSpec -> SomeRefSpec -> GitOperation b (Maybe Text)
 shortlog refStart refEnd = liftF $ ShortLog refStart refEnd id
 
-tag :: Sha -> TagName -> TagMessage -> GitOperation TagResult
+tag :: Sha -> TagName -> TagMessage -> GitOperation b TagResult
 tag sha name message = liftF $ Tag sha name message id
 
-tag' :: Sha -> TagName -> GitOperation TagResult
+tag' :: Sha -> TagName -> GitOperation b TagResult
 tag' sha t@(TagName name) = tag sha t (TagMessage name)
 
-deleteTag :: TagName -> GitOperation ()
+deleteTag :: TagName -> GitOperation b ()
 deleteTag t = liftF $ DeleteTag t ()
 
-checkOrphanFixups :: Sha -> RemoteBranch -> GitOperation Bool
+checkOrphanFixups :: Sha -> RemoteBranch -> GitOperation b Bool
 checkOrphanFixups sha branch = liftF $ CheckOrphanFixups sha branch id
 
-listRecentlyTouchedFiles :: SomeRefSpec -> SomeRefSpec -> FilePath -> GitOperation (Maybe [FilePath])
+listRecentlyTouchedFiles :: String -> String -> FilePath -> GitOperation b (Maybe [FilePath])
 listRecentlyTouchedFiles compareRev compareTo directory = liftF $ ListRecentlyTouchedFiles compareRev compareTo directory id
+
+getGitDirectory :: GitOperation b FilePath
+getGitDirectory = liftF $ GetGitDirectory id
+
+runIO :: IO a -> GitOperation a a
+runIO io = liftF $ RunIOAction io id
+
+commit :: Text -> GitOperation b (Maybe Sha)
+commit message = liftF $ Commit message id
+
+add :: [FilePath] -> GitOperation b ()
+add files = liftF $ Add files ()
 
 -- Invokes Git with the given arguments. Returns its output on success, or the
 -- exit code and stderr on error.
@@ -298,12 +316,12 @@ callGit userConfig args = do
 -- Interpreter for the GitOperation free monad that starts Git processes and
 -- parses its output.
 runGit
-  :: forall m a
+  :: forall m a b
    . MonadIO m
   => MonadLogger m
   => UserConfiguration
   -> FilePath
-  -> GitOperationFree a
+  -> GitOperationFree b a
   -> m a
 runGit userConfig repoDir operation =
   let
@@ -482,7 +500,7 @@ runGit userConfig repoDir operation =
           pure $ cont anyOrphanFixups
 
     ListRecentlyTouchedFiles compareRev compareTo directory cont -> do
-      let range = refSpec compareRev <> ".." <> refSpec compareTo
+      let range = compareRev <> ".." <> compareTo
       result <- callGitInRepo [ "diff", "--no-renames", "--name-only", "-z", range, "--", directory]
       case result of
         Left (code, message) -> do
@@ -490,17 +508,25 @@ runGit userConfig repoDir operation =
           pure $ cont Nothing
         Right fileText ->
           pure $ cont (Just (map unpack $ splitOn "\0" fileText))
-
+    GetGitDirectory cont -> do
+      pure $ cont repoDir
+    RunIOAction io cont -> do
+      res <- liftIO io
+      pure (cont res)
+    Add paths cont -> cont <$ callGitInRepo (["add", "-d"] <> paths)
+    Commit message cont -> do
+      _ <- callGitInRepo [ "commit", "-m", Text.unpack message]
+      cont <$> getHead
 
 -- Interpreter that runs only Git operations that have no side effects on the
 -- remote; it does not push.
 runGitReadOnly
-  :: forall m a
+  :: forall m a b
    . MonadIO m
   => MonadLogger m
   => UserConfiguration
   -> FilePath
-  -> GitOperationFree a
+  -> GitOperationFree b a
   -> m a
 runGitReadOnly userConfig repoDir operation =
   let
@@ -522,6 +548,9 @@ runGitReadOnly userConfig repoDir operation =
       DeleteTag {} -> unsafeResult
       CheckOrphanFixups {} -> unsafeResult
       ListRecentlyTouchedFiles {} -> unsafeResult
+      RunIOAction {} -> unsafeResult
+      Add {} -> unsafeResult
+      Commit {} -> unsafeResult
 
       -- These operations mutate the remote, so we don't execute them in
       -- read-only mode.
@@ -536,11 +565,13 @@ runGitReadOnly userConfig repoDir operation =
           $ "Would have pushed atomically the following refs: "
           <> Text.intercalate "," (map (Text.pack . refSpec) refs)
         pure $ cont PushRejected
+      GetGitDirectory cont -> pure (cont repoDir)
+
 
 -- Fetches the target branch, rebases the candidate on top of the target branch,
 -- and if that was successful, force-pushes the resulting commits to the test
 -- branch.
-tryIntegrate :: Text -> Branch -> Sha -> RemoteBranch -> Branch -> Bool -> GitOperation (Either GitIntegrationFailure Sha)
+tryIntegrate :: Text -> Branch -> Sha -> RemoteBranch -> Branch -> Bool -> GitOperation b (Either GitIntegrationFailure Sha)
 tryIntegrate message candidateRef candidateSha targetBranch testBranch alwaysAddMergeCommit = do
   -- Fetch the ref for the target commit that needs to be rebased, we might not
   -- have it yet. Although Git supports fetching single commits, GitHub does
@@ -592,3 +623,69 @@ tryIntegrate message candidateRef candidateSha targetBranch testBranch alwaysAdd
             Nothing     -> pure ()
 
           pure $ maybe (Left MergeFailed) Right newTip
+
+maxIterations :: Int
+maxIterations = 5000
+
+iterationStep :: Int
+iterationStep = 100
+
+--  SomeRefSpec -> SomeRefSpec -> FilePath -> GitOperation (Maybe [FilePath])
+
+listFilesUntilResults :: SomeRefSpec -> SomeRefSpec -> FilePath -> GitOperation b (Maybe [FilePath])
+listFilesUntilResults compareRev compareTo filePath = go iterationStep
+  where go n
+          | n > maxIterations = pure Nothing
+          | otherwise = do
+              res <- listRecentlyTouchedFiles (refSpec compareRev <> "~" <> show n) (refSpec compareTo) filePath
+              case res of
+                Nothing -> pure Nothing
+                Just [] -> go (n + iterationStep)
+                Just alembics -> pure (Just alembics)
+
+loadAlembics :: [FilePath] -> IO (Either AR.AlembicRebaseError [AR.AlembicRevision])
+loadAlembics fps = joinErrors <$> mapM (\fp -> do
+  pythonModuleOrError <- AR.loadPythonFile fp
+  case pythonModuleOrError of
+    Left err -> pure (Left err)
+    Right pythonModule -> pure (AR.alembicRevisions fp pythonModule)
+  ) fps
+  where
+    joinErrors :: [Either a b] -> Either a [b]
+    joinErrors [] = Right []
+    joinErrors (Left e: _) = Left e
+    joinErrors (Right r: xs) = case joinErrors xs of
+      Right rs -> Right (r : rs)
+      Left e -> Left e
+
+rebaseAlembicAndCommit :: BaseBranch -> Branch -> FilePath -> GitOperation (Either AR.AlembicRebaseError (Maybe AR.RebaseInstructions)) (Either AR.AlembicRebaseError (Maybe (AR.RebaseInstructions, Sha)))
+rebaseAlembicAndCommit baseBranch prBranch alembicLocation = do
+  gitDir <- getGitDirectory
+  mNewAlembicFiles <- listRecentlyTouchedFiles (refSpec baseBranch) (refSpec prBranch) alembicLocation
+  mExistingAlembicFiles <- listFilesUntilResults (AsRefSpec baseBranch) (AsRefSpec baseBranch) alembicLocation
+  case (mNewAlembicFiles, mExistingAlembicFiles) of
+    (Just newAlembicFiles, Just existingAlembicFiles) -> do
+      renameResult <- runIO $ do
+        newAlembics <- loadAlembics (map (gitDir </>) newAlembicFiles)
+        existingAlembics <- loadAlembics (map (gitDir </>) existingAlembicFiles)
+        let result = existingAlembics >>= \ea -> newAlembics >>= AR.rebaseInstructions ea
+        case result of
+          Left e -> pure $ Left e
+          Right Nothing -> pure (Right Nothing)
+          Right (Just instr) -> do
+            executionResult <- AR.executeRebaseInstructions instr
+            case executionResult of
+              Nothing -> pure (Right (Just instr))
+              Just e -> pure (Left e)
+      case renameResult of
+        Left e -> pure (Left e)
+        Right Nothing -> pure (Right Nothing)
+        Right (Just instructions) -> do
+          add [AR.rebaseInstructionsFile instructions]
+          let AR.RevisionId old = AR.rebaseInstructionOld instructions
+              AR.RevisionId new = AR.rebaseInstructionNew instructions
+          mSha <- commit ("Rebase alembic, rename " <> (Text.pack old) <> " to " <> (Text.pack new))
+          case mSha of
+            Nothing -> pure (Left (AR.AlembicRebaseInternalError "Could not commit the alembic"))
+            Just sha -> pure (Right (Just (instructions, sha)))
+    (_, _) -> pure (Left $ AR.AlembicRebaseInternalError "Cannot find the recently touched files")

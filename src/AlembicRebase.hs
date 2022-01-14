@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 module AlembicRebase where
 
 import Control.Exception (Exception (..), SomeException (..), catch, handle)
@@ -20,6 +21,16 @@ data AlembicRebaseError
   | AlembicRebaseInternalError String
   | AlembicRebaseConflictingRevisions [RevisionId]
   deriving (Eq, Show)
+
+explainRebaseError :: AlembicRebaseError -> String
+explainRebaseError = \case
+  (AlembicRebasePythonFileError fp err) -> "An error occured when parsing " <> fp <> ": " <> err
+  (AlembicRebaseUnknownVariable fp name) -> "Could not find " <> name <> " in " <> fp
+  (AlembicRebaseInvalidRevisionId fp revId) -> "Expected a String or None as the revision id, got: " <> revId <> " in " <> fp
+  (AlembicRebaseUnexpectedNone fp) -> "Encountered an unexpected None value in " <> fp
+  AlembicRebaseExistingBaseNotFound -> "Could not find the alembic base for master, are there any alembics on master"
+  (AlembicRebaseInternalError err) -> "An internal error occurred: " <> err
+  (AlembicRebaseConflictingRevisions revs) -> "There were some conflicting revisions: " <> show revs
 
 loadPythonFile :: FilePath -> IO (Either AlembicRebaseError Python.ModuleSpan)
 loadPythonFile pythonFilePath = do

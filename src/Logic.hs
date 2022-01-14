@@ -68,6 +68,7 @@ import Project (Approval (..), ApprovedFor (..), BuildStatus (..), IntegrationSt
 import Time (TimeOperation, TimeOperationFree)
 import Types (PullRequestId (..), Username (..))
 
+import qualified AlembicRebase as AR
 import qualified Configuration as Config
 import qualified Git
 import qualified GithubApi
@@ -91,6 +92,7 @@ data ActionFree a
   | GetLatestVersion Sha (Either TagName Integer -> a)
   | GetChangelog TagName Sha (Maybe Text -> a)
   | GetDateTime (UTCTime -> a)
+  | RebaseAlembic Sha BaseBranch Branch (Maybe FilePath) (Either (Maybe AR.AlembicRebaseError) (Maybe AR.RebaseInstructions) -> a)
   deriving (Functor)
 
 data PRCloseCause =
@@ -99,7 +101,7 @@ data PRCloseCause =
 
 type Action = Free ActionFree
 
-type Operation = Free (Sum TimeOperationFree (Sum GitOperationFree GithubOperationFree))
+type Operation b = Free (Sum TimeOperationFree (Sum (GitOperationFree b) GithubOperationFree))
 
 type PushWithTagResult = (Either Text TagName, PushResult)
 
@@ -108,13 +110,15 @@ type PushWithTagResult = (Either Text TagName, PushResult)
 
 data IntegrationFailure = IntegrationFailure BaseBranch GitIntegrationFailure
 
-doTime :: TimeOperation a -> Operation a
+doTime :: TimeOperation a -> Operation b a
 doTime = hoistFree InL
 
-doGit :: GitOperation a -> Operation a
+doGit
+  :: GitOperation (Either AR.AlembicRebaseError (Maybe AR.RebaseInstructions)) a
+  -> Operation (Either AR.AlembicRebaseError (Maybe AR.RebaseInstructions)) a
 doGit = hoistFree (InR . InL)
 
-doGithub :: GithubOperation a -> Operation a
+doGithub :: GithubOperation a -> Operation b a
 doGithub = hoistFree (InR . InR)
 
 tryIntegrate :: Text -> (Branch, Sha) -> Bool -> Action (Either IntegrationFailure Sha)
@@ -154,8 +158,11 @@ getChangelog prevTag curHead = liftF $ GetChangelog prevTag curHead id
 getDateTime :: Action UTCTime
 getDateTime = liftF $ GetDateTime id
 
+rebaseAlembic :: Sha -> BaseBranch -> Branch -> Maybe FilePath -> Action (Either (Maybe AR.AlembicRebaseError) (Maybe AR.RebaseInstructions))
+rebaseAlembic sha baseBranch prBranch alembicLocation = liftF $ RebaseAlembic sha baseBranch prBranch alembicLocation id
+
 -- Interpreter that translates high-level actions into more low-level ones.
-runAction :: ProjectConfiguration -> Action a -> Operation a
+runAction :: ProjectConfiguration -> Action a -> Operation (Either AR.AlembicRebaseError (Maybe AR.RebaseInstructions)) a
 runAction config = foldFree $ \case
   TryIntegrate message (ref, sha) alwaysAddMergeCommit cont -> do
     doGit $ ensureCloned config
@@ -212,7 +219,29 @@ runAction config = foldFree $ \case
 
   GetDateTime cont -> doTime $ cont <$> Time.getDateTime
 
-ensureCloned :: ProjectConfiguration -> GitOperation ()
+  RebaseAlembic sha baseBranch prBranch alembicLocation cont -> do
+    doGit $ ensureCloned config
+    shaOrFailed <- doGit $ Git.rebase sha (Git.RemoteBranch $ Config.branch config)
+    case shaOrFailed of
+      -- The rebase failed
+      Nothing -> pure $ cont (Left Nothing)
+      Just integratedSha -> do
+        alembicRebaseResult <- case alembicLocation of
+          -- If there is no alembic location, the result is the same as if there are no alembics
+          Nothing -> pure $ Right Nothing
+          Just location -> doGit $ Git.rebaseAlembicAndCommit baseBranch prBranch location
+        case alembicRebaseResult of
+          Left e -> pure $ cont (Left $ Just e)
+          Right Nothing -> do
+            -- Push the rebased hash
+            doGit $ Git.forcePush integratedSha prBranch
+            pure $ cont $ Right Nothing
+          Right (Just (result, commitSha)) -> do
+            -- Push the commit that was made after the rebase
+            doGit $ Git.forcePush commitSha prBranch
+            pure $ cont $ Right (Just result)
+
+ensureCloned :: ProjectConfiguration -> GitOperation b ()
 ensureCloned config =
   let
     url = format "git@github.com:{}/{}.git" (Config.owner config, Config.repository config)
@@ -366,11 +395,15 @@ handlePullRequestEdited prId newTitle newBaseBranch state =
     -- Do nothing if the pull request is not present.
     Nothing -> pure state
 
+data Command
+  = MergeCommand (ApprovedFor, MergeWindow)
+  | RebaseCommand
+
 -- Returns the approval type contained in the given text, if the message is a
 -- command that instructs us to merge the PR.
 -- If the trigger prefix is "@hoffbot", a command "@hoffbot merge" would
 -- indicate the `Merge` approval type.
-parseMergeCommand :: TriggerConfiguration -> Text -> Maybe (ApprovedFor, MergeWindow)
+parseMergeCommand :: TriggerConfiguration -> Text -> Maybe Command
 parseMergeCommand config message =
   let
     messageCaseFold = Text.toCaseFold $ Text.strip message
@@ -385,12 +418,13 @@ parseMergeCommand config message =
     -- reversed all "merge and xxx" commands would be detected as a Merge
     -- command.
     cases =
-      [ (" merge and deploy on friday", (MergeAndDeploy, OnFriday)),
-        (" merge and deploy", (MergeAndDeploy, NotFriday)),
-        (" merge and tag on friday", (MergeAndTag, OnFriday)),
-        (" merge and tag", (MergeAndTag, NotFriday)),
-        (" merge on friday", (Merge,OnFriday)),
-        (" merge", (Merge,NotFriday))
+      [ (" merge and deploy on friday", MergeCommand (MergeAndDeploy, OnFriday)),
+        (" merge and deploy", MergeCommand (MergeAndDeploy, NotFriday)),
+        (" merge and tag on friday", MergeCommand (MergeAndTag, OnFriday)),
+        (" merge and tag", MergeCommand (MergeAndTag, NotFriday)),
+        (" merge on friday", MergeCommand (Merge,OnFriday)),
+        (" merge", MergeCommand (Merge,NotFriday)),
+        (" rebase with alembic", RebaseCommand)
       ]
    in listToMaybe [y | (x, y) <- cases, infixMatch x]
 
@@ -429,17 +463,18 @@ handleCommentAdded triggerConfig projectConfig prId author body state =
       if isApproved
         then -- The PR has now been approved by the author of the comment.
          case fromJust approvalType of
+          RebaseCommand -> handleRebase projectConfig prId state pr
            -- To guard against accidental merges we make use of a merge window.
            -- Merging inside this window is discouraged but can be overruled with a special command.
-          (approval, OnFriday) | day == Friday -> handleMergeRequested projectConfig prId author state pr approval
-          (approval, NotFriday)| day /= Friday -> handleMergeRequested projectConfig prId author state pr approval
-          (other, NotFriday) -> do
+          MergeCommand (approval, OnFriday)  | day == Friday -> handleApprovalRequested projectConfig prId author state pr approval
+          MergeCommand (approval, NotFriday) | day /= Friday -> handleApprovalRequested projectConfig prId author state pr approval
+          MergeCommand (other, NotFriday) -> do
             () <- leaveComment prId ("Your merge request has been denied, because \
                                       \merging on Fridays is not recommended. \
                                       \To override this behaviour use the command `"
                                       <> Pr.displayApproval other <> " on Friday`.")
             pure state
-          (other, OnFriday) -> do
+          MergeCommand (other, OnFriday) -> do
             () <- leaveComment prId ("Your merge request has been denied because \
                                       \it is not Friday. Run " <>
                                       Pr.displayApproval other <> " instead")
@@ -448,7 +483,37 @@ handleCommentAdded triggerConfig projectConfig prId author body state =
      -- If the pull request is not in the state, ignore the comment.
     Nothing -> pure state
 
-handleMergeRequested
+handleRebase
+  :: ProjectConfiguration
+  -> PullRequestId
+  -> ProjectState
+  -> PullRequest
+  -> Action ProjectState
+handleRebase projectConfig prId state pr = do
+  result <- rebaseAlembic (Pr.sha pr) (Pr.baseBranch pr) (Pr.branch pr) (Config.alembicDirectory projectConfig)
+  let resultComment = case result of
+        Left Nothing ->
+          let
+              BaseBranch targetBranchName = Pr.baseBranch pr
+              Branch prBranchName = Pr.branch pr
+          in concat
+          [ "Failed to rebase, please rebase manually using\n\n"
+          , "    git rebase --interactive --autosquash origin/"
+          , Text.unpack targetBranchName
+          , " "
+          , Text.unpack prBranchName
+          ]
+        Left (Just e) -> "AlembicRebase failed, please rebase manually. Error: " <> AR.explainRebaseError e
+        Right Nothing -> "Rebase successful. No alembics were rebased."
+        Right (Just instructions) -> "Rebase successful :tada: " <>
+          let file = AR.rebaseInstructionsFile instructions
+              AR.RevisionId oldRevision = AR.rebaseInstructionOld instructions
+              AR.RevisionId newRevision = AR.rebaseInstructionNew instructions
+          in "Renamed " <> oldRevision <> " to " <> newRevision <> " in " <> file
+  leaveComment prId (Text.pack resultComment)
+  pure state
+
+handleApprovalRequested
   :: ProjectConfiguration
   -> PullRequestId
   -> Username
@@ -456,7 +521,7 @@ handleMergeRequested
   -> PullRequest
   -> ApprovedFor
   -> Action ProjectState
-handleMergeRequested projectConfig prId author state pr approvalType = do
+handleApprovalRequested projectConfig prId author state pr approvalType = do
   let (order, state') = Pr.newApprovalOrder state
   state'' <- approvePullRequest prId (Approval author approvalType order) state'
   -- Check whether the integration branch is valid, if not, mark the integration as invalid.

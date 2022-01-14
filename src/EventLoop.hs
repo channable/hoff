@@ -130,7 +130,7 @@ runLogicEventLoop
   -> ProjectConfiguration
   -- Interpreters for Git and GitHub actions.
   -> (forall a. Time.TimeOperationFree a -> m a)
-  -> (forall a. Git.GitOperationFree a -> m a)
+  -> (forall b a. Git.GitOperationFree b a -> m a)
   -> (forall a. GithubApi.GithubOperationFree a -> m a)
   -- Action that gets the next event from the queue.
   -> m (Maybe Logic.Event)

@@ -182,7 +182,8 @@ buildProjectConfig repoDir stateFile = Config.ProjectConfiguration {
   Config.branch     = "master",
   Config.testBranch = "integration",
   Config.checkout   = repoDir,
-  Config.stateFile  = stateFile
+  Config.stateFile  = stateFile,
+  Config.alembicDirectory = Just "alembic/versions/"
 }
 
 -- Dummy user configuration used in test environment.
