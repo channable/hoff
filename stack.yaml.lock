@@ -25,6 +25,13 @@ packages:
       sha256: 2db26ddb77184186e0d5b2b020bdfbeb044c168024767b1fa3691682ca618896
   original:
     hackage: text-format-0.3.2@sha256:2a3fc17cf87120fcfdbca62a0da59759755549285841cdc1483081c35fb3d115,1814
+- completed:
+    hackage: language-python-0.5.8@sha256:527615d39d4240ca45ed8cb7fe44cbcb28a07732cc98dff0380d04de8b55f59d,2473
+    pantry-tree:
+      size: 1999
+      sha256: ba645bac3c5a0058e7c2c14c2ba5cb95ac093819a1f1a5f498bedbb091e542d5
+  original:
+    hackage: language-python-0.5.8@sha256:527615d39d4240ca45ed8cb7fe44cbcb28a07732cc98dff0380d04de8b55f59d,2473
 snapshots:
 - completed:
     size: 533252

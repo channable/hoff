@@ -5,3 +5,4 @@ extra-deps:
   # Dependency of the "github" package.
   - binary-instances-1.0.1@sha256:974740042381555f9e3614d9fe37136daba155e1f92bc048894698590bcd82f7,2683
   - text-format-0.3.2@sha256:2a3fc17cf87120fcfdbca62a0da59759755549285841cdc1483081c35fb3d115,1814
+  - language-python-0.5.8@sha256:527615d39d4240ca45ed8cb7fe44cbcb28a07732cc98dff0380d04de8b55f59d,2473

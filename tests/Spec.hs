@@ -43,6 +43,7 @@ import qualified Logic
 import qualified Project
 import qualified Data.Time as T
 import qualified Data.Time.Calendar.OrdinalDate as T
+import qualified AlembicRebase as AR
 
 masterBranch :: BaseBranch
 masterBranch = BaseBranch "master"
@@ -60,7 +61,8 @@ testProjectConfig = Config.ProjectConfiguration {
   Config.branch = "master",
   Config.testBranch = "testing",
   Config.checkout = "/var/lib/hoff/checkouts/peter/rep",
-  Config.stateFile = "/var/lib/hoff/state/peter/rep.json"
+  Config.stateFile = "/var/lib/hoff/state/peter/rep.json",
+  Config.alembicDirectory = Just "alembic/versions/"
 }
 
 -- Functions to prepare certain test states.
@@ -96,6 +98,7 @@ data ActionFlat
   | AIsReviewer Username
   | AGetPullRequest PullRequestId
   | AGetOpenPullRequests
+  | ARebasedAlembic Sha BaseBranch Branch (Maybe FilePath)
   deriving (Eq, Show)
 
 -- Results to return from various operations during the tests. There is a
@@ -108,6 +111,7 @@ data Results = Results
   , resultGetLatestVersion    :: [Either TagName Integer]
   , resultGetChangelog        :: [Maybe Text]
   , resultGetDateTime         :: [T.UTCTime]
+  , resultGetRebaseResult     :: [Either (Maybe AR.AlembicRebaseError) (Maybe AR.RebaseInstructions)]
   }
 
 defaultResults :: Results
@@ -123,6 +127,12 @@ defaultResults = Results
   , resultGetLatestVersion = Right <$> [1 ..]
   , resultGetChangelog = repeat Nothing
   , resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 1) (T.secondsToDiffTime 0))
+  , resultGetRebaseResult =
+      [Right (Just (AR.RebaseInstructions
+        { AR.rebaseInstructionsFile = "file1.py"
+        , AR.rebaseInstructionOld = "rev_old"
+        , AR.rebaseInstructionNew = "rev_new"
+        }))]
   }
 
 -- Consume the head of the field with given getter and setter in the Results.
@@ -189,6 +199,15 @@ takeResultGetDateTime =
     resultGetDateTime
     (\v res -> res { resultGetDateTime = v })
 
+takeRebaseResult
+  :: (HasCallStack, Monoid w)
+  => RWS r w Results (Either (Maybe AR.AlembicRebaseError) (Maybe AR.RebaseInstructions))
+takeRebaseResult =
+  takeFromList
+    "resultGetRebaseResult"
+    resultGetRebaseResult
+    (\v res -> res { resultGetRebaseResult = v })
+
 -- This function simulates running the actions, and returns the final state,
 -- together with a list of all actions that would have been performed. Some
 -- actions require input from the outside world. Simulating these actions will
@@ -223,8 +242,11 @@ runActionRws =
         cont <$> takeResultGetOpenPullRequests
       GetLatestVersion _ cont -> cont <$> takeResultGetLatestVersion
       GetChangelog _ _ cont -> cont <$> takeResultGetChangelog
-      GetDateTime cont -> cont <$> takeResultGetDateTime 
-      
+      GetDateTime cont -> cont <$> takeResultGetDateTime
+      RebaseAlembic sha baseBranch branch alembicPath cont -> do
+        Rws.tell [ARebasedAlembic sha baseBranch branch alembicPath]
+        cont <$> takeRebaseResult
+
 -- Simulates running the action. Use the provided results as result for various
 -- operations. Results are consumed one by one.
 runActionCustom :: HasCallStack => Results -> Action a -> (a, [ActionFlat])
@@ -846,7 +868,7 @@ main = hspec $ do
 
       actions `shouldBe`
         [ AIsReviewer "deckard"
-        , ALeaveComment prId "Your merge request has been denied, because merging on Fridays is not recommended. To override this behaviour use the command `merge on Friday`." 
+        , ALeaveComment prId "Your merge request has been denied, because merging on Fridays is not recommended. To override this behaviour use the command `merge on Friday`."
         ]
 
     it "rejects 'merge' commands to a branch other than master" $ do
