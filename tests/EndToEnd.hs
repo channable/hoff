@@ -8,6 +8,7 @@
 import Test.Hspec (hspec)
 import EventLoopSpec (eventLoopSpec)
 import ServerSpec (serverSpec)
+import AlembicRebaseSpec (alembicSpec)
 
 -- This test suite tests interaction of the system with the outside world, as
 -- opposed to its internals (there are unit tests for that). It is not a full
@@ -20,3 +21,4 @@ main :: IO ()
 main = hspec $ do
   eventLoopSpec
   serverSpec
+  alembicSpec

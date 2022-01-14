@@ -18,7 +18,8 @@ library
   default-language: Haskell2010
   ghc-options:     -Wall -Werror -Wincomplete-uni-patterns -Wincomplete-record-updates -fno-ignore-asserts
   hs-source-dirs:  src
-  exposed-modules: Configuration
+  exposed-modules: AlembicRebase
+                 , Configuration
                  , EventLoop
                  , Format
                  , Git
@@ -48,6 +49,7 @@ library
                , github
                , http-client
                , http-types
+               , language-python
                , memory
                , monad-logger
                , process
@@ -105,7 +107,7 @@ test-suite end-to-end
   default-language: Haskell2010
   type:           exitcode-stdio-1.0
   main-is:        EndToEnd.hs
-  other-modules:  EventLoopSpec, ServerSpec
+  other-modules:  EventLoopSpec, ServerSpec, AlembicRebaseSpec
   hs-source-dirs: tests
   ghc-options:    -Wall -Werror -threaded -rtsopts -with-rtsopts=-N
 

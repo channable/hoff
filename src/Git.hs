@@ -39,6 +39,7 @@ module Git
   fetchBranchWithTags,
   forcePush,
   lastTag,
+  listRecentlyTouchedFiles,
   shortlog,
   push,
   pushAtomic,
@@ -58,7 +59,7 @@ import Control.Monad.Logger (MonadLogger, logInfoN, logWarnN)
 import Data.Aeson
 import Data.Either (isLeft)
 import Data.List (intersperse)
-import Data.Text (Text)
+import Data.Text (Text, splitOn, unpack)
 import System.Directory (doesDirectoryExist)
 import System.Environment (getEnvironment)
 import System.Exit (ExitCode (ExitSuccess))
@@ -197,6 +198,7 @@ data GitOperationFree a
   | Tag Sha TagName TagMessage (TagResult -> a)
   | DeleteTag TagName a
   | CheckOrphanFixups Sha RemoteBranch (Bool -> a)
+  | ListRecentlyTouchedFiles SomeRefSpec SomeRefSpec FilePath (Maybe [FilePath] -> a)
   deriving (Functor)
 
 type GitOperation = Free GitOperationFree
@@ -254,6 +256,9 @@ deleteTag t = liftF $ DeleteTag t ()
 
 checkOrphanFixups :: Sha -> RemoteBranch -> GitOperation Bool
 checkOrphanFixups sha branch = liftF $ CheckOrphanFixups sha branch id
+
+listRecentlyTouchedFiles :: SomeRefSpec -> SomeRefSpec -> FilePath -> GitOperation (Maybe [FilePath])
+listRecentlyTouchedFiles compareRev compareTo directory = liftF $ ListRecentlyTouchedFiles compareRev compareTo directory id
 
 -- Invokes Git with the given arguments. Returns its output on success, or the
 -- exit code and stderr on error.
@@ -476,6 +481,17 @@ runGit userConfig repoDir operation =
             logWarnN "there is one ore more fixup commits not belonging to any other commit"
           pure $ cont anyOrphanFixups
 
+    ListRecentlyTouchedFiles compareRev compareTo directory cont -> do
+      let range = refSpec compareRev <> ".." <> refSpec compareTo
+      result <- callGitInRepo [ "diff", "--no-renames", "--name-only", "-z", range, "--", directory]
+      case result of
+        Left (code, message) -> do
+          logWarnN $ format "git log failed with code {}: {}" (show code, message)
+          pure $ cont Nothing
+        Right fileText ->
+          pure $ cont (Just (map unpack $ splitOn "\0" fileText))
+
+
 -- Interpreter that runs only Git operations that have no side effects on the
 -- remote; it does not push.
 runGitReadOnly
@@ -505,6 +521,7 @@ runGitReadOnly userConfig repoDir operation =
       Tag {} -> unsafeResult
       DeleteTag {} -> unsafeResult
       CheckOrphanFixups {} -> unsafeResult
+      ListRecentlyTouchedFiles {} -> unsafeResult
 
       -- These operations mutate the remote, so we don't execute them in
       -- read-only mode.
