@@ -220,8 +220,11 @@ runAction config = foldFree $ \case
   GetDateTime cont -> doTime $ cont <$> Time.getDateTime
 
   RebaseAlembic sha baseBranch prBranch alembicLocation cont -> do
-    doGit $ ensureCloned config
-    shaOrFailed <- doGit $ Git.rebase sha (Git.RemoteBranch $ Config.branch config)
+    shaOrFailed <- doGit $ do
+      ensureCloned config
+      Git.fetchBranch prBranch
+      Git.fetchBranchWithTags (Git.Branch $ Config.branch config)
+      Git.rebase sha (Git.RemoteBranch $ Config.branch config)
     case shaOrFailed of
       -- The rebase failed
       Nothing -> pure $ cont (Left Nothing)

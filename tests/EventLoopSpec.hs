@@ -56,7 +56,7 @@ masterBranch = BaseBranch "master"
 -- Invokes Git with the given arguments, returns its stdout. Crashes if invoking
 -- Git failed. Discards all logging.
 callGit :: [String] -> IO Text
-callGit args = fmap (either undefined id) $ runNoLoggingT $ Git.callGit userConfig args
+callGit args = fmap (either (\e -> error $ "Error call: " <> show e) id) $ runNoLoggingT $ Git.callGit userConfig args
 
 -- Populates the repository with the following history:
 --
@@ -268,7 +268,7 @@ makeWritableRecursive path = do
     forM_ contents $ \ item -> makeWritableRecursive (path </> item)
 
 type LoopRunner = ProjectState -> [Logic.Event] -> IO ProjectState
-type GitRunner = [String] -> IO ()
+type GitRunner = [String] -> IO Text
 
 -- | Tag annotations contain a shortlog of the commits between the current and previous versions.
 data TagAnn = TagAnn {
@@ -316,7 +316,7 @@ withTestEnv' body = do
   -- function to invoke Git in the cloned repository.
   let
     projectConfig = buildProjectConfig repoDir stateFile
-    git args = void $ callGit $ ["-C", repoDir] ++ args
+    git args = callGit $ ["-C", repoDir] ++ args
   body shas (runMainEventLoop projectConfig) git
 
   -- Retrieve the log of the remote repository master branch. Only show the
@@ -550,7 +550,45 @@ eventLoopSpec = parallel $ do
       -- The other branches should be left untouched.
       branches `shouldMatchList`
         fmap Branch ["ahead", "intro", "master", "alternative", "fixup", "unused", "integration"]
+    it "handles a non-conflicting rebase" $ do
+      (masterHistory, branches, _tagRefs, _tagAnns) <- withTestEnv' $ \ shas runLoop git -> do
+        let
+          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, c6, _c7, _c7f, _c8] = shas
+          pr6 = PullRequestId 6
+          branch = Branch "intro"
+          baseBranch = masterBranch
 
+        void $ runLoop Project.emptyProjectState
+          [
+            Logic.PullRequestOpened pr6 branch baseBranch c6 "Add test results" "deckard",
+            Logic.CommentAdded pr6 "rachael" "@bot rebase with alembic"
+          ]
+
+        _ <- git ["fetch"]
+
+        newBranch <- Text.lines <$> git ["log", "--format=%s", "--graph"]
+
+        newBranch `shouldBe`
+          [ "* c6: Add response"
+          , "* c5: Add more characters"
+          , "* c3: Add new Roy quote"
+          , "* c2: Add new Tyrell quote"
+          , "* c1: Add new quote","* c0: Initial commit"
+          ]
+
+      masterHistory `shouldBe`
+        [ "* c3"
+        , "* c2"
+        , "* c1"
+        , "* c0"
+        ]
+
+      -- The remote branch ("intro") will still be present here,
+      -- but will be deleted by GitHub (if configured to do so)
+      -- if there are no other PRs depending on it.
+      -- The other branches should be left untouched.
+      branches `shouldMatchList`
+        fmap Branch ["ahead", "intro", "master", "alternative", "fixup", "unused"]
     it "handles a non-conflicting non-fast-forwardable pull request with tag" $ do
       (history, _branches, tagRefs, tagAnns) <- withTestEnv' $ \ shas runLoop _git -> do
         let [_c0, _c1, _c2, _c3, _c3', _c4, _c5, c6, _c7, _c7f, _c8] = shas
@@ -859,8 +897,8 @@ eventLoopSpec = parallel $ do
         -- branch for building. Before we notify build success, push commmit c4
         -- to the origin "master" branch, so that pushing the rebased c6 will
         -- fail later on.
-        git ["fetch", "origin", "ahead"] -- The ref for commit c4.
-        git ["push", "origin", refSpec (c4, masterBranch)]
+        _ <- git ["fetch", "origin", "ahead"] -- The ref for commit c4.
+        _ <- git ["push", "origin", refSpec (c4, masterBranch)]
 
         -- Extract the sha of the rebased commit from the project state, and
         -- tell the loop that building the commit succeeded.
@@ -916,8 +954,8 @@ eventLoopSpec = parallel $ do
         -- branch for building. Before we notify build success, push commmit c4
         -- to the origin "master" branch, so that pushing the rebased c6 will
         -- fail later on.
-        git ["fetch", "origin", "ahead"] -- The ref for commit c4.
-        git ["push", "origin", refSpec (c4, masterBranch)]
+        _ <- git ["fetch", "origin", "ahead"] -- The ref for commit c4.
+        _ <- git ["push", "origin", refSpec (c4, masterBranch)]
 
         let
           Just (_prId, pullRequest)       = Project.getIntegrationCandidate state
@@ -990,10 +1028,10 @@ eventLoopSpec = parallel $ do
         -- At this point, c6 has been rebased and pushed to the "integration" branch for building.
         -- Before we notify build success, push commmit c4 and a new tag to the origin "master"
         -- branch, so that pushing the rebased c6 will fail later on.
-        git ["fetch", "origin", "ahead"] -- The ref for commit c4.
-        git ["push", "origin", refSpec (c4, masterBranch)]
-        git ["tag", "-a", "v2", "-m", "v2", refSpec c4]
-        git ["push", "origin", refSpec (Git.TagName "v2")]
+        _ <- git ["fetch", "origin", "ahead"] -- The ref for commit c4.
+        _ <- git ["push", "origin", refSpec (c4, masterBranch)]
+        _ <- git ["tag", "-a", "v2", "-m", "v2", refSpec c4]
+        _ <- git ["push", "origin", refSpec (Git.TagName "v2")]
 
         let
           Just (_prId, pullRequest)       = Project.getIntegrationCandidate state
@@ -1105,8 +1143,8 @@ eventLoopSpec = parallel $ do
             Logic.CommentAdded pr8 "rachael" "@bot merge"
           ]
 
-        git ["fetch", "origin", "ahead"] -- The ref for commit c4.
-        git ["push", "origin", refSpec (c4, masterBranch)]
+        _ <- git ["fetch", "origin", "ahead"] -- The ref for commit c4.
+        _ <- git ["push", "origin", refSpec (c4, masterBranch)]
 
         -- Extract the sha of the rebased commit from the project state, and
         -- tell the loop that building the commit succeeded.
@@ -1152,8 +1190,8 @@ eventLoopSpec = parallel $ do
         -- the pull request is the fixup commit, with nothing to fix up, because
         -- the bad commit c7 is already on master. Note that origin/master is
         -- not a parent of c8, so we force-push.
-        git ["fetch", "origin", "fixup"] -- The ref for commit c7f.
-        git ["push", "--force", "origin", refSpec (c8, masterBranch)]
+        _ <- git ["fetch", "origin", "fixup"] -- The ref for commit c7f.
+        _ <- git ["push", "--force", "origin", refSpec (c8, masterBranch)]
 
         state <- runLoop Project.emptyProjectState
           [

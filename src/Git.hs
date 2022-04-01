@@ -628,7 +628,7 @@ maxIterations :: Int
 maxIterations = 5000
 
 iterationStep :: Int
-iterationStep = 100
+iterationStep = 1
 
 --  SomeRefSpec -> SomeRefSpec -> FilePath -> GitOperation (Maybe [FilePath])
 
@@ -640,7 +640,7 @@ listFilesUntilResults compareRev compareTo filePath = go iterationStep
               res <- listRecentlyTouchedFiles (refSpec compareRev <> "~" <> show n) (refSpec compareTo) filePath
               case res of
                 Nothing -> pure Nothing
-                Just [] -> go (n + iterationStep)
+                Just [] -> go (n + 1)
                 Just alembics -> pure (Just alembics)
 
 loadAlembics :: [FilePath] -> IO (Either AR.AlembicRebaseError [AR.AlembicRevision])
@@ -688,4 +688,4 @@ rebaseAlembicAndCommit baseBranch prBranch alembicLocation = do
           case mSha of
             Nothing -> pure (Left (AR.AlembicRebaseInternalError "Could not commit the alembic"))
             Just sha -> pure (Right (Just (instructions, sha)))
-    (_, _) -> pure (Left $ AR.AlembicRebaseInternalError "Cannot find the recently touched files")
+    (_, _) -> pure (Right Nothing)
