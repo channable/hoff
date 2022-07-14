@@ -19,7 +19,6 @@ module Project
   PullRequest (..),
   PullRequestId (..),
   PullRequestStatus (..),
-  integrationCandidate,
   Owner,
   approvedPullRequests,
   integratedPullRequests,
@@ -271,10 +270,6 @@ setIntegrationStatus pr newStatus = updatePullRequest pr changeIntegrationStatus
         , integrationAttempts = oldSha : (integrationAttempts pullRequest)
         }
       _notIntegrated -> pullRequest { integrationStatus = newStatus }
-
--- Here for backwards compatibility (TODO: remove?)
-integrationCandidate :: ProjectState -> Maybe PullRequestId
-integrationCandidate = fmap fst . getIntegrationCandidate
 
 -- Gets the first integration candidate
 getIntegrationCandidate :: ProjectState -> Maybe (PullRequestId, PullRequest)

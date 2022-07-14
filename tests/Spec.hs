@@ -281,13 +281,13 @@ main = hspec $ do
       let event  = PullRequestClosed (PullRequestId 1)
           state  = candidateState (PullRequestId 1) (Branch "p") masterBranch (Sha "ea0") "frank" "deckard" (Sha "cf4")
           state' = fst $ runAction $ handleEventTest event state
-      Project.integrationCandidate state' `shouldBe` Nothing
+      Project.integratedPullRequests state' `shouldBe` []
 
     it "does not modify the integration candidate if a different PR was closed" $ do
       let event  = PullRequestClosed (PullRequestId 1)
           state  = candidateState (PullRequestId 2) (Branch "p") masterBranch (Sha "a38") "franz" "deckard" (Sha "ed0")
           state' = fst $ runAction $ handleEventTest event state
-      Project.integrationCandidate state' `shouldBe` (Just $ PullRequestId 2)
+      Project.integratedPullRequests state' `shouldBe` [PullRequestId 2]
 
     it "loses approval after the PR commit has changed" $ do
       let event  = PullRequestCommitChanged (PullRequestId 1) (Sha "def")
@@ -584,7 +584,7 @@ main = hspec $ do
       -- The first pull request should be dropped, and a comment should be
       -- left indicating why. Then the second pull request should be at the
       -- front of the queue.
-      Project.integrationCandidate state' `shouldBe` Just (PullRequestId 2)
+      Project.integratedPullRequests state' `shouldBe` [PullRequestId 2]
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 1) "Pull request approved for merge by @deckard, rebasing now."
@@ -1011,7 +1011,7 @@ main = hspec $ do
         ]
 
       Project.approval pr `shouldBe` Nothing
-      Project.integrationCandidate state' `shouldBe` Nothing
+      Project.integratedPullRequests state' `shouldBe` []
 
     it "shows an appropriate message when the commit is changed on an approved PR" $ do
       let
@@ -1036,7 +1036,7 @@ main = hspec $ do
         ]
 
       Project.approval pr `shouldBe` Nothing
-      Project.integrationCandidate state' `shouldBe` Nothing
+      Project.integratedPullRequests state' `shouldBe` []
 
 
   describe "Logic.proceedUntilFixedPoint" $ do
