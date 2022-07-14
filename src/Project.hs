@@ -19,6 +19,7 @@ module Project
   PullRequest (..),
   PullRequestId (..),
   PullRequestStatus (..),
+  integrationCandidate,
   Owner,
   approvedPullRequests,
   candidatePullRequests,
@@ -53,7 +54,7 @@ import Data.ByteString (readFile)
 import Data.ByteString.Lazy (writeFile)
 import Data.IntMap.Strict (IntMap)
 import Data.List (intersect, nub, sortBy)
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, listToMaybe)
 import Data.Text (Text)
 import GHC.Generics
 import Git (Branch (..), BaseBranch (..), Sha (..), GitIntegrationFailure (..))
@@ -133,7 +134,6 @@ data PullRequest = PullRequest
 
 data ProjectState = ProjectState
   { pullRequests              :: IntMap PullRequest
-  , integrationCandidate      :: Maybe PullRequestId
   , pullRequestApprovalIndex  :: Int
   }
   deriving (Eq, Show, Generic)
@@ -187,7 +187,6 @@ saveProjectState fname state = do
 emptyProjectState :: ProjectState
 emptyProjectState = ProjectState {
   pullRequests         = IntMap.empty,
-  integrationCandidate = Nothing,
   pullRequestApprovalIndex = 0
 }
 
@@ -260,16 +259,25 @@ setIntegrationStatus pr newStatus = updatePullRequest pr changeIntegrationStatus
         }
       _notIntegrated -> pullRequest { integrationStatus = newStatus }
 
-getIntegrationCandidate :: ProjectState -> Maybe (PullRequestId, PullRequest)
-getIntegrationCandidate state = do
-  pullRequestId <- integrationCandidate state
-  candidate     <- lookupPullRequest pullRequestId state
-  return (pullRequestId, candidate)
+-- Here for backwards compatibility (TODO: remove?)
+integrationCandidate :: ProjectState -> Maybe PullRequestId
+integrationCandidate = fmap fst . getIntegrationCandidate
 
+-- Gets the first integration candidate
+getIntegrationCandidate :: ProjectState -> Maybe (PullRequestId, PullRequest)
+getIntegrationCandidate = listToMaybe . getIntegrationCandidates
+
+-- Same as 'candidatePullRequests' but paired with the underlying object.
+getIntegrationCandidates :: ProjectState -> [(PullRequestId, PullRequest)]
+getIntegrationCandidates state =
+  [ (pullRequestId, candidate)
+  | pullRequestId <- candidatePullRequests state
+  , Just candidate <- [lookupPullRequest pullRequestId state]
+  ]
+
+-- TODO: remove setIntegrationCandidate (no-op)
 setIntegrationCandidate :: Maybe PullRequestId -> ProjectState -> ProjectState
-setIntegrationCandidate pr state = state {
-  integrationCandidate = pr
-}
+setIntegrationCandidate _pr = id
 
 setNeedsFeedback :: PullRequestId -> Bool -> ProjectState -> ProjectState
 setNeedsFeedback pr value = updatePullRequest pr (\pullRequest -> pullRequest { needsFeedback = value })

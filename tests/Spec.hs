@@ -83,7 +83,7 @@ candidateState pr prBranch baseBranch prSha prAuthor approvedBy candidateSha =
       $ Project.setApproval pr (Just (Approval approvedBy Project.Merge 0))
       $ singlePullRequestState pr prBranch baseBranch prSha prAuthor
   in
-    state { Project.integrationCandidate = Just pr }
+    state
 
 -- Types and functions to mock running an action without actually doing anything.
 
@@ -1095,7 +1095,6 @@ main = hspec $ do
           }
         state = ProjectState
           { Project.pullRequests         = IntMap.singleton 1 pullRequest
-          , Project.integrationCandidate = Just $ PullRequestId 1
           , Project.pullRequestApprovalIndex = 1
           }
         results = defaultResults { resultIntegrate = [Right (Sha "38e")] }
@@ -1120,7 +1119,6 @@ main = hspec $ do
           }
         state = ProjectState
           { Project.pullRequests         = IntMap.singleton 1 pullRequest
-          , Project.integrationCandidate = Just $ PullRequestId 1
           , Project.pullRequestApprovalIndex = 1
           }
         results = defaultResults
@@ -1153,7 +1151,6 @@ main = hspec $ do
           }
         state = ProjectState
           { Project.pullRequests         = IntMap.singleton 1 pullRequest
-          , Project.integrationCandidate = Just $ PullRequestId 1
           , Project.pullRequestApprovalIndex = 1
           }
         results = defaultResults
@@ -1186,7 +1183,6 @@ main = hspec $ do
           }
         state = ProjectState
           { Project.pullRequests         = IntMap.singleton 1 pullRequest
-          , Project.integrationCandidate = Just $ PullRequestId 1
           , Project.pullRequestApprovalIndex = 1
           }
         results = defaultResults { resultIntegrate = [Right (Sha "38e")]
@@ -1216,7 +1212,6 @@ main = hspec $ do
           }
         state = ProjectState
           { Project.pullRequests         = IntMap.singleton 1 pullRequest
-          , Project.integrationCandidate = Just $ PullRequestId 1
           , Project.pullRequestApprovalIndex = 1
           }
         -- Run 'proceedUntilFixedPoint', and pretend that pushes fail (because
@@ -1253,7 +1248,6 @@ main = hspec $ do
           }
         state = ProjectState
           { Project.pullRequests         = IntMap.singleton 1 pullRequest
-          , Project.integrationCandidate = Just $ PullRequestId 1
           , Project.pullRequestApprovalIndex = 1
           }
         -- Run 'proceedUntilFixedPoint', and pretend that pushes fail (because
@@ -1353,7 +1347,6 @@ main = hspec $ do
           state = ProjectState
             {
               Project.pullRequests         = prMap,
-              Project.integrationCandidate = Nothing,
               Project.pullRequestApprovalIndex = 2
             }
           -- Proceeding should pick the next pull request as candidate.

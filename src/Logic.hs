@@ -353,12 +353,10 @@ handlePullRequestClosedByUser :: PullRequestId -> ProjectState -> Action Project
 handlePullRequestClosedByUser = handlePullRequestClosed User
 
 handlePullRequestClosed :: PRCloseCause -> PullRequestId -> ProjectState -> Action ProjectState
-handlePullRequestClosed closingReason pr state = Pr.deletePullRequest pr <$>
-    case Pr.integrationCandidate state of
-      Just candidatePr | candidatePr == pr -> do
-        leaveComment pr $ prClosingMessage closingReason
-        pure state { Pr.integrationCandidate = Nothing }
-      _notCandidatePr -> pure state
+handlePullRequestClosed closingReason pr state = do
+  when (pr `elem` Pr.candidatePullRequests state) $
+    leaveComment pr $ prClosingMessage closingReason
+  pure $ Pr.deletePullRequest pr state
 
 handlePullRequestEdited :: PullRequestId -> Text -> BaseBranch -> ProjectState -> Action ProjectState
 handlePullRequestEdited prId newTitle newBaseBranch state =
