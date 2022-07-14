@@ -616,6 +616,8 @@ proceedCandidate (pullRequestId, pullRequest) state =
         pure $ Pr.setIntegrationCandidate Nothing $
           Pr.setNeedsFeedback pullRequestId True state
 
+    Promoted -> pure state
+
 -- Given a pull request id, returns the name of the GitHub ref for that pull
 -- request, so it can be fetched.
 getPullRequestRef :: PullRequestId -> Branch
@@ -703,7 +705,7 @@ pushCandidate (pullRequestId, pullRequest) newHead state =
       -- GitHub will mark the pull request as closed, and when we receive that
       -- event, we delete the pull request from the state. Until then, reset
       -- the integration candidate, so we proceed with the next pull request.
-      PushOk -> pure $ Pr.setIntegrationCandidate Nothing state
+      PushOk -> pure $ Pr.setIntegrationStatus pullRequestId Promoted state
       -- If something was pushed to the target branch while the candidate was
       -- being tested, try to integrate again and hope that next time the push
       -- succeeds.

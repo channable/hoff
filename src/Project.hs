@@ -77,13 +77,20 @@ data BuildStatus
   | BuildFailed (Maybe Text)
   deriving (Eq, Show, Generic)
 
--- When attempting to integrated changes, there can be three states: no attempt
--- has been made to integrate; integration (e.g. merge or rebase) was successful
--- and the new commit has the given sha; and an attempt to integrate was made,
--- but it wasn't successful.
+-- When attempting to integrated changes, there can be five states:
+--
+-- * no attempt has been made to integrate;
+--
+-- * integration (e.g. merge or rebase) was successful
+--   and the new commit has the given sha;
+--
+-- * the PR has been promoted to be the new master;
+--
+-- * and an attempt to integrate was made, but it wasn't successful.
 data IntegrationStatus
   = NotIntegrated
   | Integrated Sha BuildStatus
+  | Promoted
   | Conflicted BaseBranch GitIntegrationFailure
   | IncorrectBaseBranch
   deriving (Eq, Show, Generic)
@@ -296,6 +303,7 @@ classifyPullRequest pr = case approval pr of
       BuildPending    -> PrStatusBuildPending
       BuildSucceeded  -> PrStatusIntegrated
       BuildFailed url -> PrStatusFailedBuild url
+    Promoted -> PrStatusIntegrated -- TODO: state-of-its-own?
 
 -- Classify every pull request into one status. Orders pull requests by id in
 -- ascending order.
@@ -350,6 +358,7 @@ isQueued pr = case approval pr of
     IncorrectBaseBranch -> False
     Conflicted _ _ -> False
     Integrated _ _ -> False
+    Promoted -> False
 
 -- Returns whether a pull request is in the process of being integrated (pending
 -- build results).
@@ -364,6 +373,7 @@ isInProgress pr = case approval pr of
       BuildPending   -> True
       BuildSucceeded -> False
       BuildFailed _  -> False
+    Promoted -> False
 
 -- Return whether the given commit is, or in this approval cycle ever was, an
 -- integration candidate of this pull request.
