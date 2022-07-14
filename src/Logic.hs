@@ -599,24 +599,17 @@ proceedCandidate (pullRequestId, pullRequest) state =
     NotIntegrated ->
       tryIntegratePullRequest pullRequestId state
 
-    IncorrectBaseBranch ->
-      -- It shouldn't come to this point; a PR with an incorrect base branch is
-      -- never considered as a candidate.
-      pure $ Pr.setIntegrationCandidate Nothing state
-
-    Conflicted _branch _ ->
-      -- If it conflicted, it should no longer be the integration candidate.
-      pure $ Pr.setIntegrationCandidate Nothing state
-
     Integrated sha buildStatus -> case buildStatus of
       BuildPending   -> pure state
       BuildSucceeded -> pushCandidate (pullRequestId, pullRequest) sha state
-      BuildFailed _  -> do
-        -- If the build failed, this is no longer a candidate.
-        pure $ Pr.setIntegrationCandidate Nothing $
-          Pr.setNeedsFeedback pullRequestId True state
+                        -- If the build failed, give feedback on the PR
+      BuildFailed _  -> pure $ Pr.setNeedsFeedback pullRequestId True state
 
     Promoted -> pure state
+
+    Conflicted _branch _ -> pure state
+
+    IncorrectBaseBranch -> pure state
 
 -- Given a pull request id, returns the name of the GitHub ref for that pull
 -- request, so it can be fetched.
@@ -652,11 +645,10 @@ tryIntegratePullRequest pr state =
           Pr.setNeedsFeedback pr True state
 
       Right (Sha sha) -> do
-        -- If it succeeded, update the integration candidate, and set the build
-        -- to pending, as pushing should have triggered a build.
+        -- If it succeeded, set the build to pending,
+        -- as pushing should have triggered a build.
         pure
           $ Pr.setIntegrationStatus pr (Integrated (Sha sha) BuildPending)
-          $ Pr.setIntegrationCandidate (Just pr)
           $ Pr.setNeedsFeedback pr True
           $ state
 

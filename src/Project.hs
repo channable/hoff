@@ -41,7 +41,6 @@ module Project
   displayApproval,
   setApproval,
   newApprovalOrder,
-  setIntegrationCandidate,
   setIntegrationStatus,
   setNeedsFeedback,
   updatePullRequest,
@@ -282,10 +281,6 @@ getIntegrationCandidates state =
   | pullRequestId <- integratedPullRequests state
   , Just candidate <- [lookupPullRequest pullRequestId state]
   ]
-
--- TODO: remove setIntegrationCandidate (no-op)
-setIntegrationCandidate :: Maybe PullRequestId -> ProjectState -> ProjectState
-setIntegrationCandidate _pr = id
 
 setNeedsFeedback :: PullRequestId -> Bool -> ProjectState -> ProjectState
 setNeedsFeedback pr value = updatePullRequest pr (\pullRequest -> pullRequest { needsFeedback = value })
