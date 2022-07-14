@@ -593,8 +593,7 @@ proceed state = do
 proceedCandidate :: (PullRequestId, PullRequest) -> ProjectState -> Action ProjectState
 proceedCandidate (pullRequestId, pullRequest) state =
   case Pr.integrationStatus pullRequest of
-    NotIntegrated ->
-      tryIntegratePullRequest pullRequestId state
+    NotIntegrated -> pure state -- dead code / unreachable
 
     Integrated sha buildStatus -> case buildStatus of
       BuildPending   -> pure state
@@ -602,11 +601,11 @@ proceedCandidate (pullRequestId, pullRequest) state =
                         -- If the build failed, give feedback on the PR
       BuildFailed _  -> pure $ Pr.setNeedsFeedback pullRequestId True state
 
-    Promoted -> pure state
+    Promoted -> pure state -- dead code / unreachable
 
-    Conflicted _branch _ -> pure state
+    Conflicted _branch _ -> pure state -- dead code / unreachable
 
-    IncorrectBaseBranch -> pure state
+    IncorrectBaseBranch -> pure state -- dead code / unreachable
 
 -- Given a pull request id, returns the name of the GitHub ref for that pull
 -- request, so it can be fetched.
