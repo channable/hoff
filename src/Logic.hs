@@ -580,14 +580,13 @@ synchronizeState stateInitial =
 proceed :: ProjectState -> Action ProjectState
 proceed state = do
   state' <- provideFeedback state
-  case Pr.getIntegrationCandidate state' of
-    Just candidate -> proceedCandidate candidate state'
-    -- No current integration candidate, find the next one.
-    Nothing -> case Pr.candidatePullRequests state' of
-      -- No pull requests eligible, do nothing.
-      []     -> return state'
-      -- Found a new candidate, try to integrate it.
-      pr : _ -> tryIntegratePullRequest pr state'
+  case (Pr.getIntegrationCandidates state', Pr.candidatePullRequests state') of
+                           -- Proceed with an already integrated candidate
+    (candidate:_, _)    -> proceedCandidate candidate state'
+                           -- Found a new candidate, try to integrate it.
+    (_,           pr:_) -> tryIntegratePullRequest pr state'
+                           -- No pull requests eligible, do nothing.
+    (_,           _)    -> return state'
 
 -- TODO: Get rid of the tuple; just pass the ID and do the lookup with fromJust.
 proceedCandidate :: (PullRequestId, PullRequest) -> ProjectState -> Action ProjectState

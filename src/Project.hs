@@ -29,6 +29,7 @@ module Project
   emptyProjectState,
   existsPullRequest,
   getIntegrationCandidate,
+  getIntegrationCandidates,
   getQueuePosition,
   insertPullRequest,
   loadProjectState,
