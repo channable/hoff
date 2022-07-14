@@ -354,7 +354,7 @@ handlePullRequestClosedByUser = handlePullRequestClosed User
 
 handlePullRequestClosed :: PRCloseCause -> PullRequestId -> ProjectState -> Action ProjectState
 handlePullRequestClosed closingReason pr state = do
-  when (pr `elem` Pr.candidatePullRequests state) $
+  when (pr `elem` Pr.integratedPullRequests state) $
     leaveComment pr $ prClosingMessage closingReason
   pure $ Pr.deletePullRequest pr state
 

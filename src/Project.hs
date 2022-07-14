@@ -22,6 +22,7 @@ module Project
   integrationCandidate,
   Owner,
   approvedPullRequests,
+  integratedPullRequests,
   candidatePullRequests,
   classifyPullRequest,
   classifyPullRequests,
@@ -271,7 +272,7 @@ getIntegrationCandidate = listToMaybe . getIntegrationCandidates
 getIntegrationCandidates :: ProjectState -> [(PullRequestId, PullRequest)]
 getIntegrationCandidates state =
   [ (pullRequestId, candidate)
-  | pullRequestId <- candidatePullRequests state
+  | pullRequestId <- integratedPullRequests state
   , Just candidate <- [lookupPullRequest pullRequestId state]
   ]
 
@@ -370,6 +371,12 @@ wasIntegrationAttemptFor :: Sha -> PullRequest -> Bool
 wasIntegrationAttemptFor commit pr = case integrationStatus pr of
   Integrated candidate _buildStatus -> commit `elem` (candidate : integrationAttempts pr)
   _                                 -> commit `elem` (integrationAttempts pr)
+
+integratedPullRequests :: ProjectState -> [PullRequestId]
+integratedPullRequests = filterPullRequestsBy $ isIntegrated . integrationStatus
+  where
+  isIntegrated (Integrated _ _) = True
+  isIntegrated _                = False
 
 -- Returns the pull requests that have not been integrated yet, in order of
 -- ascending id.
