@@ -280,7 +280,7 @@ integrationCandidate = fmap fst . getIntegrationCandidate
 getIntegrationCandidate :: ProjectState -> Maybe (PullRequestId, PullRequest)
 getIntegrationCandidate = listToMaybe . getIntegrationCandidates
 
--- Same as 'candidatePullRequests' but paired with the underlying object.
+-- Same as 'integratedPullRequests' but paired with the underlying object.
 getIntegrationCandidates :: ProjectState -> [(PullRequestId, PullRequest)]
 getIntegrationCandidates state =
   [ (pullRequestId, candidate)
