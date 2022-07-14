@@ -528,18 +528,15 @@ handleMergeRequested projectConfig prId author state pr approvalType = do
 
 handleBuildStatusChanged :: Sha -> BuildStatus -> ProjectState -> ProjectState
 handleBuildStatusChanged buildSha newStatus state =
+  Pr.updatePullRequests setBuildStatus state
+  where
   -- If there is an integration candidate, and its integration sha matches that
   -- of the build, then update the build status for that pull request. Otherwise
   -- do nothing.
-  let
-    setBuildStatus pullRequest = case Pr.integrationStatus pullRequest of
-      Integrated candidateSha _oldStatus | candidateSha == buildSha ->
-        pullRequest { Pr.integrationStatus = Integrated buildSha newStatus }
-      _ -> pullRequest
-  in
-    case Pr.integrationCandidate state of
-      Just candidateId -> Pr.updatePullRequest candidateId setBuildStatus state
-      Nothing          -> state
+  setBuildStatus pullRequest = case Pr.integrationStatus pullRequest of
+    Integrated candidateSha _oldStatus | candidateSha == buildSha ->
+      pullRequest { Pr.integrationStatus = Integrated buildSha newStatus }
+    _ -> pullRequest
 
 -- Query the GitHub API to resolve inconsistencies between our state and GitHub.
 synchronizeState :: ProjectState -> Action ProjectState

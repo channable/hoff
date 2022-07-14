@@ -44,6 +44,7 @@ module Project
   setIntegrationStatus,
   setNeedsFeedback,
   updatePullRequest,
+  updatePullRequests,
   getOwners,
   wasIntegrationAttemptFor,
   MergeWindow(..))
@@ -240,6 +241,11 @@ lookupPullRequest (PullRequestId n) = IntMap.lookup n . pullRequests
 updatePullRequest :: PullRequestId -> (PullRequest -> PullRequest) -> ProjectState -> ProjectState
 updatePullRequest (PullRequestId n) f state = state {
   pullRequests = IntMap.adjust f n $ pullRequests state
+}
+
+updatePullRequests :: (PullRequest -> PullRequest) -> ProjectState -> ProjectState
+updatePullRequests f state = state {
+  pullRequests = IntMap.map f $ pullRequests state
 }
 
 -- Marks the pull request as approved by somebody or nobody.
