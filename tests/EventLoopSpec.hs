@@ -21,7 +21,6 @@ import Control.Monad (forM_, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Data.Map (Map)
-import Data.Maybe (isJust)
 import Data.Set (Set)
 import Data.Text (Text)
 import Prelude hiding (appendFile, writeFile)
@@ -469,7 +468,7 @@ eventLoopSpec = parallel $ do
 
         -- Extract the sha of the rebased commit from the project state.
         let
-          Just (_prId, pullRequest)       = Project.getIntegrationCandidate state
+          [(_prId, pullRequest)]          = Project.getIntegrationCandidates state
           Project.Integrated rebasedSha _ = Project.integrationStatus pullRequest
 
         -- The rebased commit should have been pushed to the remote repository
@@ -529,7 +528,7 @@ eventLoopSpec = parallel $ do
 
         -- Extract the sha of the rebased commit from the project state.
         let
-          Just (_prId, pullRequest)       = Project.getIntegrationCandidate state
+          [(_prId, pullRequest)]          = Project.getIntegrationCandidates state
           Project.Integrated rebasedSha _ = Project.integrationStatus pullRequest
 
         -- The rebased commit should have been pushed to the remote repository
@@ -570,7 +569,7 @@ eventLoopSpec = parallel $ do
           ]
 
         let
-          Just (_prId, pullRequest)       = Project.getIntegrationCandidate state
+          [(_prId, pullRequest)]          = Project.getIntegrationCandidates state
           Project.Integrated rebasedSha _ = Project.integrationStatus pullRequest
 
         void $ runLoop state [Logic.BuildStatusChanged rebasedSha BuildSucceeded]
@@ -630,7 +629,7 @@ eventLoopSpec = parallel $ do
           ]
 
         let
-          Just (_prId, pullRequest)       = Project.getIntegrationCandidate state
+          [(_prId, pullRequest)]          = Project.getIntegrationCandidates state
           Project.Integrated rebasedSha _ = Project.integrationStatus pullRequest
 
         void $ runLoop state [Logic.BuildStatusChanged rebasedSha BuildSucceeded]
@@ -694,7 +693,7 @@ eventLoopSpec = parallel $ do
 
         -- Extract the sha of the rebased commit from the project state.
         let
-          Just (_prId, pullRequest6)      = Project.getIntegrationCandidate state
+          [(_prId, pullRequest6)]         = Project.getIntegrationCandidates state
           Project.Integrated rebasedSha _ = Project.integrationStatus pullRequest6
 
         -- The rebased commit should have been pushed to the remote repository
@@ -704,7 +703,7 @@ eventLoopSpec = parallel $ do
         -- Repeat for the other pull request, which should be the candidate by
         -- now.
         let
-          Just (_prId, pullRequest4)       = Project.getIntegrationCandidate state'
+          [(_prId, pullRequest4)]          = Project.getIntegrationCandidates state'
           Project.Integrated rebasedSha' _ = Project.integrationStatus pullRequest4
         void $ runLoop state' [Logic.BuildStatusChanged rebasedSha' BuildSucceeded]
 
@@ -739,13 +738,13 @@ eventLoopSpec = parallel $ do
           ]
 
         let
-          Just (_prId, pullRequest6)      = Project.getIntegrationCandidate state
+          [(_prId, pullRequest6)]         = Project.getIntegrationCandidates state
           Project.Integrated rebasedSha _ = Project.integrationStatus pullRequest6
 
         state' <- runLoop state [Logic.BuildStatusChanged rebasedSha BuildSucceeded]
 
         let
-          Just (_prId, pullRequest4)       = Project.getIntegrationCandidate state'
+          [(_prId, pullRequest4)]          = Project.getIntegrationCandidates state'
           Project.Integrated rebasedSha' _ = Project.integrationStatus pullRequest4
         void $ runLoop state' [Logic.BuildStatusChanged rebasedSha' BuildSucceeded]
 
@@ -828,7 +827,7 @@ eventLoopSpec = parallel $ do
 
         -- The second pull request should still be pending, awaiting the build
         -- result.
-        let Just (prId, pullRequest4) = Project.getIntegrationCandidate state
+        let [(prId, pullRequest4)]   = Project.getIntegrationCandidates state
         prId `shouldBe` pr4
         let Integrated _ buildStatus = Project.integrationStatus pullRequest4
         buildStatus `shouldBe` BuildPending
@@ -868,23 +867,23 @@ eventLoopSpec = parallel $ do
         -- Extract the sha of the rebased commit from the project state, and
         -- tell the loop that building the commit succeeded.
         let
-          Just (_prId, pullRequest)       = Project.getIntegrationCandidate state
+          [(_prId, pullRequest)]          = Project.getIntegrationCandidates state
           Project.Integrated rebasedSha _ = Project.integrationStatus pullRequest
         state' <- runLoop state [Logic.BuildStatusChanged rebasedSha BuildSucceeded]
 
         -- The push should have failed, hence there should still be an
         -- integration candidate.
-        Project.getIntegrationCandidate state' `shouldSatisfy` isJust
+        Project.getIntegrationCandidates state' `shouldSatisfy` (not . null)
 
         -- Again notify build success, now for the new commit.
         let
-          Just (_prId, pullRequest')       = Project.getIntegrationCandidate state'
+          [(_prId, pullRequest')]          = Project.getIntegrationCandidates state'
           Project.Integrated rebasedSha' _ = Project.integrationStatus pullRequest'
         state'' <- runLoop state' [Logic.BuildStatusChanged rebasedSha' BuildSucceeded]
 
         -- After the second build success, the pull request should have been
         -- integrated properly, so there should not be a new candidate.
-        Project.getIntegrationCandidate state'' `shouldBe` Nothing
+        Project.getIntegrationCandidates state'' `shouldBe` []
 
       history `shouldBe`
         [ "*   Merge #6"
@@ -923,13 +922,13 @@ eventLoopSpec = parallel $ do
         git ["push", "origin", refSpec (c4, masterBranch)]
 
         let
-          Just (_prId, pullRequest)       = Project.getIntegrationCandidate state
+          [(_prId, pullRequest)]          = Project.getIntegrationCandidates state
           Project.Integrated rebasedSha _ = Project.integrationStatus pullRequest
         state' <- runLoop state [Logic.BuildStatusChanged rebasedSha BuildSucceeded]
 
         -- Again notify build success, now for the new commit.
         let
-          Just (_prId, pullRequest')       = Project.getIntegrationCandidate state'
+          [(_prId, pullRequest')]          = Project.getIntegrationCandidates state'
           Project.Integrated rebasedSha' _ = Project.integrationStatus pullRequest'
         void $ runLoop state' [Logic.BuildStatusChanged rebasedSha' BuildSucceeded]
 
@@ -999,13 +998,13 @@ eventLoopSpec = parallel $ do
         git ["push", "origin", refSpec (Git.TagName "v2")]
 
         let
-          Just (_prId, pullRequest)       = Project.getIntegrationCandidate state
+          [(_prId, pullRequest)]          = Project.getIntegrationCandidates state
           Project.Integrated rebasedSha _ = Project.integrationStatus pullRequest
         state' <- runLoop state [Logic.BuildStatusChanged rebasedSha BuildSucceeded]
 
         -- Again notify build success, now for the new commit.
         let
-          Just (_prId, pullRequest')       = Project.getIntegrationCandidate state'
+          [(_prId, pullRequest')]          = Project.getIntegrationCandidates state'
           Project.Integrated rebasedSha' _ = Project.integrationStatus pullRequest'
         void $ runLoop state' [Logic.BuildStatusChanged rebasedSha' BuildSucceeded]
 
@@ -1072,7 +1071,7 @@ eventLoopSpec = parallel $ do
         -- Extract the sha of the rebased commit from the project state, and
         -- tell the loop that building the commit succeeded.
         let
-          Just (_prId, pullRequest)       = Project.getIntegrationCandidate state
+          [(_prId, pullRequest)]          = Project.getIntegrationCandidates state
           Project.Integrated rebasedSha _ = Project.integrationStatus pullRequest
         void $ runLoop state [Logic.BuildStatusChanged rebasedSha BuildSucceeded]
 
@@ -1114,13 +1113,13 @@ eventLoopSpec = parallel $ do
         -- Extract the sha of the rebased commit from the project state, and
         -- tell the loop that building the commit succeeded.
         let
-          Just (_prId, pullRequest)       = Project.getIntegrationCandidate state
+          [(_prId, pullRequest)]          = Project.getIntegrationCandidates state
           Project.Integrated rebasedSha _ = Project.integrationStatus pullRequest
         state' <- runLoop state [Logic.BuildStatusChanged rebasedSha BuildSucceeded]
 
         -- Again notify build success, now for the new commit.
         let
-          Just (_prId, pullRequest')       = Project.getIntegrationCandidate state'
+          [(_prId, pullRequest')]          = Project.getIntegrationCandidates state'
           Project.Integrated rebasedSha' _ = Project.integrationStatus pullRequest'
         void $ runLoop state' [Logic.BuildStatusChanged rebasedSha' BuildSucceeded]
 
@@ -1168,14 +1167,14 @@ eventLoopSpec = parallel $ do
         -- tell the loop that building the commit succeeded.
 
         let
-          Just (_prId, pullRequest)       = Project.getIntegrationCandidate state
+          [(_prId, pullRequest)]          = Project.getIntegrationCandidates state
           Project.Integrated rebasedSha _ = Project.integrationStatus pullRequest
         state' <- runLoop state [Logic.BuildStatusChanged rebasedSha BuildSucceeded]
 
         --The pull request should not be integrated. Moreover, the presence of
         --orphan fixups should make the PR ineligible for being a candidate for integration.
         --That is, we expect no candidates for integration.
-        Project.getIntegrationCandidate state' `shouldBe` Nothing
+        Project.getIntegrationCandidates state' `shouldBe` []
 
       -- Here we expect that the fixup commit is not present.
       history `shouldBe`
@@ -1205,7 +1204,7 @@ eventLoopSpec = parallel $ do
           ]
 
         let
-          Just (prId, pullRequest)       = Project.getIntegrationCandidate state
+          [(prId, pullRequest)]           = Project.getIntegrationCandidates state
           Project.Integrated rebasedSha _ = Project.integrationStatus pullRequest
 
         prId `shouldBe` pr8
@@ -1218,7 +1217,7 @@ eventLoopSpec = parallel $ do
             Logic.CommentAdded pr6 "rachael" "@bot merge"
           ]
 
-        Project.getIntegrationCandidate state' `shouldBe` Nothing
+        Project.getIntegrationCandidates state' `shouldBe` []
 
         let Just pullRequest' = Project.lookupPullRequest pr6 state'
         Project.integrationStatus pullRequest' `shouldBe`

@@ -28,7 +28,6 @@ module Project
   deletePullRequest,
   emptyProjectState,
   existsPullRequest,
-  getIntegrationCandidate,
   getIntegrationCandidates,
   getQueuePosition,
   insertPullRequest,
@@ -55,7 +54,7 @@ import Data.ByteString (readFile)
 import Data.ByteString.Lazy (writeFile)
 import Data.IntMap.Strict (IntMap)
 import Data.List (intersect, nub, sortBy)
-import Data.Maybe (isJust, listToMaybe)
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import GHC.Generics
 import Git (Branch (..), BaseBranch (..), Sha (..), GitIntegrationFailure (..))
@@ -272,11 +271,7 @@ setIntegrationStatus pr newStatus = updatePullRequest pr changeIntegrationStatus
         }
       _notIntegrated -> pullRequest { integrationStatus = newStatus }
 
--- Gets the first integration candidate
-getIntegrationCandidate :: ProjectState -> Maybe (PullRequestId, PullRequest)
-getIntegrationCandidate = listToMaybe . getIntegrationCandidates
-
--- Same as 'integratedPullRequests' but paired with the underlying object.
+-- Same as 'integratedPullRequests' but paired with the underlying objects.
 getIntegrationCandidates :: ProjectState -> [(PullRequestId, PullRequest)]
 getIntegrationCandidates state =
   [ (pullRequestId, candidate)
