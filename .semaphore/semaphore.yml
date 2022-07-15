@@ -39,7 +39,7 @@ blocks:
             # Restore `/nix` cache. Create the directory first, otherwise we encounter
             # permission errors. We do this because the Semaphore cache is faster than
             # both Cachix and cache.nixos.org.
-            - "sudo mkdir /nix"
+            - "sudo mkdir -p /nix"
             - "sudo chown -R semaphore:semaphore /nix"
             - "cache restore nix-store-"
 
