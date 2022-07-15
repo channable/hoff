@@ -75,15 +75,12 @@ singlePullRequestState pr prBranch baseBranch prSha prAuthor =
   in
     fst $ runAction $ handleEventTest event Project.emptyProjectState
 
-candidateState :: PullRequestId -> Branch -> BaseBranch -> Sha -> Username -> Username -> Sha -> ProjectState
-candidateState pr prBranch baseBranch prSha prAuthor approvedBy candidateSha =
-  let
-    state = Project.setIntegrationStatus pr
-      (Project.Integrated candidateSha Project.BuildPending)
-      $ Project.setApproval pr (Just (Approval approvedBy Project.Merge 0))
-      $ singlePullRequestState pr prBranch baseBranch prSha prAuthor
-  in
-    state
+candidateState
+  :: PullRequestId -> Branch -> BaseBranch -> Sha -> Username -> Username -> Sha -> ProjectState
+candidateState pr prBranch baseBranch prSha prAuthor approvedBy candidateSha
+  = Project.setIntegrationStatus pr (Project.Integrated candidateSha Project.BuildPending)
+  $ Project.setApproval pr (Just (Approval approvedBy Project.Merge 0))
+  $ singlePullRequestState pr prBranch baseBranch prSha prAuthor
 
 -- Types and functions to mock running an action without actually doing anything.
 
