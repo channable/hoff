@@ -36,13 +36,6 @@ blocks:
             # Free space on the disk in order to save the nix store and error on build failures.
             - .semaphore/prologue.sh
 
-            # Restore `/nix` cache. Create the directory first, otherwise we encounter
-            # permission errors. We do this because the Semaphore cache is faster than
-            # both Cachix and cache.nixos.org.
-            - "sudo mkdir -p /nix"
-            - "sudo chown -R semaphore:semaphore /nix"
-            - "cache restore nix-store-"
-
             # Restore any stack cache that we can find.
             - "cache restore stack-cache-"
 
