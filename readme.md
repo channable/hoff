@@ -1,6 +1,5 @@
 # Hoff
 
-
 Hoff is a bot for GitHub that enforces a clean history, and ensures that master
 always builds.
 
