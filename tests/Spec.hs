@@ -1374,9 +1374,12 @@ main = hspec $ do
           , BuildStatusChanged (Sha "b71") $ Project.BuildFailed $ Just $ pack "https://example.com/build-status"
             -- User summons bot again because CI failed for an external reason.
           , CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          -- GitHub notifies Hoff of new comments sent by Hoff:
+          , CommentAdded (PullRequestId 1) "bot" "The build failed: https://example.com/build-status\nIf this is the result of a flaky test, close and reopen the PR, then tag me again.\nOtherwise, push a new commit and tag me again."
+          , CommentAdded (PullRequestId 1) "bot" "The build failed: https://example.com/build-status\nIf this is the result of a flaky test, close and reopen the PR, then tag me again.\nOtherwise, push a new commit and tag me again."
           ]
         results = defaultResults { resultIntegrate = [Right (Sha "b71")] }
-        (_state', actions) = runActionCustom results $ handleEventsTest events state
+        (state', actions) = runActionCustom results $ handleEventsTest events state
 
       actions `shouldBe`
         [ AIsReviewer "deckard"
@@ -1389,6 +1392,12 @@ main = hspec $ do
           -- it doesn't retry, but reports the correct state.
         , ALeaveComment (PullRequestId 1) "The build failed: https://example.com/build-status\nIf this is the result of a flaky test, close and reopen the PR, then tag me again.\nOtherwise, push a new commit and tag me again."
         ]
+
+      -- the pull request should start and end without needing feedback
+      (Project.needsFeedback <$> Project.lookupPullRequest (PullRequestId 1) state)
+        `shouldBe` Just False
+      (Project.needsFeedback <$> Project.lookupPullRequest (PullRequestId 1) state')
+        `shouldBe` Just False
 
   describe "Github._Payload" $ do
 
