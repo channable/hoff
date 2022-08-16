@@ -863,7 +863,7 @@ describeStatus prId pr state = case Pr.classifyPullRequest pr of
                                  \ I will retry rebasing automatically when the queue clears."
   PrStatusFailedBuild url -> case Pr.unfailedIntegratedPullRequestsBefore pr state of
     [] -> case url of
-          Just url' -> format "The build failed: {}\n\
+          Just url' -> format "The [build failed ❌]({})\n\
                               \If this is the result of a flaky test, \
                               \close and reopen the PR, then tag me again.\n\
                               \Otherwise, push a new commit and tag me again." [url']

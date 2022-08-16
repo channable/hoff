@@ -1457,8 +1457,8 @@ main = hspec $ do
             -- User summons bot again because CI failed for an external reason.
           , CommentAdded (PullRequestId 1) "deckard" "@bot merge"
           -- GitHub notifies Hoff of new comments sent by Hoff:
-          , CommentAdded (PullRequestId 1) "bot" "The build failed: https://example.com/build-status\nIf this is the result of a flaky test, close and reopen the PR, then tag me again.\nOtherwise, push a new commit and tag me again."
-          , CommentAdded (PullRequestId 1) "bot" "The build failed: https://example.com/build-status\nIf this is the result of a flaky test, close and reopen the PR, then tag me again.\nOtherwise, push a new commit and tag me again."
+          , CommentAdded (PullRequestId 1) "bot" "The [build failed ❌](https://example.com/build-status)\nIf this is the result of a flaky test, close and reopen the PR, then tag me again.\nOtherwise, push a new commit and tag me again."
+          , CommentAdded (PullRequestId 1) "bot" "The [build failed ❌](https://example.com/build-status)\nIf this is the result of a flaky test, close and reopen the PR, then tag me again.\nOtherwise, push a new commit and tag me again."
           ]
         results = defaultResults { resultIntegrate = [Right (Sha "b71")] }
         (state', actions) = runActionCustom results $ handleEventsTest events state
@@ -1470,11 +1470,11 @@ main = hspec $ do
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "a39") [] False
         , ALeaveComment (PullRequestId 1) "Rebased as b71, waiting for CI \x2026"
         , ALeaveComment (PullRequestId 1) "[CI job 🟡](https://status.example.com/b71) started."
-        , ALeaveComment (PullRequestId 1) "The build failed: https://example.com/build-status\nIf this is the result of a flaky test, close and reopen the PR, then tag me again.\nOtherwise, push a new commit and tag me again."
+        , ALeaveComment (PullRequestId 1) "The [build failed ❌](https://example.com/build-status)\nIf this is the result of a flaky test, close and reopen the PR, then tag me again.\nOtherwise, push a new commit and tag me again."
         , AIsReviewer "deckard"
           -- Nothing has changed for the bot because b71 has already failed, so
           -- it doesn't retry, but reports the correct state.
-        , ALeaveComment (PullRequestId 1) "The build failed: https://example.com/build-status\nIf this is the result of a flaky test, close and reopen the PR, then tag me again.\nOtherwise, push a new commit and tag me again."
+        , ALeaveComment (PullRequestId 1) "The [build failed ❌](https://example.com/build-status)\nIf this is the result of a flaky test, close and reopen the PR, then tag me again.\nOtherwise, push a new commit and tag me again."
         ]
 
       -- the pull request should start and end without needing feedback
@@ -1799,11 +1799,11 @@ main = hspec $ do
                         False
         , ALeaveComment (PullRequestId 12) "Rebased as 1b2, waiting for CI …"
         , ALeaveComment (PullRequestId 12) "[CI job 🟡](example.com/1b2) started."
-        , ALeaveComment (PullRequestId 12) "The build failed: example.com/1b2\n\
+        , ALeaveComment (PullRequestId 12) "The [build failed ❌](example.com/1b2)\n\
                                            \If this is the result of a flaky test, \
                                            \close and reopen the PR, then tag me again.\n\
                                            \Otherwise, push a new commit and tag me again."
-        , ALeaveComment (PullRequestId 12) "The build failed: example.com/alt/1b2\n\
+        , ALeaveComment (PullRequestId 12) "The [build failed ❌](example.com/alt/1b2)\n\
                                            \If this is the result of a flaky test, \
                                            \close and reopen the PR, then tag me again.\n\
                                            \Otherwise, push a new commit and tag me again."
@@ -2028,7 +2028,7 @@ main = hspec $ do
                         [PullRequestId 1]
                         False
         , ALeaveComment (PullRequestId 3) "Speculatively rebased as 3cd behind #1, waiting for CI …"
-        , ALeaveComment (PullRequestId 1) "The build failed: ci.example.com/1ab\n\
+        , ALeaveComment (PullRequestId 1) "The [build failed ❌](ci.example.com/1ab)\n\
                                           \If this is the result of a flaky test, \
                                           \close and reopen the PR, then tag me again.\n\
                                           \Otherwise, push a new commit and tag me again."
@@ -2660,7 +2660,7 @@ main = hspec $ do
           , BuildStatusChanged (Sha "36a") (Project.BuildSucceeded) -- arbitrary sha, ignored
           , BuildStatusChanged (Sha "2bc") (Project.BuildFailed (Just "example.com/2bc")) -- PR#8
           , BuildStatusChanged (Sha "2bc") (Project.BuildFailed (Just "example.com/2bc")) -- dup!
-          , CommentAdded (PullRequestId 8) "bot" "The build failed: example.com/2bc"
+          , CommentAdded (PullRequestId 8) "bot" "The [build failed ❌](example.com/2bc)"
           , CommentAdded (PullRequestId 7) "bot" "Rebased as 3cd, waiting for CI …"
           , BuildStatusChanged (Sha "3ef") (Project.BuildStarted "example.com/3ef")
           , BuildStatusChanged (Sha "3ef") (Project.BuildSucceeded) -- testing build passed on PR#7
@@ -2711,7 +2711,7 @@ main = hspec $ do
         , ACleanupTestBranch (PullRequestId 9)
         , ALeaveComment (PullRequestId 8) "[CI job 🟡](example.com/2bc) started."
         , ALeaveComment (PullRequestId 8)
-                        "The build failed: example.com/2bc\n\
+                        "The [build failed ❌](example.com/2bc)\n\
                         \If this is the result of a flaky test, \
                         \close and reopen the PR, then tag me again.\n\
                         \Otherwise, push a new commit and tag me again."
