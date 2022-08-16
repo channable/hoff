@@ -838,7 +838,7 @@ describeStatus prId pr state = case Pr.classifyPullRequest pr of
                                                   , " behind ", prettyPullRequestIds train
                                                   , ", waiting for CI …"
                                                   ]
-  PrStatusBuildStarted url -> Text.concat ["[CI job](", url, ") started."]
+  PrStatusBuildStarted url -> Text.concat ["[CI job 🟡](", url, ") started."]
   PrStatusIntegrated -> "The build succeeded."
   PrStatusIncorrectBaseBranch -> "Merge rejected: the target branch must be the integration branch."
   PrStatusWrongFixups -> "Pull request cannot be integrated as it contains fixup commits that do not belong to any other commits."
