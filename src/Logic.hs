@@ -526,7 +526,12 @@ parseMergeCommand projectConfig triggerConfig message =
                        ++ [(" merge and deploy", MergeAndDeploy $ DeployEnvironment e)]
 
     defaultCommands :: [(Text, ApprovedFor)]
-    defaultCommands = [(" merge and tag", MergeAndTag),(" merge", Merge)]
+    defaultCommands = if autoDeploy projectConfig
+      then case deployEnvironments projectConfig of
+        Nothing     -> []
+        Just []     -> []
+        Just (e:es) -> [(" merge", MergeAndDeploy $ DeployEnvironment e)]
+      else [(" merge and tag", MergeAndTag),(" merge", Merge)]
 
     -- Check if the prefix followed by ` merge [and {deploy,tag} [to
     -- <environment>]] [on friday]` occurs within the message. We opt to include

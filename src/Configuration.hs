@@ -39,6 +39,7 @@ data ProjectConfiguration = ProjectConfiguration
     stateFile          :: FilePath,                  -- The file where project state is stored.
     checks             :: Maybe ChecksConfiguration, -- Optional configuration related to checks for the project.
     deployEnvironments :: Maybe [Text]               -- The environments which the `deploy to <environment>` command should be enabled for
+    autoDeploy         :: Boolean,                   -- Whether to automatically create a tag for each merged PR and set the deploy markers
   }
   deriving (Generic)
 
