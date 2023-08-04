@@ -67,7 +67,7 @@ import Data.Time (UTCTime, DayOfWeek (Friday), dayOfWeek, utctDay)
 import qualified Text.Megaparsec as P
 import qualified Text.Megaparsec.Char as P
 
-import Configuration (ProjectConfiguration (owner, repository, deployEnvironments), TriggerConfiguration, MergeWindowExemptionConfiguration)
+import Configuration (ProjectConfiguration (owner, repository, deployEnvironments, subprojects), TriggerConfiguration, MergeWindowExemptionConfiguration)
 import Effectful (Dispatch (Dynamic), DispatchOf, Eff, Effect, (:>))
 import Effectful.Dispatch.Dynamic (interpret, send)
 import Format (format)
@@ -575,6 +575,9 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     environments :: [Text]
     environments = fromMaybe [] (deployEnvironments projectConfig)
 
+    allSubprojects :: [Text]
+    allSubprojects = fromMaybe [] (subprojects projectConfig)
+
     -- The punctuation characters that are allowed at the end of a merge
     -- command. This doesn't use the included punctuation predicate because that
     -- includes many more classes of punctuation, like quotes.
@@ -666,18 +669,22 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     -- Parses @merge and deploy[ to <environment>]@ commands.
     pDeploy :: Parser ApprovedFor
     pDeploy = MergeAndDeploy
-      <$> (pString "deploy" *> (P.try (P.hspace1 *> pDeploySubprojects) <|> pure AllSubprojects))
+      <$> (pString "deploy" *> (P.hspace *> pDeploySubprojects))
       <*> pDeployToEnvironment
 
     pSubproject :: Parser Text
-    pSubproject = do
-      subproject <- (:) <$> P.alphaNumChar <*> P.many (P.alphaNumChar <|> P.char '_' <|> P.char '-')
-      if subproject `elem` ["to", "on"] then P.empty else pure (Text.pack subproject)
+    pSubproject =
+      P.choice (fmap P.string allSubprojects)
 
     pDeploySubprojects :: Parser DeploySubprojects
-    pDeploySubprojects = do
-      subprojects <- P.sepBy pSubproject (pString "," *> P.optional P.hspace1)
-      if null subprojects then pure AllSubprojects else pure (OnlySubprojects subprojects)
+    pDeploySubprojects = pAllSubprojects <|> pListSubprojects <|> pure AllSubprojects
+     where
+      pAllSubprojects =
+        AllSubprojects <$ P.string "all"
+
+      pListSubprojects = do
+        subprojects <- P.sepBy pSubproject (pString "," *> P.optional P.hspace1)
+        if null subprojects then pure AllSubprojects else pure (OnlySubprojects subprojects)
 
     -- This parser is run directly after parsing "deploy", so it may need to
     -- parse a space character first since specifying a deployment environment
@@ -688,7 +695,7 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     pDeployToEnvironment
       | (defaultEnvironment : _) <- environments
       -- Without the try this could consume the space and break 'merge and deploy on friday'
-      = P.try (P.hspace1 *> pString "to" *> P.hspace1) *> P.choice pDeployEnvironments
+      = P.try (P.hspace *> pString "to" *> P.hspace1) *> P.choice pDeployEnvironments
       <|> pure (DeployEnvironment defaultEnvironment)
       | otherwise
       = fail noDeployEnvironmentsError
@@ -701,7 +708,7 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     -- Parses the optional @ on friday@ command suffix. Since this starts with a
     -- space, it's important that the last run parser has not yet consumed it.
     pMergeWindow :: Parser MergeWindow
-    pMergeWindow = (OnFriday <$ P.try (P.hspace1 *> pString "on friday")) <|> pure NotFriday
+    pMergeWindow = (OnFriday <$ P.try (P.hspace *> pString "on friday")) <|> pure NotFriday
 
 
 -- Mark the pull request as approved, and leave a comment to acknowledge that.
@@ -1053,9 +1060,9 @@ tryIntegratePullRequest pr state =
             [ "Auto-deploy: true"
             , "Deploy-Subprojects: all"
             , format "Deploy-Environment: {}" [env]]
-          MergeAndDeploy (OnlySubprojects subprojects) (DeployEnvironment env) ->
+          MergeAndDeploy (OnlySubprojects ps) (DeployEnvironment env) ->
             [ "Auto-deploy: true"
-            , format "Deploy-Subprojects: {}" [Text.intercalate ", " subprojects]
+            , format "Deploy-Subprojects: {}" [Text.intercalate ", " ps]
             , format "Deploy-Environment: {}" [env]
             ]
           _ -> [ "Auto-deploy: false" ]

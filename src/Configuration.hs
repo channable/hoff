@@ -38,7 +38,8 @@ data ProjectConfiguration = ProjectConfiguration
     checkout           :: FilePath,                  -- The path to a local checkout of the repository.
     stateFile          :: FilePath,                  -- The file where project state is stored.
     checks             :: Maybe ChecksConfiguration, -- Optional configuration related to checks for the project.
-    deployEnvironments :: Maybe [Text]               -- The environments which the `deploy to <environment>` command should be enabled for
+    deployEnvironments :: Maybe [Text],              -- The environments which the `deploy to <environment>` command should be enabled for
+    subprojects        :: Maybe [Text]               -- The subprojects which the `deploy` command should recognize
   }
   deriving (Generic)
 

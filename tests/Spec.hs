@@ -77,7 +77,8 @@ testProjectConfig = Config.ProjectConfiguration {
   Config.checkout = "/var/lib/hoff/checkouts/peter/rep",
   Config.stateFile = "/var/lib/hoff/state/peter/rep.json",
   Config.checks = Just (Config.ChecksConfiguration mempty),
-  Config.deployEnvironments = Just ["staging", "production"]
+  Config.deployEnvironments = Just ["staging", "production"],
+  Config.subprojects = Just ["foo", "bar"]
 }
 
 testmergeWindowExemptionConfig :: Config.MergeWindowExemptionConfiguration
@@ -926,6 +927,24 @@ main = hspec $ do
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
         (\pr -> Project.approval pr == Just (Approval (Username "deckard") (Project.MergeAndDeploy (OnlySubprojects ["foo", "bar"]) $ DeployEnvironment "staging") 0 Nothing))
 
+    it "allows all to be specified as a subproject for deploying everything" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+        event = CommentAdded prId "deckard" "@bot merge and deploy all to production"
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
+        (state', actions) = runActionCustom results (handleEventTest event state)
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Subprojects: all\nDeploy-Environment: production\n"
+            (prId, Branch "refs/pull/1/head", Sha "abc1234") [] True
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
+        ]
+
+      fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
+        (\pr -> Project.approval pr == Just (Approval (Username "deckard") (Project.MergeAndDeploy AllSubprojects $ DeployEnvironment "production") 0 Nothing))
 
     it "recognizes 'merge and deploy' commands as the proper ApprovedFor value" $ do
       let
