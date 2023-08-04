@@ -77,7 +77,7 @@ import Git (Branch (..), BaseBranch (..), GitOperation, PushResult (..),
 
 import GithubApi (GithubOperation)
 import Metrics.Metrics (MetricsOperation, increaseMergedPRTotal, updateTrainSizeGauge)
-import Project (Approval (..), ApprovedFor (..), MergeCommand (..), BuildStatus (..), Check (..), DeployEnvironment (..), IntegrationStatus (..),
+import Project (Approval (..), ApprovedFor (..), MergeCommand (..), BuildStatus (..), Check (..), DeployEnvironment (..), DeploySubprojects (..), IntegrationStatus (..),
                 MergeWindow(..), ProjectState, PullRequest, PullRequestStatus (..),
                 summarize, supersedes)
 import Time (TimeOperation)
@@ -665,7 +665,19 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
 
     -- Parses @merge and deploy[ to <environment>]@ commands.
     pDeploy :: Parser ApprovedFor
-    pDeploy = MergeAndDeploy <$> (pString "deploy" *> pDeployToEnvironment)
+    pDeploy = MergeAndDeploy
+      <$> (pString "deploy" *> (P.try (P.hspace1 *> pDeploySubprojects) <|> pure AllSubprojects))
+      <*> pDeployToEnvironment
+
+    pSubproject :: Parser Text
+    pSubproject = do
+      subproject <- (:) <$> P.alphaNumChar <*> P.many (P.alphaNumChar <|> P.char '_' <|> P.char '-')
+      if subproject `elem` ["to", "on"] then P.empty else pure (Text.pack subproject)
+
+    pDeploySubprojects :: Parser DeploySubprojects
+    pDeploySubprojects = do
+      subprojects <- P.sepBy pSubproject (pString "," *> P.optional P.hspace1)
+      if null subprojects then pure AllSubprojects else pure (OnlySubprojects subprojects)
 
     -- This parser is run directly after parsing "deploy", so it may need to
     -- parse a space character first since specifying a deployment environment
@@ -1037,9 +1049,15 @@ tryIntegratePullRequest pr state =
       , format "Approved-by: {}" [approvedBy]
       ] ++
         case approvalType of
-          MergeAndDeploy (DeployEnvironment env) ->
+          MergeAndDeploy AllSubprojects (DeployEnvironment env) ->
             [ "Auto-deploy: true"
+            , "Deploy-Subprojects: all"
             , format "Deploy-Environment: {}" [env]]
+          MergeAndDeploy (OnlySubprojects subprojects) (DeployEnvironment env) ->
+            [ "Auto-deploy: true"
+            , format "Deploy-Subprojects: {}" [Text.intercalate ", " subprojects]
+            , format "Deploy-Environment: {}" [env]
+            ]
           _ -> [ "Auto-deploy: false" ]
 
     mergeMessage = Text.unlines mergeMessageLines
