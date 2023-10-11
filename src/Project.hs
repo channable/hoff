@@ -46,6 +46,7 @@ module Project
   insertPullRequest,
   integrationSha,
   lookupIntegrationSha,
+  integrationShas,
   loadProjectState,
   lookupPullRequest,
   saveProjectState,
@@ -81,7 +82,7 @@ import Data.ByteString.Lazy (writeFile)
 import Data.Foldable (asum)
 import Data.IntMap.Strict (IntMap)
 import Data.List (intersect, nub, sortBy)
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, maybeToList)
 import Data.Map.Strict (Map)
 import Data.Text (Text)
 import Data.Set (Set)
@@ -118,9 +119,11 @@ data BuildStatus
   | BuildFailed (Maybe Text) -- ^ the build failed with the given URL
   deriving (Eq, Show, Generic)
 
--- | When attempting to integrated changes, there can be five states:
+-- | When attempting to integrated changes, there can be six states:
 --
 -- * no attempt has been made to integrate;
+--
+-- * the previous integration attempt became outdated by a push to the target branch.
 --
 -- * integration (e.g. merge or rebase) was successful
 --   and the new commit has the given sha;
@@ -132,6 +135,7 @@ data BuildStatus
 -- * the base branch is incorrect.
 data IntegrationStatus
   = NotIntegrated
+  | Outdated
   | Integrated Sha OutstandingChecks
   | Promoted
   | Conflicted BaseBranch GitIntegrationFailure
@@ -141,6 +145,7 @@ data IntegrationStatus
 data PullRequestStatus
   = PrStatusAwaitingApproval          -- ^ New, awaiting review.
   | PrStatusApproved                  -- ^ Approved, but not yet integrated or built.
+  | PrStatusOutdated                  -- ^ Approved, but master updated during integration.
   | PrStatusBuildPending              -- ^ Integrated, and build pending or in progress.
   | PrStatusBuildStarted Text         -- ^ Integrated, and build pending or in progress.
   | PrStatusIntegrated                -- ^ Integrated, build passed, merged into target branch.
@@ -378,6 +383,7 @@ classifyPullRequest pr = case approval pr of
   Nothing -> PrStatusAwaitingApproval
   Just _  -> case integrationStatus pr of
     NotIntegrated -> PrStatusApproved
+    Outdated -> PrStatusOutdated
     IncorrectBaseBranch -> PrStatusIncorrectBaseBranch
     -- Fixups can be reported regardless of whether we are doing an speculative rebase
     Conflicted _ WrongFixups -> PrStatusWrongFixups
@@ -441,6 +447,7 @@ isQueued pr = case approval pr of
   Nothing -> False
   Just _  -> case integrationStatus pr of
     NotIntegrated  -> True
+    Outdated -> True
     IncorrectBaseBranch -> False
     Conflicted _ _ -> False
     Integrated _ _ -> False
@@ -453,6 +460,7 @@ isInProgress pr = case approval pr of
   Nothing -> False
   Just _  -> case integrationStatus pr of
     NotIntegrated -> False
+    Outdated -> False
     IncorrectBaseBranch -> False
     Conflicted _ _ -> False
     Integrated _ buildStatus -> case summarize buildStatus of
@@ -501,7 +509,7 @@ unfailedIntegratedPullRequestsBefore referencePullRequest = filterPullRequestsBy
 -- | Returns the pull requests that have not been integrated yet,
 --   in order of ascending id.
 unintegratedPullRequests :: ProjectState -> [PullRequestId]
-unintegratedPullRequests = filterPullRequestsBy $ (== NotIntegrated) . integrationStatus
+unintegratedPullRequests = filterPullRequestsBy $ (\x -> x == NotIntegrated || x == Outdated) . integrationStatus
 
 -- | Returns the pull requests that have been approved, but for which integration
 --   and building has not yet been attempted.
@@ -545,6 +553,9 @@ integrationSha _                                               = Nothing
 
 lookupIntegrationSha :: PullRequestId -> ProjectState -> Maybe Sha
 lookupIntegrationSha pid = integrationSha <=< lookupPullRequest pid
+
+integrationShas :: PullRequest -> [Sha]
+integrationShas pr = maybeToList (integrationSha pr) ++ integrationAttempts pr
 
 -- | Returns whether the first pull request was approved after the second.
 -- To be used in infix notation:

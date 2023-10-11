@@ -319,6 +319,7 @@ data Event
   | PullRequestClosed PullRequestId            -- ^ PR.
   | PullRequestEdited PullRequestId Text BaseBranch -- ^ PR, new title, new base branch.
   | CommentAdded PullRequestId Username Text   -- ^ PR, author and body.
+  | PushPerformed BaseBranch Sha               -- ^ branch, sha
   -- CI events
   | BuildStatusChanged Sha Context BuildStatus
   -- ^ sha, possible mandatory check that was submitted with the status update, new build status
@@ -390,6 +391,7 @@ handleEventInternal triggerConfig mergeWindowExemption event = case event of
   CommentAdded pr author body
     -> handleCommentAdded triggerConfig mergeWindowExemption pr author body
   BuildStatusChanged sha context status   -> handleBuildStatusChanged sha context status
+  PushPerformed branch sha        -> handleTargetChanged branch sha
   Synchronize                     -> synchronizeState
 
 handlePullRequestOpened
@@ -479,6 +481,33 @@ handlePullRequestEdited prId newTitle newBaseBranch state =
       | otherwise -> clearPullRequest prId (updatePr pullRequest) state
     -- Do nothing if the pull request is not present.
     Nothing -> pure state
+
+-- | When we receive a push event, find all PRs
+-- that are in progress and have the same base
+-- branch. Reset their integration status to @Outdated@.
+--
+-- Avoid re-integrating due to pushing our own
+-- SHAs of successfully integrated PRs.
+handleTargetChanged
+  :: forall es. (Action :> es, RetrieveEnvironment :> es)
+  => BaseBranch
+  -> Sha
+  -> ProjectState
+  -> Eff es ProjectState
+handleTargetChanged (BaseBranch baseBranch) sha state
+  | Just branch <- Text.stripPrefix "refs/heads/" baseBranch
+  , sha `notElem` concatMap Pr.integrationShas (Pr.pullRequests state) =
+  let
+    update pr
+      | Pr.isInProgress pr
+      , Pr.baseBranch pr == BaseBranch branch
+      = pr
+        { Pr.integrationStatus = Outdated
+        , Pr.needsFeedback = True
+        }
+    update pr = pr
+  in pure $ Pr.updatePullRequests update state
+handleTargetChanged _ _ state = pure state
 
 -- | Internal result type for parsing a merge command, which allows the
 -- consumer of `parseMergeCommand` to inspect the reason why a message
@@ -1226,6 +1255,9 @@ describeStatus (BaseBranch projectBaseBranchName) prId pr state = case Pr.classi
         1 -> "waiting for rebase behind one pull request"
         n -> format "waiting for rebase behind {} pull requests" [n]
     in format "Pull request approved for {} by @{}{}, {}." [approvalCommand, approvedBy, retriedByMsg, queuePositionMsg]
+  PrStatusOutdated ->
+    let BaseBranch baseBranchName = Pr.baseBranch pr
+    in format "Push to {} detected, rebasing again." [baseBranchName]
   PrStatusBuildPending -> let Sha sha = fromJust $ Pr.integrationSha pr
                               train   = takeWhile (/= prId) $ Pr.unfailedIntegratedPullRequests state
                               len     = length train

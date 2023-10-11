@@ -119,6 +119,9 @@ serveGithubWebhook serveEnqueueEvent = do
     Just "status" -> do
       payload <- jsonData :: ActionM Github.CommitStatusPayload
       serveEnqueueEvent $ Github.CommitStatus payload
+    Just "push" -> do
+      payload <- jsonData :: ActionM Github.PushPayload
+      serveEnqueueEvent $ Github.Push payload
     Just "ping" ->
       serveEnqueueEvent $ Github.Ping
     Just anEventName -> do

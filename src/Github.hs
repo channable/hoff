@@ -18,6 +18,7 @@ module Github
   EventQueue,
   PullRequestAction (..),
   PullRequestPayload (..),
+  PushPayload (..),
   ReviewAction (..),
   WebhookEvent (..),
   eventProjectInfo,
@@ -94,6 +95,13 @@ data CommitStatusPayload = CommitStatusPayload {
   context    :: Context,             -- Corresponds to "context".
   url        :: Maybe Text,          -- Corresponds to "target_url".
   sha        :: Sha                  -- Corresponds to "sha".
+} deriving (Eq, Show)
+
+data PushPayload = PushPayload {
+  owner      :: Text,       -- Corresponds to "repository.owner.login".
+  repository :: Text,       -- Corresponds to "repository.name".
+  branch     :: BaseBranch, -- Corresponds to "ref"
+  sha        :: Sha         -- Cooresponds to "after"
 } deriving (Eq, Show)
 
 instance FromJSON PullRequestAction where
@@ -173,6 +181,14 @@ instance FromJSON CommitStatusPayload where
     <*> (v .: "sha")
   parseJSON nonObject = typeMismatch "status payload" nonObject
 
+instance FromJSON PushPayload where
+  parseJSON (Object v) = PushPayload
+    <$> getNested v ["repository", "owner", "login"]
+    <*> getNested v ["repository", "name"]
+    <*> (v .: "ref")
+    <*> (v .: "after")
+  parseJSON nonObject = typeMismatch "push payload" nonObject
+
 -- Note that GitHub calls pull requests "issues" for the sake of comments: the
 -- pull request comment event is actually "issue_comment".
 data WebhookEvent
@@ -180,6 +196,7 @@ data WebhookEvent
   | PullRequest PullRequestPayload
   | Comment CommentPayload
   | CommitStatus CommitStatusPayload
+  | Push PushPayload
   deriving (Eq, Show)
 
 -- Returns the owner of the repository for which the webhook was triggered.
@@ -189,6 +206,7 @@ eventRepositoryOwner event = case event of
   PullRequest payload  -> payload.owner
   Comment payload      -> payload.owner
   CommitStatus payload -> payload.owner
+  Push payload         -> payload.owner
 
 -- Returns the name of the repository for which the webhook was triggered.
 eventRepository :: WebhookEvent -> Text
@@ -197,6 +215,7 @@ eventRepository event = case event of
   PullRequest payload  -> payload.repository
   Comment payload      -> payload.repository
   CommitStatus payload -> payload.repository
+  Push payload         -> payload.repository
 
 eventProjectInfo :: WebhookEvent -> ProjectInfo
 eventProjectInfo event =

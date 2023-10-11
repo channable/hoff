@@ -1,11 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.31.8
 
-* Respond with 204 (NoContent) instead of 501 (UnImplemented) when responding to
-  unsupported event hook types sent by Github. This is to prevent Github from
-  interpreting the responses as errors.
-* Log unsupported event hook types to STDOUT>.
+Released 2023-10-16
+
+  * Restart integration after a push to the target branch. This is to prevent
+    waiting on CIs that are not up to date anymore.
+  * Respond with 204 (NoContent) instead of 501 (UnImplemented) when responding to
+    unsupported event hook types sent by Github. This is to prevent Github from
+    interpreting the responses as errors.
+  * Log unsupported event hook types to STDOUT>.
 
 
 ## 0.31.7

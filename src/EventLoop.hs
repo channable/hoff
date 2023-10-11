@@ -30,7 +30,7 @@ import Effectful (Eff, (:>), IOE)
 import qualified Data.Text as Text
 
 import Configuration (ProjectConfiguration, TriggerConfiguration, MergeWindowExemptionConfiguration)
-import Github (PullRequestPayload, CommentPayload, CommitStatusPayload, WebhookEvent (..))
+import Github (PullRequestPayload, CommentPayload, CommitStatusPayload, PushPayload, WebhookEvent (..))
 import Github (eventProjectInfo)
 import MonadLoggerEffect (MonadLoggerEffect)
 import Project (ProjectInfo (..), ProjectState, PullRequestId (..))
@@ -93,12 +93,16 @@ eventFromCommitStatusPayload payload =
       context = payload.context
   in  Logic.BuildStatusChanged sha context (mapCommitStatus status url)
 
+eventFromPushPayload :: PushPayload -> Logic.Event
+eventFromPushPayload payload = Logic.PushPerformed payload.branch payload.sha
+
 convertGithubEvent :: Github.WebhookEvent -> Maybe Logic.Event
 convertGithubEvent event = case event of
   Ping                 -> Nothing -- TODO: What to do with this one?
   PullRequest payload  -> Just $ eventFromPullRequestPayload payload
   CommitStatus payload -> Just $ eventFromCommitStatusPayload payload
   Comment payload      -> eventFromCommentPayload payload
+  Push payload         -> Just $ eventFromPushPayload payload
 
 -- The event loop that converts GitHub webhook events into logic events.
 runGithubEventLoop

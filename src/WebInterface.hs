@@ -296,6 +296,7 @@ viewPullRequestWithApproval info prId pullRequest = do
           -- (and so we are notified in case we add a new constructor).
           Promoted            -> span "  | " >> span "🔷 Promoted"
           NotIntegrated       -> pure ()
+          Outdated            -> pure ()
         where
           approvedAction = Project.displayMergeCommand (Approve approvalType)
           profileUrl = Text.append "https://github.com/"

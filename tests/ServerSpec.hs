@@ -102,6 +102,11 @@ isPullRequestEvent event = case event of
   Github.PullRequest _ -> True
   _                    -> False
 
+isPushEvent :: Github.WebhookEvent -> Bool
+isPushEvent event = case event of
+  Github.Push _ -> True
+  _             -> False
+
 isCommitStatusEvent :: Github.WebhookEvent -> Bool
 isCommitStatusEvent event = case event of
   Github.CommitStatus _ -> True
@@ -170,6 +175,17 @@ serverSpec = do
         Http.getResponseBody response `shouldBe` "hook received"
         Http.getResponseStatus response `shouldBe` ok200
         event `shouldSatisfy` isPullRequestEvent
+
+    it "accepts a push webhook" $
+      withServer $ \ ghQueue -> do
+        payload  <- ByteString.Lazy.readFile "tests/data/push-payload.json"
+        response <- httpPostGithubEvent "/hook/github" "push" payload
+        event    <- popQueue ghQueue
+        -- Only check that an event was received, there are unit tests already
+        -- that verify that a request was parsed correctly.
+        Http.getResponseBody response `shouldBe` "hook received"
+        Http.getResponseStatus response `shouldBe` ok200
+        event `shouldSatisfy` isPushEvent
 
     it "accepts a (commit) status webhook" $
       withServer $ \ ghQueue -> do

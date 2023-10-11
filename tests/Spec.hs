@@ -42,7 +42,7 @@ import EventLoop (convertGithubEvent)
 import Format (format, Only (..))
 import Git (BaseBranch (..), Branch (..), PushResult (..), Sha (..), TagMessage (..), TagName (..),
             GitIntegrationFailure (..), Context (..))
-import Github (CommentPayload, CommitStatusPayload, PullRequestPayload)
+import Github (CommentPayload, CommitStatusPayload, PullRequestPayload, PushPayload)
 import Logic (Action, Action (..), Event (..), IntegrationFailure (..), RetrieveEnvironment (..))
 import Project (Approval (..), DeployEnvironment (..), ProjectState (ProjectState), PullRequest (PullRequest))
 import Types (PullRequestId (..), Username (..))
@@ -1384,6 +1384,234 @@ main = hspec $ do
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
         (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy $ DeployEnvironment "staging") 0 Nothing))
 
+    it "restarts when pushed to master" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 12)
+              (Branch "tth") masterBranch (Sha "12a") "Twelfth PR"  (Username "person")
+            Project.emptyProjectState
+        results = defaultResults {resultIntegrate = [Right (Sha "1b2"), Right (Sha "1b3")]}
+        events =
+          [ CommentAdded (PullRequestId 12) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
+          , PushPerformed (BaseBranch "refs/heads/master") (Sha "1c1")
+          , BuildStatusChanged (Sha "1b3") "default" (Project.BuildStarted "example.com/1b2")
+          ]
+        actions = snd $ runActionCustom results $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer (Username "deckard")
+        , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #12: Twelfth PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 12,Branch "refs/pull/12/head",Sha "12a")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+        , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+        , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
+        , ATryIntegrate "Merge #12: Twelfth PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 12,Branch "refs/pull/12/head",Sha "12a")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b3, waiting for CI …"
+        , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+        ]
+
+    it "does not restart a failed integration after a push to master" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 1)
+              (Branch "fst") masterBranch (Sha "ab1") "Improvements..." (Username "huey")
+          $ Project.insertPullRequest (PullRequestId 2)
+              (Branch "snd") masterBranch (Sha "ab2") "... Of the ..." (Username "dewey")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
+          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
+          , BuildStatusChanged (Sha "1b2") "default" (Project.BuildFailed (Just "example.com/1b2"))
+          , PushPerformed (BaseBranch "refs/heads/master") (Sha "1c1")
+          ]
+        results = defaultResults {resultIntegrate = [Right (Sha "1b2"), Right (Sha "2b2"), Right (Sha "3b2"), Right (Sha "4b2")]}
+        actions = snd $ runActionCustom results $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer (Username "deckard")
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Improvements...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head",Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+        , AIsReviewer (Username "deckard")
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
+        , ATryIntegrate "Merge #2: ... Of the ...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
+                        [PullRequestId 1]
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b2 behind 1 other PR, waiting for CI …"
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nThe [build failed :x:](example.com/1b2).\n\nIf this is the result of a flaky test, then tag me again with the `retry` command.  Otherwise, push a new commit and tag me again."
+        , ATryIntegrate "Merge #2: ... Of the ...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 3b2, waiting for CI …"
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
+        , ATryIntegrate "Merge #2: ... Of the ...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 4b2, waiting for CI …"
+        ]
+
+    it "correctly updates the merge train size after a push to master" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 1)
+              (Branch "fst") masterBranch (Sha "ab1") "Improvements..." (Username "huey")
+          $ Project.insertPullRequest (PullRequestId 2)
+              (Branch "snd") masterBranch (Sha "ab2") "... Of the ..." (Username "dewey")
+          $ Project.insertPullRequest (PullRequestId 3)
+              (Branch "trd") masterBranch (Sha "ab3") "... Performance" (Username "louie")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
+          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
+          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "3b2") "default" (Project.BuildStarted "example.com/3b2")
+          , PushPerformed (BaseBranch "refs/heads/master") (Sha "1c1")
+          ]
+        results = defaultResults {resultIntegrate = [Right (Sha "1b2"), Right (Sha "2b2"), Right (Sha "3b2"), Right (Sha "1b3"), Right (Sha "2b3"), Right (Sha "3b3")]}
+        actions = snd $ runActionCustom results $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer (Username "deckard")
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Improvements...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head",Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+        , AIsReviewer (Username "deckard")
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
+        , ATryIntegrate "Merge #2: ... Of the ...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
+                        [PullRequestId 1]
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b2 behind 1 other PR, waiting for CI …"
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
+        , AIsReviewer (Username "deckard")
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind 2 pull requests."
+        , ATryIntegrate "Merge #3: ... Performance\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 3,Branch "refs/pull/3/head",Sha "ab3")
+                        [PullRequestId 1, PullRequestId 2]
+                        False
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3b2 behind 2 other PRs, waiting for CI …"
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3b2) started."
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
+        , ATryIntegrate "Merge #1: Improvements...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head",Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b3, waiting for CI …"
+        , ATryIntegrate "Merge #2: ... Of the ...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
+                        [PullRequestId 1]
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b3 behind 1 other PR, waiting for CI …"
+        , ATryIntegrate "Merge #3: ... Performance\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 3,Branch "refs/pull/3/head",Sha "ab3")
+                        [PullRequestId 1, PullRequestId 2]
+                        False
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3b3 behind 2 other PRs, waiting for CI …"
+        ]
+
+    it "does not restart integration after a push to master from a previous merge in the merge train" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 1)
+              (Branch "fst") masterBranch (Sha "ab1") "Improvements..." (Username "huey")
+          $ Project.insertPullRequest (PullRequestId 2)
+              (Branch "snd") masterBranch (Sha "ab2") "... Of the ..." (Username "dewey")
+          $ Project.insertPullRequest (PullRequestId 3)
+              (Branch "trd") masterBranch (Sha "ab3") "... Performance" (Username "louie")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
+          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
+          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "3b2") "default" (Project.BuildStarted "example.com/3b2")
+          , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
+          , PushPerformed (BaseBranch "refs/heads/master") (Sha "1b2")
+          ]
+        results = defaultResults {resultIntegrate = [Right (Sha "1b2"), Right (Sha "2b2"), Right (Sha "3b2"), Right (Sha "1b3"), Right (Sha "2b3"), Right (Sha "3b3")]}
+        actions = snd $ runActionCustom results $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer (Username "deckard")
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Improvements...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head",Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+        , AIsReviewer (Username "deckard")
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
+        , ATryIntegrate "Merge #2: ... Of the ...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
+                        [PullRequestId 1]
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b2 behind 1 other PR, waiting for CI …"
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
+        , AIsReviewer (Username "deckard")
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind 2 pull requests."
+        , ATryIntegrate "Merge #3: ... Performance\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 3,Branch "refs/pull/3/head",Sha "ab3")
+                        [PullRequestId 1, PullRequestId 2]
+                        False
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3b2 behind 2 other PRs, waiting for CI …"
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3b2) started."
+        , ATryPromote (Branch "fst") (Sha "1b2")
+        , ACleanupTestBranch (PullRequestId 1)
+        ]
+
   describe "Logic.proceedUntilFixedPoint" $ do
 
     it "finds a new candidate" $ do
@@ -1875,6 +2103,16 @@ main = hspec $ do
       payload.url        `shouldBe` Nothing
       payload.sha        `shouldBe` (Sha "9049f1265b7d61be4a8904a9a27120d2064dab3b")
 
+    it "parses a PushPayload correctly" $ do
+      examplePayload <- readFile "tests/data/push-payload.json"
+      let maybePayload :: Maybe PushPayload
+          maybePayload = decode examplePayload
+      maybePayload `shouldSatisfy` isJust
+      let payload       = fromJust maybePayload
+      payload.owner      `shouldBe` "Codertocat"
+      payload.repository `shouldBe` "Hello-World"
+      payload.branch     `shouldBe` BaseBranch "refs/heads/master"
+
   describe "Configuration" $ do
 
     it "loads the example config file correctly" $ do
@@ -2013,6 +2251,18 @@ main = hspec $ do
           Just event = convertGithubEvent $ Github.CommitStatus payload
       -- The error and failure statuses are both converted to "failed".
       event `shouldBe` (BuildStatusChanged (Sha "b26354") "default" $ Project.BuildFailed $ Just $ pack "https://travis-ci.org/rachael/owl/builds/1982")
+
+    let testPushPayload = Github.PushPayload
+          { owner      = "rachael"
+          , repository = "owl"
+          , branch     = BaseBranch "refs/heads/master"
+          , sha        = Sha "1c1"
+          }
+
+    it "converts a push event" $ do
+      let payload = testPushPayload
+          Just event = convertGithubEvent $ Github.Push payload
+      event `shouldBe` (PushPerformed (BaseBranch "refs/heads/master") (Sha "1c1"))
 
   describe "ProjectState" $ do
 
