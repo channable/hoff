@@ -18,7 +18,7 @@ import Crypto.MAC.HMAC (HMAC (..), hmac)
 import Data.ByteString (ByteString)
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
-import Network.HTTP.Types (badRequest400, notFound404, notImplemented501, serviceUnavailable503)
+import Network.HTTP.Types (badRequest400, notFound404, noContent204, notImplemented501, serviceUnavailable503)
 import Web.Scotty (ActionM, ScottyM, body, get, header, jsonData, notFound, param, post, raw, scottyApp, setHeader, status, text)
 import Web.Scotty.Internal.Types (RoutePattern(Literal))
 
@@ -26,6 +26,7 @@ import qualified Data.ByteString.Base16 as Base16
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as Text
 import qualified Data.Text.Lazy as LT
+import qualified Data.Text.Lazy.IO as LT
 import qualified Network.Wai as Wai
 import qualified Network.Wai.Handler.Warp as Warp
 import qualified Network.Wai.Handler.WarpTLS as Warp
@@ -120,7 +121,21 @@ serveGithubWebhook serveEnqueueEvent = do
       serveEnqueueEvent $ Github.CommitStatus payload
     Just "ping" ->
       serveEnqueueEvent $ Github.Ping
-    _ -> do
+    Just anEventName -> do
+      requestId <- header "X-GitHub-Hook-ID" >>= \mbRequestId ->
+        case mbRequestId of
+          Just requestId -> pure requestId
+          Nothing        -> pure "REQUEST_ID_MISSING"
+
+      -- Manually append "\n" to ensure line buffering for thread-safe logging.
+      liftIO $ LT.putStr $
+        "Ignored event: " <> anEventName <>
+        " - Request ID: " <> requestId <> "\n"
+
+      -- Send a 204 (NoContent) to prevent GitHub interpreting it as an error.
+      status noContent204
+      
+    Nothing -> do
       status notImplemented501
       text "hook ignored, the event type is not supported"
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+* Respond with 204 (NoContent) instead of 501 (UnImplemented) when responding to
+  unsupported event hook types sent by Github. This is to prevent Github from
+  interpreting the responses as errors.
+* Log unsupported event hook types to STDOUT>.
+
+
 ## 0.31.7
 
 Released 2023-10-10.

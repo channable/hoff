@@ -26,8 +26,7 @@ import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
 import Network.HTTP.Simple (Response)
 import Network.HTTP.Types.Header (Header, HeaderName, hContentType)
-import Network.HTTP.Types.Status (badRequest400, notFound404, notImplemented501, ok200,
-                                  serviceUnavailable503)
+import Network.HTTP.Types.Status (badRequest400, notFound404, ok200, serviceUnavailable503, noContent204)
 import Test.Hspec (Spec, describe, it, shouldBe, shouldSatisfy)
 
 import qualified Data.ByteString.Char8 as ByteString.Strict
@@ -245,12 +244,10 @@ serverSpec = do
         Http.getResponseStatus goodResponse `shouldBe` ok200
         event `shouldSatisfy` isCommitStatusEvent
 
-    it "serves 501 not implemented for unknown webhooks" $
+    it "serves 204 no content for unknown webhooks" $
       withServer $ \ _ghQueue -> do
         payload  <- ByteString.Lazy.readFile "tests/data/pull-request-payload.json"
         -- Send a webhook event with correct signature, but bogus event name.
         response <- httpPostGithubEvent "/hook/github" "launch_missiles" payload
         let status = Http.getResponseStatus response
-            msg    = Http.getResponseBody response
-        status `shouldBe` notImplemented501
-        msg    `shouldBe` "hook ignored, the event type is not supported"
+        status `shouldBe` noContent204
