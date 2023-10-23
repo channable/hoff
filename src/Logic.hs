@@ -81,7 +81,7 @@ import Project (Approval (..), ApprovedFor (..), MergeCommand (..), BuildStatus 
                 MergeWindow(..), ProjectState, PullRequest, PullRequestStatus (..),
                 summarize, supersedes)
 import Time (TimeOperation)
-import Types (PullRequestId (..), Username (..))
+import Types (Body (..), PullRequestId (..), Username (..))
 
 import qualified Configuration as Config
 import qualified Git
@@ -311,7 +311,7 @@ ensureCloned config =
 
 data Event
   -- GitHub events
-  = PullRequestOpened PullRequestId Branch BaseBranch Sha Text Username -- ^ PR, branch, base branch, sha, title, author.
+  = PullRequestOpened PullRequestId Branch BaseBranch Sha Text Username (Maybe Body) -- ^ PR, branch, base branch, sha, title, author, body.
   -- The commit changed event may contain false positives: it may be received
   -- even if the commit did not really change. This is because GitHub just
   -- sends a "something changed" event along with the new state.
@@ -383,8 +383,8 @@ handleEventInternal
   -> ProjectState
   -> Eff es ProjectState
 handleEventInternal triggerConfig mergeWindowExemption event = case event of
-  PullRequestOpened pr branch baseBranch sha title author
-    -> handlePullRequestOpened pr branch baseBranch sha title author
+  PullRequestOpened pr branch baseBranch sha title author body
+    -> handlePullRequestOpenedByUser triggerConfig mergeWindowExemption pr branch baseBranch sha title author body
   PullRequestCommitChanged pr sha -> handlePullRequestCommitChanged pr sha
   PullRequestClosed pr            -> handlePullRequestClosedByUser pr
   PullRequestEdited pr title baseBranch -> handlePullRequestEdited pr title baseBranch
@@ -393,6 +393,25 @@ handleEventInternal triggerConfig mergeWindowExemption event = case event of
   BuildStatusChanged sha context status   -> handleBuildStatusChanged sha context status
   PushPerformed branch sha        -> handleTargetChanged branch sha
   Synchronize                     -> synchronizeState
+
+handlePullRequestOpenedByUser
+  :: forall es. (Action :> es, RetrieveEnvironment :> es)
+  => TriggerConfiguration
+  -> MergeWindowExemptionConfiguration
+  -> PullRequestId
+  -> Branch
+  -> BaseBranch
+  -> Sha
+  -> Text
+  -> Username
+  -> Maybe Body
+  -> ProjectState
+  -> Eff es ProjectState
+handlePullRequestOpenedByUser triggerConfig mergeWindowExemption pr branch baseBranch sha title author body state = do
+  state' <- handlePullRequestOpened pr branch baseBranch sha title author state
+  case body of
+    Just (Body b) -> handleCommentAdded triggerConfig mergeWindowExemption pr author b state'
+    Nothing -> pure state'
 
 handlePullRequestOpened
   :: PullRequestId

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.31.9
+
+Released 2023-10-23
+
+  * Allow a merge command in the description of a merge request, to be able to
+    directly create a pull request and approve it for merging.
+
 ## 0.31.8
 
 Released 2023-10-16

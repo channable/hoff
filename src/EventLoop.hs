@@ -50,13 +50,18 @@ eventFromPullRequestPayload payload =
     number = PullRequestId payload.number
     title  = payload.title
     author = payload.author
+    body   = payload.body
     branch = payload.branch
     sha    = payload.sha
     baseBranch = Github.baseBranch (payload :: PullRequestPayload)
   in
     case payload.action of
-      Github.Opened      -> Logic.PullRequestOpened number branch baseBranch sha title author
-      Github.Reopened    -> Logic.PullRequestOpened number branch baseBranch sha title author
+      Github.Opened      -> Logic.PullRequestOpened number branch baseBranch sha title author body
+      -- If the pull request is reopened, we do not want to parse the command from
+      -- the body, because it means that a person manually intervened with the pull
+      -- request. This is why we do not pass the body to the event, so we don't
+      -- accidentally repeatedly process the same command.
+      Github.Reopened    -> Logic.PullRequestOpened number branch baseBranch sha title author Nothing
       Github.Closed      -> Logic.PullRequestClosed number
       Github.Synchronize -> Logic.PullRequestCommitChanged number sha
       Github.Edited      -> Logic.PullRequestEdited number title baseBranch

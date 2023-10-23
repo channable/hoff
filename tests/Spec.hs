@@ -88,7 +88,7 @@ testmergeWindowExemptionConfig = Config.MergeWindowExemptionConfiguration ["bot"
 singlePullRequestState :: PullRequestId -> Branch -> BaseBranch -> Sha -> Username -> ProjectState
 singlePullRequestState pr prBranch baseBranch prSha prAuthor =
   let
-    event = PullRequestOpened pr prBranch baseBranch prSha "Untitled" prAuthor
+    event = PullRequestOpened pr prBranch baseBranch prSha "Untitled" prAuthor Nothing
   in
     fst $ runAction $ handleEventTest event Project.emptyProjectState
 
@@ -362,7 +362,7 @@ main = hspec $ do
   describe "Logic.handleEvent" $ do
 
     it "handles PullRequestOpened" $ do
-      let event = PullRequestOpened (PullRequestId 3) (Branch "p") masterBranch (Sha "e0f") "title" "lisa"
+      let event = PullRequestOpened (PullRequestId 3) (Branch "p") masterBranch (Sha "e0f") "title" "lisa" Nothing
           state = fst $ runAction $ handleEventTest event Project.emptyProjectState
       state `shouldSatisfy` Project.existsPullRequest (PullRequestId 3)
       let pr = fromJust $ Project.lookupPullRequest (PullRequestId 3) state
@@ -371,16 +371,25 @@ main = hspec $ do
       Project.approval pr          `shouldBe` Nothing
       Project.integrationStatus pr `shouldBe` Project.NotIntegrated
 
+    it "handles PullRequestOpened with merge command" $ do
+      let event = PullRequestOpened (PullRequestId 3) (Branch "p") masterBranch (Sha "e0f") "title" "deckard" (Just "@bot merge")
+          state = fst $ runAction $ handleEventTest event Project.emptyProjectState
+      state `shouldSatisfy` Project.existsPullRequest (PullRequestId 3)
+      let pr = fromJust $ Project.lookupPullRequest (PullRequestId 3) state
+      Project.sha pr               `shouldBe` Sha "e0f"
+      Project.author pr            `shouldBe` "deckard"
+      Project.approval pr          `shouldBe` Just (Approval "deckard" Project.Merge 0 Nothing)
+
     it "handles PullRequestClosed" $ do
-      let event1 = PullRequestOpened (PullRequestId 1) (Branch "p") masterBranch (Sha "abc") "title" "peter"
-          event2 = PullRequestOpened (PullRequestId 2) (Branch "q") masterBranch (Sha "def") "title" "jack"
+      let event1 = PullRequestOpened (PullRequestId 1) (Branch "p") masterBranch (Sha "abc") "title" "peter" Nothing
+          event2 = PullRequestOpened (PullRequestId 2) (Branch "q") masterBranch (Sha "def") "title" "jack" Nothing
           event3 = PullRequestClosed (PullRequestId 1)
           state  = fst $ runAction $ handleEventsTest [event1, event2, event3] Project.emptyProjectState
       state `shouldSatisfy` not . Project.existsPullRequest (PullRequestId 1)
       state `shouldSatisfy` Project.existsPullRequest (PullRequestId 2)
 
     it "handles PullRequestEdited" $ do
-      let event1 = PullRequestOpened (PullRequestId 1) (Branch "p") (BaseBranch "m") (Sha "abc") "title" "peter"
+      let event1 = PullRequestOpened (PullRequestId 1) (Branch "p") (BaseBranch "m") (Sha "abc") "title" "peter" Nothing
           event2 = PullRequestEdited (PullRequestId 1) "newTitle" masterBranch
           state = fst $ runAction $ handleEventsTest [event1, event2] Project.emptyProjectState
           pr = fromJust $ Project.lookupPullRequest (PullRequestId 1) state
@@ -531,7 +540,7 @@ main = hspec $ do
 
     it "ignores a build status change for commits that are not the integration candidate" $ do
       let
-        event0 = PullRequestOpened (PullRequestId 2) (Branch "p") masterBranch (Sha "0ad") "title" "harry"
+        event0 = PullRequestOpened (PullRequestId 2) (Branch "p") masterBranch (Sha "0ad") "title" "harry" Nothing
         event1 = BuildStatusChanged (Sha "0ad") "default" Project.BuildSucceeded
         state  = candidateState (PullRequestId 1) (Branch "p") masterBranch (Sha "a38") "harry" "deckard" (Sha "84c")
         state' = fst $ runAction $ handleEventsTest [event0, event1] state
@@ -758,6 +767,58 @@ main = hspec $ do
         , failed   = []
         , approved = []
         , awaiting = []
+        }
+
+    it "handles merge command in body of pull request" $ do
+      let
+        event = PullRequestOpened (PullRequestId 1) (Branch "p") masterBranch (Sha "e0f") "title" "deckard" (Just "@bot merge")
+        -- For this test, we assume all integrations and pushes succeed.
+        results = defaultResults
+          { resultIntegrate = [Right (Sha "b71")] }
+        run = runActionCustom results
+        (state', actions) = run $ handleEventTest event Project.emptyProjectState
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: title\n\nApproved-by: deckard\nAuto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "e0f") [] False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
+        ]
+      classifiedPullRequestIds state' `shouldBe` ClassifiedPullRequestIds
+        { building = [PullRequestId 1]
+        , failed   = []
+        , approved = []
+        , awaiting = []
+        }
+
+    it "does not handle merge command in body of reopened pull request" $ do
+      let
+        events =
+          [ PullRequestOpened (PullRequestId 1) (Branch "p") masterBranch (Sha "e0f") "title" "deckard" (Just "@bot merge")
+          , PullRequestClosed (PullRequestId 1)
+          , PullRequestOpened (PullRequestId 1) (Branch "p") masterBranch (Sha "e0f") "title" "deckard" Nothing
+          ]
+        -- For this test, we assume all integrations and pushes succeed.
+        results = defaultResults
+          { resultIntegrate = [Right (Sha "b71"), Right (Sha "b72")] }
+        run = runActionCustom results
+        (state', actions) = run $ handleEventsTest events Project.emptyProjectState
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: title\n\nApproved-by: deckard\nAuto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "e0f") [] False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "Abandoning this pull request because it was closed."
+        , ACleanupTestBranch (PullRequestId 1)
+        ]
+      classifiedPullRequestIds state' `shouldBe` ClassifiedPullRequestIds
+        { building = []
+        , failed   = []
+        , approved = []
+        , awaiting = [PullRequestId 1]
         }
 
     it "ignores comments on unknown pull requests" $ do
@@ -1638,8 +1699,8 @@ main = hspec $ do
           = Project.setApproval (PullRequestId 2) (Just (Approval "fred" Project.Merge 0 Nothing))
           $ Project.setApproval (PullRequestId 1) (Just (Approval "fred" Project.Merge 1 Nothing))
           $ fst $ runAction $ handleEventsTest
-            [ PullRequestOpened (PullRequestId 1) (Branch "p") masterBranch (Sha "f34") "Untitled" "sally"
-            , PullRequestOpened (PullRequestId 2) (Branch "s") masterBranch (Sha "g35") "Another untitled" "rachael"
+            [ PullRequestOpened (PullRequestId 1) (Branch "p") masterBranch (Sha "f34") "Untitled" "sally" Nothing
+            , PullRequestOpened (PullRequestId 2) (Branch "s") masterBranch (Sha "g35") "Another untitled" "rachael" Nothing
             ] Project.emptyProjectState
         results = defaultResults
           { resultIntegrate = [Right (Sha "38c"), Right (Sha "49d")]
@@ -2037,6 +2098,7 @@ main = hspec $ do
       payload.baseBranch `shouldBe` masterBranch
       payload.title      `shouldBe` "Update the README with new information"
       payload.author     `shouldBe` "baxterthehacker2"
+      payload.body       `shouldBe` Just "This is a pretty simple change that we need to pull into master."
 
 
     it "parses a CommentPayload from a created issue_comment correctly" $ do
@@ -2158,20 +2220,21 @@ main = hspec $ do
           , sha        = Sha "b26354"
           , title      = "Add test results"
           , author     = "rachael"
+          , body       = Just "Description"
           }
 
     it "converts a pull request opened event" $ do
       let payload = testPullRequestPayload Github.Opened
           Just event = convertGithubEvent $ Github.PullRequest payload
       event `shouldBe`
-        (PullRequestOpened (PullRequestId 1) (Branch "results") masterBranch (Sha "b26354") "Add test results" "rachael")
+        (PullRequestOpened (PullRequestId 1) (Branch "results") masterBranch (Sha "b26354") "Add test results" "rachael" (Just "Description"))
 
     it "converts a pull request reopened event" $ do
       let payload = testPullRequestPayload Github.Reopened
           Just event = convertGithubEvent $ Github.PullRequest payload
       -- Reopened is treated just like opened, there is no memory in the system.
       event `shouldBe`
-        (PullRequestOpened (PullRequestId 1) (Branch "results") masterBranch (Sha "b26354") "Add test results" "rachael")
+        (PullRequestOpened (PullRequestId 1) (Branch "results") masterBranch (Sha "b26354") "Add test results" "rachael" Nothing)
 
     it "converts a pull request closed event" $ do
       let payload = testPullRequestPayload Github.Closed

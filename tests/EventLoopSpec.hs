@@ -424,8 +424,39 @@ eventLoopSpec = parallel $ do
         -- and discard the final state by using 'void'.
         void $ runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr4 branch baseBranch c4 "Add Leon test results" "deckard",
+            Logic.PullRequestOpened pr4 branch baseBranch c4 "Add Leon test results" "deckard" Nothing,
             Logic.CommentAdded pr4 "rachael" "@bot merge",
+            Logic.BuildStatusChanged c4 "default" BuildSucceeded
+          ]
+      history `shouldBe`
+        [ "* c4"
+        , "* c3"
+        , "* c2"
+        , "* c1"
+        , "* c0"
+        ]
+      -- The remote branch ("ahead") will still be present here,
+      -- but will be deleted by GitHub (if configured to do so)
+      -- if there are no other PRs depending on it.
+      -- The other branches should be left untouched.
+      branches `shouldMatchList`
+        fmap Branch ["ahead", "intro", "master", "alternative", "fixup", "unused"]
+
+    it "handles a fast-forwardable pull request from pull request description" $ do
+      (history, branches, _tagRefs, _tagAnns) <- withTestEnv' $ \ shas runLoop _git -> do
+        let
+          [_c0, _c1, _c2, _c3, _c3', c4, _c5, _c6, _c7, _c7f, _c8] = shas
+          -- Note that at the remote, refs/pull/4/head points to c4.
+          pr4 = PullRequestId 4
+          branch = Branch "ahead"
+          baseBranch = masterBranch
+
+        -- Commit c4 is one commit ahead of master, so integrating it can be done
+        -- with a fast-forward merge. Run the main event loop for these events
+        -- and discard the final state by using 'void'.
+        void $ runLoop Project.emptyProjectState
+          [
+            Logic.PullRequestOpened pr4 branch baseBranch c4 "Add Leon test results" "deckard" (Just "@bot merge"),
             Logic.BuildStatusChanged c4 "default" BuildSucceeded
           ]
       history `shouldBe`
@@ -453,7 +484,7 @@ eventLoopSpec = parallel $ do
 
         void $ runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr4 branch baseBranch c4 "Add Leon test results" "deckard",
+            Logic.PullRequestOpened pr4 branch baseBranch c4 "Add Leon test results" "deckard" Nothing,
             Logic.CommentAdded pr4 "rachael" "@bot merge",
             Logic.BuildStatusChanged c4 "default" (BuildFailed Nothing)
           ]
@@ -480,7 +511,7 @@ eventLoopSpec = parallel $ do
         -- with a fast-forward merge. A new tag `v2` should appear
         void $ runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr4 branch baseBranch c4 "Deploy tests!" "deckard",
+            Logic.PullRequestOpened pr4 branch baseBranch c4 "Deploy tests!" "deckard" Nothing,
             Logic.CommentAdded pr4 "rachael" "@bot merge and tag",
             Logic.BuildStatusChanged c4 "default" BuildSucceeded
           ]
@@ -527,7 +558,7 @@ eventLoopSpec = parallel $ do
         -- with a fast-forward merge. The deploy command currently enforces a merge
         -- commit. A new tag `v2` should appear.
         state <- runLoop Project.emptyProjectState
-          [ Logic.PullRequestOpened pr4 branch baseBranch c4 "Deploy tests!" "deckard"
+          [ Logic.PullRequestOpened pr4 branch baseBranch c4 "Deploy tests!" "deckard" Nothing
           , Logic.CommentAdded pr4 "rachael" "@bot merge and deploy"
           ]
 
@@ -585,7 +616,7 @@ eventLoopSpec = parallel $ do
         -- integrating it produces new rebased commits.
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr6 branch baseBranch c6 "Add Leon test results" "deckard",
+            Logic.PullRequestOpened pr6 branch baseBranch c6 "Add Leon test results" "deckard" Nothing,
             Logic.CommentAdded pr6 "rachael" "@bot merge"
           ]
 
@@ -625,7 +656,7 @@ eventLoopSpec = parallel $ do
         -- integrating it produces new rebased commits.
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr6 branch baseBranch c6 "Deploy it now!" "deckard",
+            Logic.PullRequestOpened pr6 branch baseBranch c6 "Deploy it now!" "deckard" Nothing,
             Logic.CommentAdded pr6 "rachael" "@bot merge and tag"
           ]
 
@@ -683,7 +714,7 @@ eventLoopSpec = parallel $ do
         -- integrating it produces new rebased commits.
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr6 branch baseBranch c6 "Deploy it now!" "deckard",
+            Logic.PullRequestOpened pr6 branch baseBranch c6 "Deploy it now!" "deckard" Nothing,
             Logic.CommentAdded pr6 "rachael" "@bot merge and deploy"
           ]
 
@@ -740,8 +771,8 @@ eventLoopSpec = parallel $ do
 
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr4 br4 baseBranch c4 "Add Leon test results" "deckard",
-            Logic.PullRequestOpened pr6 br6 baseBranch c6 "Add Rachael test results" "deckard",
+            Logic.PullRequestOpened pr4 br4 baseBranch c4 "Add Leon test results" "deckard" Nothing,
+            Logic.PullRequestOpened pr6 br6 baseBranch c6 "Add Rachael test results" "deckard" Nothing,
             -- Note that although c4 has a lower pull request number, c6 should
             -- still be integrated first because it was approved earlier.
             Logic.CommentAdded pr6 "rachael" "@bot merge",
@@ -784,8 +815,8 @@ eventLoopSpec = parallel $ do
 
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr4 br4 baseBranch c4 "Add Leon test results" "deckard",
-            Logic.PullRequestOpened pr6 br6 baseBranch c6 "Add Rachael test results" "deckard",
+            Logic.PullRequestOpened pr4 br4 baseBranch c4 "Add Leon test results" "deckard" Nothing,
+            Logic.PullRequestOpened pr6 br6 baseBranch c6 "Add Rachael test results" "deckard" Nothing,
             Logic.CommentAdded pr6 "rachael" "@bot merge and tag",
             Logic.CommentAdded pr4 "rachael" "@bot merge and tag"
           ]
@@ -861,8 +892,8 @@ eventLoopSpec = parallel $ do
         -- because it conflicts, the next pull request should be considered.
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr3 br3 baseBranch c3' "Add Leon test results" "deckard",
-            Logic.PullRequestOpened pr4 br4 baseBranch c4 "Add Rachael test results" "deckard",
+            Logic.PullRequestOpened pr3 br3 baseBranch c3' "Add Leon test results" "deckard" Nothing,
+            Logic.PullRequestOpened pr4 br4 baseBranch c4 "Add Rachael test results" "deckard" Nothing,
             Logic.CommentAdded pr3 "rachael" "@bot merge",
             Logic.CommentAdded pr4 "rachael" "@bot merge"
           ]
@@ -903,7 +934,7 @@ eventLoopSpec = parallel $ do
 
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr6 branch baseBranch c6 "Add test results" "deckard",
+            Logic.PullRequestOpened pr6 branch baseBranch c6 "Add test results" "deckard" Nothing,
             Logic.CommentAdded pr6 "rachael" "@bot merge"
           ]
 
@@ -956,7 +987,7 @@ eventLoopSpec = parallel $ do
 
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr6 branch baseBranch c6 "Add test results" "deckard",
+            Logic.PullRequestOpened pr6 branch baseBranch c6 "Add test results" "deckard" Nothing,
             Logic.CommentAdded pr6 "rachael" "@bot merge and tag"
           ]
 
@@ -1027,7 +1058,7 @@ eventLoopSpec = parallel $ do
 
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr6 branch baseBranch c6 "Add test results" "deckard",
+            Logic.PullRequestOpened pr6 branch baseBranch c6 "Add test results" "deckard" Nothing,
             Logic.CommentAdded pr6 "rachael" "@bot merge and tag"
           ]
 
@@ -1102,7 +1133,7 @@ eventLoopSpec = parallel $ do
 
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr8 branch baseBranch c7f "Add test results" "deckard",
+            Logic.PullRequestOpened pr8 branch baseBranch c7f "Add test results" "deckard" Nothing,
             Logic.CommentAdded pr8 "rachael" "@bot merge"
           ]
 
@@ -1139,7 +1170,7 @@ eventLoopSpec = parallel $ do
 
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr8 branch baseBranch c7f "Add test results" "deckard",
+            Logic.PullRequestOpened pr8 branch baseBranch c7f "Add test results" "deckard" Nothing,
             Logic.CommentAdded pr8 "rachael" "@bot merge"
           ]
 
@@ -1191,7 +1222,7 @@ eventLoopSpec = parallel $ do
 
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr8 branch baseBranch c7f "Add test results" "deckard",
+            Logic.PullRequestOpened pr8 branch baseBranch c7f "Add test results" "deckard" Nothing,
             Logic.CommentAdded pr8 "rachael" "@bot merge"
           ]
 
@@ -1228,8 +1259,8 @@ eventLoopSpec = parallel $ do
 
         state <- runLoop Project.emptyProjectState
           [
-            Logic.PullRequestOpened pr6 branch6 baseBranch c6 "Add Leon test results" "deckard",
-            Logic.PullRequestOpened pr8 branch8 baseBranch c7f "Update Leon data" "deckard",
+            Logic.PullRequestOpened pr6 branch6 baseBranch c6 "Add Leon test results" "deckard" Nothing,
+            Logic.PullRequestOpened pr8 branch8 baseBranch c7f "Update Leon data" "deckard" Nothing,
             Logic.CommentAdded pr8 "rachael" "@bot merge"
           ]
 

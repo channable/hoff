@@ -11,6 +11,7 @@
 
 module Types
 (
+  Body (..),
   PullRequestId (..),
   Username (..),
 )
@@ -30,8 +31,13 @@ newtype Username = Username Text deriving (Eq, Show, Generic, IsString, Buildabl
 -- A pull request is identified by its number.
 newtype PullRequestId = PullRequestId Int deriving (Eq, Ord, Show, Generic)
 
+-- The body of a pull request
+newtype Body = Body Text deriving (Eq, Show, Generic, IsString, Buildable)
+
+instance FromJSON Body
 instance FromJSON PullRequestId
 instance FromJSON Username
 
+instance ToJSON Body where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON PullRequestId where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON Username where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions

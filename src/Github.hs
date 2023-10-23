@@ -37,7 +37,7 @@ import GHC.Natural (Natural)
 
 import Git (Sha (..), Branch (..), BaseBranch (..), Context)
 import Project (ProjectInfo (..))
-import Types (Username)
+import Types (Body, Username)
 import Data.Maybe (fromMaybe)
 
 data PullRequestAction
@@ -69,14 +69,15 @@ data CommitStatus
 
 data PullRequestPayload = PullRequestPayload {
   action      :: PullRequestAction, -- Corresponds to "action".
-  owner       :: Text,     -- Corresponds to "pull_request.base.repo.owner.login".
-  repository  :: Text,     -- Corresponds to "pull_request.base.repo.name".
-  baseBranch  :: BaseBranch,   -- Corresponds to "pull_request.base.ref"
-  number      :: Int,      -- Corresponds to "pull_request.number".
-  branch      :: Branch,   -- Corresponds to "pull_request.head.ref".
-  sha         :: Sha,      -- Corresponds to "pull_request.head.sha".
-  title       :: Text,     -- Corresponds to "pull_request.title".
-  author      :: Username  -- Corresponds to "pull_request.user.login".
+  owner       :: Text,       -- Corresponds to "pull_request.base.repo.owner.login".
+  repository  :: Text,       -- Corresponds to "pull_request.base.repo.name".
+  baseBranch  :: BaseBranch, -- Corresponds to "pull_request.base.ref"
+  number      :: Int,        -- Corresponds to "pull_request.number".
+  branch      :: Branch,     -- Corresponds to "pull_request.head.ref".
+  sha         :: Sha,        -- Corresponds to "pull_request.head.sha".
+  title       :: Text,       -- Corresponds to "pull_request.title".
+  author      :: Username,   -- Corresponds to "pull_request.user.login".
+  body        :: Maybe Body  -- Corresponds to "pull_request.body"
 } deriving (Eq, Show)
 
 data CommentPayload = CommentPayload {
@@ -152,6 +153,7 @@ instance FromJSON PullRequestPayload where
     <*> getNested v ["pull_request", "head", "sha"]
     <*> getNested v ["pull_request", "title"]
     <*> getNested v ["pull_request", "user", "login"]
+    <*> getNested v ["pull_request", "body"]
   parseJSON nonObject = typeMismatch "pull_request payload" nonObject
 
 instance FromJSON CommentPayload where
