@@ -580,7 +580,7 @@ main = hspec $ do
         events =
           [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
           , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge and deploy"
+          , CommentAdded (PullRequestId 3) "deckard" "@bot merge and deploy to staging"
           ]
         -- For this test, we assume all integrations and pushes succeed.
         results = defaultResults { resultIntegrate = [ Right (Sha "b71")
@@ -916,7 +916,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and deploy"
+        event = CommentAdded prId "deckard" "@bot merge and deploy to staging"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -968,12 +968,69 @@ main = hspec $ do
 
       actions `shouldBe` [ALeaveComment prId "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:22:\n      |\n    1 | @bot merge and deploy\n      |                      ^\n    No deployment environments have been configured.\n"]
 
-    it "recognizes 'merge and deploy on Friday' commands as the proper ApprovedFor value" $ do
+    it "allows the 'merge and deploy on Friday' command when there is only one deployment environment configured " $ do
       let
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
         event = CommentAdded prId "deckard" "@bot merge and deploy on Friday"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
+        (_, actions) = runActionCustomConfig (testProjectConfig{Config.deployEnvironments = Just ["production"]}) results $ handleEventTest event state
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
+        ]
+
+    it "allows the 'merge and deploy' command when there is only one deployment environment configured " $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" "@bot merge and deploy"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
+        (_, actions) = runActionCustomConfig (testProjectConfig{Config.deployEnvironments = Just ["production"]}) results $ handleEventTest event state
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
+        ]
+
+    it "allows the 'merge and deploy to <environment>' command when there is only one deployment environment configured " $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" "@bot merge and deploy to production"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
+        (_, actions) = runActionCustomConfig (testProjectConfig{Config.deployEnvironments = Just ["production"]}) results $ handleEventTest event state
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
+        ]
+
+    it "rejects merge and deploy without an environment specified if multiple environments are configured"
+      $ expectSimpleParseFailure  "@bot merge and deploy" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:22:\n      |\n    1 | @bot merge and deploy\n      |                      ^\n    Merge and deploy has been deprecated. Please use merge and deploy to <environment>\n    where <environment> is one of staging, production\n"
+
+    it "recognizes 'merge and deploy on Friday' commands as the proper ApprovedFor value" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" "@bot merge and deploy to staging on Friday"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0))}
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1156,7 +1213,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and deploy"
+        event = CommentAdded prId "deckard" "@bot merge and deploy to staging"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
         (_, actions) = runActionCustom results $ handleEventTest event state
@@ -1313,7 +1370,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "Let's do this, @bot merge and deploy."
+        event = CommentAdded prId "deckard" "Let's do this, @bot merge and deploy to staging."
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1336,7 +1393,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "Let's do this, @bot merge and deploy !!?!"
+        event = CommentAdded prId "deckard" "Let's do this, @bot merge and deploy to staging !!?!"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1358,7 +1415,7 @@ main = hspec $ do
     -- commands are added take freeform strings as their arguments (e.g. tag
     -- messages).
     it "rejects merge commands when it is followed by another sentence before a line break"
-      $ expectSimpleParseFailure  "@bot merge and deploy. Done!" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:24:\n      |\n    1 | @bot merge and deploy. Done!\n      |                        ^\n    Merge commands may not be followed by anything other than a punctuation character ('.', ',', '!', '?', ':', ';').\n"
+      $ expectSimpleParseFailure  "@bot merge and deploy to staging. Done!" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:35:\n      |\n    1 | @bot merge and deploy to staging. Done!\n      |                                   ^\n    Merge commands may not be followed by anything other than a punctuation character ('.', ',', '!', '?', ':', ';').\n"
 
     -- This is already implicitly checked in 'expectSimpleParseFailure', you can
     -- never be too sure
@@ -1408,7 +1465,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "Hi @bo. @bot merge and deploy"
+        event = CommentAdded prId "deckard" "Hi @bo. @bot merge and deploy to staging"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1429,7 +1486,8 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@BOt   mErgE aND     DePloY"
+        -- note that the deployment environments are not case insensitive
+        event = CommentAdded prId "deckard" "@BOt   mErgE aND     DePloY To     staging"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state

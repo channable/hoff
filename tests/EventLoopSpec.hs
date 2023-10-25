@@ -571,7 +571,7 @@ eventLoopSpec = parallel $ do
         -- commit. A new tag `v2` should appear.
         state <- runLoop Project.emptyProjectState
           [ Logic.PullRequestOpened pr4 branch baseBranch c4 "Deploy tests!" "deckard" Nothing
-          , Logic.CommentAdded pr4 "rachael" "@bot merge and deploy"
+          , Logic.CommentAdded pr4 "rachael" "@bot merge and deploy to staging"
           ]
 
         -- Extract the sha of the rebased commit from the project state.
@@ -727,7 +727,7 @@ eventLoopSpec = parallel $ do
         state <- runLoop Project.emptyProjectState
           [
             Logic.PullRequestOpened pr6 branch baseBranch c6 "Deploy it now!" "deckard" Nothing,
-            Logic.CommentAdded pr6 "rachael" "@bot merge and deploy"
+            Logic.CommentAdded pr6 "rachael" "@bot merge and deploy to staging"
           ]
 
         let [rebasedSha] = integrationShas state
