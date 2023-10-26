@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.31.10
+
+Released 2023-10-26
+
+  - Always create merge commits when a single-commit PR is approved for merge and tag.
+
 ## 0.31.9
 
 Released 2023-10-23
