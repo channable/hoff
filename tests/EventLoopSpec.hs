@@ -507,16 +507,27 @@ eventLoopSpec = parallel $ do
           branch = Branch "ahead"
           baseBranch = masterBranch
 
-        -- Commit c4 is one commit ahead of master, so integrating it can be done
-        -- with a fast-forward merge. A new tag `v2` should appear
-        void $ runLoop Project.emptyProjectState
+        -- Commit c4 is one commit ahead of master, but it is marked for "merge
+        -- and tag", so a merge commit must be created.
+        -- A new tag `v2` should appear on the merge commit.
+        state <- runLoop Project.emptyProjectState
           [
             Logic.PullRequestOpened pr4 branch baseBranch c4 "Deploy tests!" "deckard" Nothing,
             Logic.CommentAdded pr4 "rachael" "@bot merge and tag",
             Logic.BuildStatusChanged c4 "default" BuildSucceeded
           ]
+
+        let [rebasedSha] = integrationShas state
+
+        state' <- runLoop state [Logic.BuildStatusChanged rebasedSha "default" BuildSucceeded]
+
+        let [rebasedSha'] = integrationShas state'
+        void $ runLoop state' [Logic.BuildStatusChanged rebasedSha' "default" BuildSucceeded]
       history `shouldBe`
-        [ "* c4"
+        [ "*   Merge #4"
+        , "|\\"
+        , "| * c4"
+        , "|/"
         , "* c3"
         , "* c2"
         , "* c1"
@@ -524,15 +535,16 @@ eventLoopSpec = parallel $ do
         ]
       tagRefs `shouldMatchList`
         [ "v1 c1"
-        , "v2 c4"
+        , "v2 Merge #4"
         ]
       tagAnns `shouldMatchList`
         [ TagAnn
             { tagName = "v2"
             , tagSubject = "v2"
             , tagBody = Map.fromList
-                [ ( "Testbot (3):", Set.fromList
-                    [ "c2: Add new Tyrell quote"
+                [ ( "Testbot (4):", Set.fromList
+                    [ "Merge #4: Deploy tests!"
+                    , "c2: Add new Tyrell quote"
                     , "c3: Add new Roy quote"
                     , "c4: Add Tyrell response"
                     ]
@@ -829,7 +841,10 @@ eventLoopSpec = parallel $ do
         void $ runLoop state' [Logic.BuildStatusChanged rebasedSha' "default" BuildSucceeded]
 
       history `shouldBe`
-        [ "* c4"
+        [ "*   Merge #4"
+        , "|\\"
+        , "| * c4"
+        , "|/"
         , "*   Merge #6"
         , "|\\"
         , "| * c6"
@@ -842,7 +857,7 @@ eventLoopSpec = parallel $ do
         ]
       -- PR 6 had been "built" before PR 4 and version should reflect that
       tagRefs `shouldMatchList`
-        [ "v3 c4"
+        [ "v3 Merge #4"
         , "v2 Merge #6"
         , "v1 c1"
         ]
@@ -851,8 +866,9 @@ eventLoopSpec = parallel $ do
             { tagName = "v3"
             , tagSubject = "v3"
             , tagBody = Map.fromList
-                [ ( "Testbot (1):", Set.fromList
-                    [ "c4: Add Tyrell response"
+                [ ( "Testbot (2):", Set.fromList
+                    [ "Merge #4: Add Leon test results"
+                    , "c4: Add Tyrell response"
                     ]
                   )
                 ]
