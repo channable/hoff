@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.31.11
+
+Release 2023-10-26
+
+  - Disallow `merge and deploy` without a specified environment if multiple environments are available.
+
 ## 0.31.10
 
 Released 2023-10-26
