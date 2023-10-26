@@ -640,6 +640,11 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     noDeployEnvironmentsError :: String
     noDeployEnvironmentsError = "No deployment environments have been configured."
 
+    -- The error message printed when using 'merge and deploy' with no specified environment
+    noDeployEnvironmentSpecifiedError :: String
+    noDeployEnvironmentSpecifiedError = "Merge and deploy has been deprecated. Please use merge and deploy to <environment>\n" ++
+      "where <environment> is one of " ++ intercalate ", " (map Text.unpack environments)
+
     -- Helper to parse a string, case insensitively, and ignoring excess spaces
     -- between words.
     pString :: Text -> Parser ()
@@ -721,13 +726,20 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     -- so we can have a nicer error message when no environments have been
     -- configured.
     pDeployToEnvironment :: Parser DeployEnvironment
-    pDeployToEnvironment
-      | (defaultEnvironment : _) <- environments
-      -- Without the try this could consume the space and break 'merge and deploy on friday'
-      = P.try (P.hspace1 *> pString "to" *> P.hspace1) *> P.choice pDeployEnvironments
-      <|> pure (DeployEnvironment defaultEnvironment)
-      | otherwise
-      = fail noDeployEnvironmentsError
+    pDeployToEnvironment =
+      if null environments
+        then fail noDeployEnvironmentsError
+        -- Without the try this could consume the space and break 'merge and deploy on friday'
+        else P.try (P.hspace1 *> pString "to" *> P.hspace1 *> P.choice pDeployEnvironments)
+               <|> defaultEnvironment
+
+    -- The default environment to deploy to on a "merge and deploy". This
+    -- behavior is deprecated when more than one environment is set, and will
+    -- return an error in that case.
+    defaultEnvironment :: Parser DeployEnvironment
+    defaultEnvironment
+      | [environment] <- environments = pure (DeployEnvironment environment)
+      | otherwise = fail noDeployEnvironmentSpecifiedError
 
     -- NOTE: This uses 'P.string' instead of 'P.string'' to avoid case folding,
     --       since environment names are also matched case sensitively elsewhere
