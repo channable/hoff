@@ -1003,7 +1003,7 @@ main = hspec $ do
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and tag by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
-                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
@@ -1024,7 +1024,7 @@ main = hspec $ do
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and tag by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
-                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
@@ -1045,7 +1045,7 @@ main = hspec $ do
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and tag by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
-                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
@@ -1066,7 +1066,7 @@ main = hspec $ do
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and tag by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
-                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
@@ -1923,7 +1923,7 @@ main = hspec $ do
       actions `shouldBe`
         [ ATryPromoteWithTag (Branch "results/rachael") (Sha "38d") (TagName "v2") (TagMessage "v2\n\nchangelog")
         , ATryIntegrate "Merge #1: Add my test results\n\nApproved-by: deckard\nAuto-deploy: false\n"
-                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "f35") [] False
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "f35") [] True
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 38e, waiting for CI \x2026"
         ]
 
