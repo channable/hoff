@@ -175,6 +175,8 @@ data ApprovedFor
 data MergeCommand
   = -- | The PR should be approved for merging and optionally deploying.
     Approve ApprovedFor
+  | -- | The PR is approved for merging and was marked as a hotfix
+    ApproveHotfix ApprovedFor
   | -- | Retry the merge if it has previously failed.
     Retry
 
@@ -527,10 +529,15 @@ getOwners = nub . map owner
 -- | A string representation of a merge command, without the optional @ on
 -- friday@ merge window suffix.
 displayMergeCommand :: MergeCommand -> Text
-displayMergeCommand (Approve Merge)                                    = "merge"
-displayMergeCommand (Approve (MergeAndDeploy (DeployEnvironment env))) = format "merge and deploy to {}" [env]
-displayMergeCommand (Approve MergeAndTag)                              = "merge and tag"
-displayMergeCommand Retry                                              = "retry"
+displayMergeCommand (Approve x)       = "merge" <> displayApproval x
+displayMergeCommand (ApproveHotfix x) = "merge hotfix" <> displayApproval x
+displayMergeCommand Retry             = "retry"
+
+displayApproval :: ApprovedFor -> Text
+displayApproval Merge                                    = ""
+displayApproval MergeAndTag                              = " and tag"
+displayApproval (MergeAndDeploy (DeployEnvironment env)) = format " and deploy to {}" [env]
+
 
 -- | Whether the specified approval type requires a merge commit to be created.
 -- This is currently the case if a tag is to be created, because the deployment

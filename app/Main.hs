@@ -253,6 +253,7 @@ projectThread config options metrics projectThreadData = do
           (Config.trigger config)
           projectConfig
           (Config.mergeWindowExemption config)
+          (Config.featureFreezeWindow config)
           getNextEvent
           publish
           projectThreadState

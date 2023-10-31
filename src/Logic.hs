@@ -67,7 +67,7 @@ import Data.Time (UTCTime, DayOfWeek (Friday), dayOfWeek, utctDay)
 import qualified Text.Megaparsec as P
 import qualified Text.Megaparsec.Char as P
 
-import Configuration (ProjectConfiguration (owner, repository, deployEnvironments), TriggerConfiguration, MergeWindowExemptionConfiguration)
+import Configuration (ProjectConfiguration (owner, repository, deployEnvironments), TriggerConfiguration, MergeWindowExemptionConfiguration, FeatureFreezeWindow)
 import Effectful (Dispatch (Dynamic), DispatchOf, Eff, Effect, (:>))
 import Effectful.Dispatch.Dynamic (interpret, send)
 import Format (format)
@@ -379,17 +379,18 @@ handleEventInternal
   :: (Action :> es, RetrieveEnvironment :> es)
   => TriggerConfiguration
   -> MergeWindowExemptionConfiguration
+  -> Maybe FeatureFreezeWindow
   -> Event
   -> ProjectState
   -> Eff es ProjectState
-handleEventInternal triggerConfig mergeWindowExemption event = case event of
+handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow event = case event of
   PullRequestOpened pr branch baseBranch sha title author body
-    -> handlePullRequestOpenedByUser triggerConfig mergeWindowExemption pr branch baseBranch sha title author body
+    -> handlePullRequestOpenedByUser triggerConfig mergeWindowExemption featureFreezeWindow pr branch baseBranch sha title author body
   PullRequestCommitChanged pr sha -> handlePullRequestCommitChanged pr sha
   PullRequestClosed pr            -> handlePullRequestClosedByUser pr
   PullRequestEdited pr title baseBranch -> handlePullRequestEdited pr title baseBranch
   CommentAdded pr author body
-    -> handleCommentAdded triggerConfig mergeWindowExemption pr author body
+    -> handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow pr author body
   BuildStatusChanged sha context status   -> handleBuildStatusChanged sha context status
   PushPerformed branch sha        -> handleTargetChanged branch sha
   Synchronize                     -> synchronizeState
@@ -398,6 +399,7 @@ handlePullRequestOpenedByUser
   :: forall es. (Action :> es, RetrieveEnvironment :> es)
   => TriggerConfiguration
   -> MergeWindowExemptionConfiguration
+  -> Maybe FeatureFreezeWindow
   -> PullRequestId
   -> Branch
   -> BaseBranch
@@ -407,10 +409,10 @@ handlePullRequestOpenedByUser
   -> Maybe Body
   -> ProjectState
   -> Eff es ProjectState
-handlePullRequestOpenedByUser triggerConfig mergeWindowExemption pr branch baseBranch sha title author body state = do
+handlePullRequestOpenedByUser triggerConfig mergeWindowExemption featureFreezeWindow pr branch baseBranch sha title author body state = do
   state' <- handlePullRequestOpened pr branch baseBranch sha title author state
   case body of
-    Just (Body b) -> handleCommentAdded triggerConfig mergeWindowExemption pr author b state'
+    Just (Body b) -> handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow pr author b state'
     Nothing -> pure state'
 
 handlePullRequestOpened
@@ -664,7 +666,7 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     -- Parse a full merge command. Does not consume any input if the prefix
     -- could not be matched fully.
     pCommand :: Parser (MergeCommand, MergeWindow)
-    pCommand = P.try pCommandPrefix *> P.hspace1 *> (pApprovalCommand <|> pRetryCommand) <* P.hspace <* pCommandSuffix
+    pCommand = P.try pCommandPrefix *> P.hspace1 *> (pApprovalCommand <|> pHotfixApprovalCommand <|> pRetryCommand) <* P.hspace <* pCommandSuffix
 
     -- Parse the (normalized) command prefix. Matched non-greedily in 'pCommand'
     -- using 'P.try'.
@@ -691,6 +693,9 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     pApprovalCommand :: Parser (MergeCommand, MergeWindow)
     pApprovalCommand = (,) . Approve <$> pMergeApproval <*> pMergeWindow
 
+    pHotfixApprovalCommand :: Parser (MergeCommand, MergeWindow)
+    pHotfixApprovalCommand = (,) . ApproveHotfix <$> pMergeHotfixApproval <*> pMergeWindow
+
     pRetryCommand :: Parser (MergeCommand, MergeWindow)
     pRetryCommand = (Retry,) <$> (P.string' "retry" *> pMergeWindow)
 
@@ -705,6 +710,9 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     -- merge command.
     pMergeApproval :: Parser ApprovedFor
     pMergeApproval = pString "merge" *> (pMergeAnd <|> pure Merge)
+
+    pMergeHotfixApproval :: Parser ApprovedFor
+    pMergeHotfixApproval = pString "merge hotfix" *> (pMergeAnd <|> pure Merge)
 
     -- NOTE: As mentioned above, only the @ and @ part will backtrack. This is
     --       needed so a) the custom error message in pDeploy works and b) so
@@ -764,12 +772,13 @@ handleCommentAdded
   :: forall es. (Action :> es, RetrieveEnvironment :> es)
   => TriggerConfiguration
   -> MergeWindowExemptionConfiguration
+  -> Maybe FeatureFreezeWindow
   -> PullRequestId
   -> Username
   -> Text
   -> ProjectState
   -> Eff es ProjectState
-handleCommentAdded triggerConfig mergeWindowExemption prId author body state
+handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId author body state
   -- Parser error messages contain an excerpt from the original's comment. To
   -- avoid feedback loops, Hoff will insert a special comment into its own
   -- comments with parser error messages that can be checked for here.
@@ -791,6 +800,8 @@ handleCommentAdded triggerConfig mergeWindowExemption prId author body state
         then isReviewer author
         else pure False
 
+      dateTime <- getDateTime
+
       -- To guard against accidental merges we make use of a merge window.
       -- Merging inside this window is discouraged but can be overruled with a
       -- special command or by adding the user to the merge window exemption
@@ -798,6 +809,14 @@ handleCommentAdded triggerConfig mergeWindowExemption prId author body state
       -- https://github.com/channable/hoff/pull/95 for caveats and improvement
       -- ideas.
       day <- dayOfWeek . utctDay <$> getDateTime
+
+      let featureFreezeActive' :: UTCTime -> Bool
+          featureFreezeActive' time = case featureFreezeWindow of
+            Nothing -> False
+            Just (Config.FeatureFreezeWindow start end) -> time > start && time < end
+
+      let featureFreezeActive = featureFreezeActive' dateTime
+
       let exempted :: Username -> Bool
           exempted (Username user) =
             let (Config.MergeWindowExemptionConfiguration users) = mergeWindowExemption
@@ -805,6 +824,20 @@ handleCommentAdded triggerConfig mergeWindowExemption prId author body state
 
           verifyMergeWindow :: MergeCommand -> MergeWindow -> Eff es ProjectState -> Eff es ProjectState
           verifyMergeWindow _ _ action | exempted author = action
+          verifyMergeWindow Retry _ action = action
+          verifyMergeWindow (ApproveHotfix cmd) _ action
+            | featureFreezeActive = action
+            | otherwise = do
+                () <- leaveComment prId ("Your merge request has been denied because \
+                                          \it is not a feature-freeze period. Run '" <>
+                                          Pr.displayMergeCommand (Approve cmd) <> "' instead.")
+                pure state
+          verifyMergeWindow (Approve cmd) _ _
+            | featureFreezeActive = do
+                () <- leaveComment prId ("Your merge request has been denied because \
+                                          \we are in a feature-freeze period. Run '" <>
+                                          Pr.displayMergeCommand (ApproveHotfix cmd) <> "' instead.")
+                pure state
           verifyMergeWindow command OnFriday action
             | day == Friday = action
             | otherwise = do
@@ -843,6 +876,7 @@ handleCommentAdded triggerConfig mergeWindowExemption prId author body state
           -- Author is a reviewer
           | isAllowed -> verifyMergeWindow command mergeWindow $ case command of
             Approve approval -> handleMergeRequested projectConfig prId author state pr approval Nothing
+            ApproveHotfix approval -> handleMergeRequested projectConfig prId author state pr approval Nothing
             Retry -> handleMergeRetry projectConfig prId author state pr
           -- Author is not a reviewer, so we ignore
           | otherwise -> pure state
@@ -1370,11 +1404,12 @@ handleEvent
   :: (Action :> es, RetrieveEnvironment :> es)
   => TriggerConfiguration
   -> MergeWindowExemptionConfiguration
+  -> Maybe FeatureFreezeWindow
   -> Event
   -> ProjectState
   -> Eff es ProjectState
-handleEvent triggerConfig mergeWindowExemption event state = do
-  projectState <- handleEventInternal triggerConfig mergeWindowExemption event state >>= proceedUntilFixedPoint
+handleEvent triggerConfig mergeWindowExemption featureFreezeWindow event state = do
+  projectState <- handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow event state >>= proceedUntilFixedPoint
   triggerTrainSizeUpdate projectState
   pure projectState
 

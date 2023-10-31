@@ -17,6 +17,7 @@ module Configuration
   UserConfiguration (..),
   MergeWindowExemptionConfiguration (..),
   MetricsConfiguration (..),
+  FeatureFreezeWindow (..),
   loadConfiguration
 )
 where
@@ -25,6 +26,7 @@ import Data.Aeson (FromJSON, eitherDecodeStrict')
 import Data.ByteString (readFile)
 import Data.Set (Set)
 import Data.Text (Text)
+import Data.Time (UTCTime)
 import GHC.Generics
 import Prelude hiding (readFile)
 import qualified Network.Wai.Handler.Warp as Warp
@@ -39,6 +41,13 @@ data ProjectConfiguration = ProjectConfiguration
     stateFile          :: FilePath,                  -- The file where project state is stored.
     checks             :: Maybe ChecksConfiguration, -- Optional configuration related to checks for the project.
     deployEnvironments :: Maybe [Text]               -- The environments which the `deploy to <environment>` command should be enabled for
+  }
+  deriving (Generic)
+
+data FeatureFreezeWindow = FeatureFreezeWindow
+  {
+    start :: UTCTime,
+    end   :: UTCTime
   }
   deriving (Generic)
 
@@ -122,7 +131,10 @@ data Configuration = Configuration
     mergeWindowExemption :: MergeWindowExemptionConfiguration,
 
     -- Configuration for the Prometheus metrics server.
-    metricsConfig :: Maybe MetricsConfiguration
+    metricsConfig :: Maybe MetricsConfiguration,
+
+    -- Feature freeze period in which only 'merge hotfix' commands are allowed
+    featureFreezeWindow :: Maybe FeatureFreezeWindow
   }
   deriving (Generic)
 
@@ -134,6 +146,7 @@ instance FromJSON TriggerConfiguration
 instance FromJSON UserConfiguration
 instance FromJSON MergeWindowExemptionConfiguration
 instance FromJSON MetricsConfiguration
+instance FromJSON FeatureFreezeWindow
 
 -- Reads and parses the configuration. Returns Nothing if parsing failed, but
 -- crashes if the file could not be read.
