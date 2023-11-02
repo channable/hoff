@@ -666,7 +666,7 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     -- Parse a full merge command. Does not consume any input if the prefix
     -- could not be matched fully.
     pCommand :: Parser (MergeCommand, MergeWindow)
-    pCommand = P.try pCommandPrefix *> P.hspace1 *> (pApprovalCommand <|> pHotfixApprovalCommand <|> pRetryCommand) <* P.hspace <* pCommandSuffix
+    pCommand = P.try pCommandPrefix *> P.hspace1 *> (pApprovalCommand <|> pRetryCommand) <* P.hspace <* pCommandSuffix
 
     -- Parse the (normalized) command prefix. Matched non-greedily in 'pCommand'
     -- using 'P.try'.
@@ -691,10 +691,7 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     --       in 'pMergeWindow' would allow @mergeon friday@ which is also not
     --       desirable.
     pApprovalCommand :: Parser (MergeCommand, MergeWindow)
-    pApprovalCommand = (,) . Approve <$> pMergeApproval <*> pMergeWindow
-
-    pHotfixApprovalCommand :: Parser (MergeCommand, MergeWindow)
-    pHotfixApprovalCommand = (,) . ApproveHotfix <$> pMergeHotfixApproval <*> pMergeWindow
+    pApprovalCommand = (,) <$> pMergeApproval <*> pMergeWindow
 
     pRetryCommand :: Parser (MergeCommand, MergeWindow)
     pRetryCommand = (Retry,) <$> (P.string' "retry" *> pMergeWindow)
@@ -708,11 +705,11 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     --
     -- When the comment isn't folowed by @ and @ this is treated as a plain
     -- merge command.
-    pMergeApproval :: Parser ApprovedFor
-    pMergeApproval = pString "merge" *> (pMergeAnd <|> pure Merge)
+    pMergeApproval :: Parser MergeCommand
+    pMergeApproval = pString "merge" *> ((Approve <$> pMergeAnd) <|> (ApproveHotfix <$> pMergeHotfixApproval) <|> (pure $ Approve Merge))
 
     pMergeHotfixApproval :: Parser ApprovedFor
-    pMergeHotfixApproval = pString "merge hotfix" *> (pMergeAnd <|> pure Merge)
+    pMergeHotfixApproval = P.try (P.hspace1 *> pString "hotfix") *> (pMergeAnd <|> pure Merge)
 
     -- NOTE: As mentioned above, only the @ and @ part will backtrack. This is
     --       needed so a) the custom error message in pDeploy works and b) so
