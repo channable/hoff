@@ -691,7 +691,7 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     --       in 'pMergeWindow' would allow @mergeon friday@ which is also not
     --       desirable.
     pApprovalCommand :: Parser (MergeCommand, MergeWindow)
-    pApprovalCommand = (,) <$> pMergeApproval <*> pMergeWindow
+    pApprovalCommand = (,) . Approve <$> pMergeApproval <*> pMergeWindow
 
     pRetryCommand :: Parser (MergeCommand, MergeWindow)
     pRetryCommand = (Retry,) <$> (P.string' "retry" *> pMergeWindow)
@@ -705,11 +705,8 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     --
     -- When the comment isn't folowed by @ and @ this is treated as a plain
     -- merge command.
-    pMergeApproval :: Parser MergeCommand
-    pMergeApproval = pString "merge" *> ((Approve <$> pMergeAnd) <|> (ApproveHotfix <$> pMergeHotfixApproval) <|> (pure $ Approve Merge))
-
-    pMergeHotfixApproval :: Parser ApprovedFor
-    pMergeHotfixApproval = P.try (P.hspace1 *> pString "hotfix") *> (pMergeAnd <|> pure Merge)
+    pMergeApproval :: Parser ApprovedFor
+    pMergeApproval = pString "merge" *> (pMergeAnd <|> pure Merge)
 
     -- NOTE: As mentioned above, only the @ and @ part will backtrack. This is
     --       needed so a) the custom error message in pDeploy works and b) so
@@ -754,8 +751,7 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     -- Parses the optional @ on friday@ command suffix. Since this starts with a
     -- space, it's important that the last run parser has not yet consumed it.
     pMergeWindow :: Parser MergeWindow
-    pMergeWindow = (OnFriday <$ P.try (P.hspace1 *> pString "on friday")) <|> pure NotFriday
-
+    pMergeWindow = (OnFriday <$ P.try (P.hspace1 *> pString "on friday")) <|> (DuringFeatureFreeze <$ P.try (P.hspace1 *> pString "as hotfix")) <|> pure AnyDay
 
 -- Mark the pull request as approved, and leave a comment to acknowledge that.
 approvePullRequest :: PullRequestId -> Approval -> ProjectState -> Eff es ProjectState
@@ -805,14 +801,11 @@ handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId a
       -- list. For now Friday at UTC+0 is good enough. See
       -- https://github.com/channable/hoff/pull/95 for caveats and improvement
       -- ideas.
-      day <- dayOfWeek . utctDay <$> getDateTime
+      let day = dayOfWeek $ utctDay $ dateTime
 
-      let featureFreezeActive' :: UTCTime -> Bool
-          featureFreezeActive' time = case featureFreezeWindow of
+      let featureFreezeActive = case featureFreezeWindow of
             Nothing -> False
-            Just (Config.FeatureFreezeWindow start end) -> time > start && time < end
-
-      let featureFreezeActive = featureFreezeActive' dateTime
+            Just (Config.FeatureFreezeWindow start end) -> dateTime > start && dateTime < end
 
       let exempted :: Username -> Bool
           exempted (Username user) =
@@ -821,19 +814,12 @@ handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId a
 
           verifyMergeWindow :: MergeCommand -> MergeWindow -> Eff es ProjectState -> Eff es ProjectState
           verifyMergeWindow _ _ action | exempted author = action
-          verifyMergeWindow Retry _ action = action
-          verifyMergeWindow (ApproveHotfix cmd) _ action
+          verifyMergeWindow command DuringFeatureFreeze action
             | featureFreezeActive = action
             | otherwise = do
                 () <- leaveComment prId ("Your merge request has been denied because \
                                           \it is not a feature-freeze period. Run '" <>
-                                          Pr.displayMergeCommand (Approve cmd) <> "' instead.")
-                pure state
-          verifyMergeWindow (Approve cmd) _ _
-            | featureFreezeActive = do
-                () <- leaveComment prId ("Your merge request has been denied because \
-                                          \we are in a feature-freeze period. Run '" <>
-                                          Pr.displayMergeCommand (ApproveHotfix cmd) <> "' instead.")
+                                          Pr.displayMergeCommand command <> "' instead.")
                 pure state
           verifyMergeWindow command OnFriday action
             | day == Friday = action
@@ -842,14 +828,19 @@ handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId a
                                           \it is not Friday. Run '" <>
                                           Pr.displayMergeCommand command <> "' instead.")
                 pure state
-          verifyMergeWindow command NotFriday action
-            | day /= Friday = action
-            | otherwise = do
+          verifyMergeWindow command AnyDay action
+            | featureFreezeActive = do
+                () <- leaveComment prId ("Your merge request has been denied because \
+                                          \we are in a feature-freeze period. Run '" <>
+                                          Pr.displayMergeCommand command <> " as hotfix' instead.")
+                pure state
+            | day == Friday = do
                 () <- leaveComment prId ("Your merge request has been denied, because \
                                           \merging on Fridays is not recommended. \
                                           \To override this behaviour use the command `"
                                           <> Pr.displayMergeCommand command <> " on Friday`.")
                 pure state
+            | otherwise = action
 
       case commandType of
         -- The bot was not mentioned in the comment, ignore
@@ -873,7 +864,6 @@ handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId a
           -- Author is a reviewer
           | isAllowed -> verifyMergeWindow command mergeWindow $ case command of
             Approve approval -> handleMergeRequested projectConfig prId author state pr approval Nothing
-            ApproveHotfix approval -> handleMergeRequested projectConfig prId author state pr approval Nothing
             Retry -> handleMergeRetry projectConfig prId author state pr
           -- Author is not a reviewer, so we ignore
           | otherwise -> pure state

@@ -1248,12 +1248,12 @@ main = hspec $ do
         , ALeaveComment prId "Your merge request has been denied, because merging on Fridays is not recommended. To override this behaviour use the command `merge on Friday`."
         ]
 
-    it "refuses 'merge hotfix' when no feature freeze is configured" $ do
+    it "refuses 'merge as hotfix' when no feature freeze is configured" $ do
       let
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge hotfix"
+        event = CommentAdded prId "deckard" "@bot merge as hotfix"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (_, actions) = runActionCustom results $ handleEventTest event state
@@ -1263,40 +1263,27 @@ main = hspec $ do
         , ALeaveComment prId "Your merge request has been denied because it is not a feature-freeze period. Run 'merge' instead."
         ]
 
-    it "refuses 'merge hotfix and deploy to production on friday' when no feature freeze is configured" $ do
+    it "refuses 'merge and deploy to production as hotfix' when no feature freeze is configured" $ do
       let
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge hotfix and deploy to production on friday"
+        event = CommentAdded prId "deckard" "@bot merge and deploy to production as hotfix"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (_, actions) = runActionCustom results $ handleEventTest event state
 
-      actions  `shouldBe`
+      actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "Your merge request has been denied because it is not a feature-freeze period. Run 'merge and deploy to production' instead."
         ]
 
-    it "gives a parse error on 'merge hotfix and some random text'" $ do
+    it "accepts 'merge as hotfix' during a feature freeze period" $ do
       let
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge hotfix and some random text"
-
-        results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
-        (_, actions) = runActionCustom results $ handleEventTest event state
-
-      actions  `shouldBe`
-        [ ALeaveComment prId "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:23:\n      |\n    1 | @bot merge hotfix and some random text\n      |                       ^^^^^^\n    unexpected \"some r\"\n    expecting \"deploy\", \"tag\", or white space\n" ]
-
-    it "accepts 'merge hotfix' during a feature freeze period" $ do
-      let
-        prId = PullRequestId 1
-        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
-
-        event = CommentAdded prId "deckard" "@bot merge hotfix"
+        event = CommentAdded prId "deckard" "@bot merge as hotfix"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
         (state', actions) = runActionCustom results $ handleEventTestFF event state
@@ -1327,18 +1314,18 @@ main = hspec $ do
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
         (_, actions) = runActionCustom results $ handleEventTestFF event state
 
-      actions  `shouldBe`
+      actions `shouldBe`
         [
           AIsReviewer (Username "deckard"),
-          ALeaveComment prId "Your merge request has been denied because we are in a feature-freeze period. Run 'merge hotfix' instead."
+          ALeaveComment prId "Your merge request has been denied because we are in a feature-freeze period. Run 'merge as hotfix' instead."
         ]
 
-    it "refuses 'merge hotfix' outside the configured feature freeze period" $ do
+    it "refuses 'merge as hotfix' outside the configured feature freeze period" $ do
       let
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge hotfix"
+        event = CommentAdded prId "deckard" "@bot merge as hotfix"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 3 5) (T.secondsToDiffTime 0)) }
         (_, actions) = runActionCustom results $ handleEventTestFF event state
@@ -1375,12 +1362,12 @@ main = hspec $ do
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
         (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.Merge 0 Nothing))
 
-    it "accepts 'merge hotfix and deploy to production' during a feature freeze period" $ do
+    it "accepts 'merge hotfix deploy to production as hotfix' during a feature freeze period" $ do
       let
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge hotfix and deploy to production"
+        event = CommentAdded prId "deckard" "@bot merge and deploy to production as hotfix"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
         (state', actions) = runActionCustom results $ handleEventTestFF event state
@@ -3058,6 +3045,17 @@ main = hspec $ do
           withIntegratedCommits :: [Text] -> Results -> Results
           withIntegratedCommits xs results = results { resultIntegrate = resultIntegrate results ++ map (Right . Sha) xs }
 
+          -- Treat this test case as if the initial merge was requested on a
+          -- regular weekday, but any subsequent retries are requested on
+          -- Fridays.
+          withRetryOnFriday :: Results -> Results
+          withRetryOnFriday results =
+            results
+              { resultGetDateTime =
+                  T.UTCTime (T.fromMondayStartWeek 2021 2 1) (T.secondsToDiffTime 0)
+                    : repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0))
+              }
+
       it "allows merges with failed builds using the 'retry' command" $ do
         runRetryTest
           [ CommentAdded (PullRequestId 12) "deckard" "@bot retry"
@@ -3074,6 +3072,52 @@ main = hspec $ do
           , ATryPromote (Branch "tth") (Sha "00f")
           , ACleanupTestBranch (PullRequestId 12)
           ]
+          (withIntegratedCommits ["00f"])
+
+      it "rejects a plain 'retry' command on Fridays" $ do
+        runRetryTest
+          [ CommentAdded (PullRequestId 12) "deckard" "@bot retry" ]
+          [ AIsReviewer (Username "deckard")
+          , ALeaveComment (PullRequestId 12) "Your merge request has been denied, because merging on Fridays is not recommended. To override this behaviour use the command `retry on Friday`."
+          ]
+          (withRetryOnFriday . withIntegratedCommits ["00f"])
+
+      it "allows retrying merges with 'retry on friday' on Fridays" $ do
+        runRetryTest
+          [ CommentAdded (PullRequestId 12) "deckard" "@bot retry on friday"
+          , BuildStatusChanged (Sha "00f") "default" Project.BuildPending
+          , BuildStatusChanged (Sha "00f") "default" (Project.BuildStarted "url2")
+          , BuildStatusChanged (Sha "00f") "default" Project.BuildSucceeded
+          ]
+          [ AIsReviewer (Username "deckard")
+          , ACleanupTestBranch (PullRequestId 12)
+          , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard (retried by @deckard), rebasing now."
+          , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nAuto-deploy: false\n"  (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
+          , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 00f, waiting for CI …"
+          , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](url2) started."
+          , ATryPromote (Branch "tth") (Sha "00f")
+          , ACleanupTestBranch (PullRequestId 12)
+          ]
+          (withRetryOnFriday . withIntegratedCommits ["00f"])
+
+      it "rejects the 'retry on friday' commands when it's not Friday" $ do
+        runRetryTest
+          [ CommentAdded (PullRequestId 12) "deckard" "@bot retry on friday" ]
+          [ AIsReviewer (Username "deckard")
+          , ALeaveComment (PullRequestId 12) "Your merge request has been denied because it is not Friday. Run 'retry' instead."
+          ]
+          -- This shouldn't be allowed on other days, just like @merge on
+          -- friday@ isn't allowed on other weekdays
+          (withIntegratedCommits ["00f"])
+
+      it "rejects 'retry on friday' commands when it's not Friday" $ do
+        runRetryTest
+          [ CommentAdded (PullRequestId 12) "deckard" "@bot retry on friday" ]
+          [ AIsReviewer (Username "deckard")
+          , ALeaveComment (PullRequestId 12) "Your merge request has been denied because it is not Friday. Run 'retry' instead."
+          ]
+          -- This shouldn't be allowed on other days, just like @merge on
+          -- friday@ isn't allowed on other weekdays
           (withIntegratedCommits ["00f"])
 
       it "doesn't allow retrying pending PR" $ do
