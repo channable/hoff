@@ -29,7 +29,7 @@ import Data.Text (Text)
 import Effectful (Eff, (:>), IOE)
 import qualified Data.Text as Text
 
-import Configuration (ProjectConfiguration, TriggerConfiguration, MergeWindowExemptionConfiguration)
+import Configuration (ProjectConfiguration, TriggerConfiguration, MergeWindowExemptionConfiguration, FeatureFreezeWindow)
 import Github (PullRequestPayload, CommentPayload, CommitStatusPayload, PushPayload, WebhookEvent (..))
 import Github (eventProjectInfo)
 import MonadLoggerEffect (MonadLoggerEffect)
@@ -137,6 +137,7 @@ runLogicEventLoop
   => TriggerConfiguration
   -> ProjectConfiguration
   -> MergeWindowExemptionConfiguration
+  -> Maybe FeatureFreezeWindow
   -- Action that gets the next event from the queue.
   -> IO (Maybe Logic.Event)
   -- Action to perform after the state has changed, such as
@@ -146,7 +147,7 @@ runLogicEventLoop
   -> ProjectState
   -> Eff es ProjectState
 runLogicEventLoop
-  triggerConfig projectConfig mergeWindowExemptionConfig
+  triggerConfig projectConfig mergeWindowExemptionConfig featureFreezeWindow
   getNextEvent publish initialState =
   let
     repo             = Config.repository projectConfig
@@ -156,7 +157,7 @@ runLogicEventLoop
       -- perform).
       logInfoN  $ "logic loop received event (" <> repo <> "): " <> showText event
       state1 <-
-        Logic.handleEvent triggerConfig mergeWindowExemptionConfig event state0
+        Logic.handleEvent triggerConfig mergeWindowExemptionConfig featureFreezeWindow event state0
       liftIO $ publish state1
       runLoop state1
 

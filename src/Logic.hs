@@ -67,7 +67,7 @@ import Data.Time (UTCTime, DayOfWeek (Friday), dayOfWeek, utctDay)
 import qualified Text.Megaparsec as P
 import qualified Text.Megaparsec.Char as P
 
-import Configuration (ProjectConfiguration (owner, repository, deployEnvironments), TriggerConfiguration, MergeWindowExemptionConfiguration)
+import Configuration (ProjectConfiguration (owner, repository, deployEnvironments), TriggerConfiguration, MergeWindowExemptionConfiguration, FeatureFreezeWindow)
 import Effectful (Dispatch (Dynamic), DispatchOf, Eff, Effect, (:>))
 import Effectful.Dispatch.Dynamic (interpret, send)
 import Format (format)
@@ -379,17 +379,18 @@ handleEventInternal
   :: (Action :> es, RetrieveEnvironment :> es)
   => TriggerConfiguration
   -> MergeWindowExemptionConfiguration
+  -> Maybe FeatureFreezeWindow
   -> Event
   -> ProjectState
   -> Eff es ProjectState
-handleEventInternal triggerConfig mergeWindowExemption event = case event of
+handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow event = case event of
   PullRequestOpened pr branch baseBranch sha title author body
-    -> handlePullRequestOpenedByUser triggerConfig mergeWindowExemption pr branch baseBranch sha title author body
+    -> handlePullRequestOpenedByUser triggerConfig mergeWindowExemption featureFreezeWindow pr branch baseBranch sha title author body
   PullRequestCommitChanged pr sha -> handlePullRequestCommitChanged pr sha
   PullRequestClosed pr            -> handlePullRequestClosedByUser pr
   PullRequestEdited pr title baseBranch -> handlePullRequestEdited pr title baseBranch
   CommentAdded pr author body
-    -> handleCommentAdded triggerConfig mergeWindowExemption pr author body
+    -> handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow pr author body
   BuildStatusChanged sha context status   -> handleBuildStatusChanged sha context status
   PushPerformed branch sha        -> handleTargetChanged branch sha
   Synchronize                     -> synchronizeState
@@ -398,6 +399,7 @@ handlePullRequestOpenedByUser
   :: forall es. (Action :> es, RetrieveEnvironment :> es)
   => TriggerConfiguration
   -> MergeWindowExemptionConfiguration
+  -> Maybe FeatureFreezeWindow
   -> PullRequestId
   -> Branch
   -> BaseBranch
@@ -407,10 +409,10 @@ handlePullRequestOpenedByUser
   -> Maybe Body
   -> ProjectState
   -> Eff es ProjectState
-handlePullRequestOpenedByUser triggerConfig mergeWindowExemption pr branch baseBranch sha title author body state = do
+handlePullRequestOpenedByUser triggerConfig mergeWindowExemption featureFreezeWindow pr branch baseBranch sha title author body state = do
   state' <- handlePullRequestOpened pr branch baseBranch sha title author state
   case body of
-    Just (Body b) -> handleCommentAdded triggerConfig mergeWindowExemption pr author b state'
+    Just (Body b) -> handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow pr author b state'
     Nothing -> pure state'
 
 handlePullRequestOpened
@@ -749,8 +751,7 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     -- Parses the optional @ on friday@ command suffix. Since this starts with a
     -- space, it's important that the last run parser has not yet consumed it.
     pMergeWindow :: Parser MergeWindow
-    pMergeWindow = (OnFriday <$ P.try (P.hspace1 *> pString "on friday")) <|> pure NotFriday
-
+    pMergeWindow = (OnFriday <$ P.try (P.hspace1 *> pString "on friday")) <|> (DuringFeatureFreeze <$ P.try (P.hspace1 *> pString "as hotfix")) <|> pure AnyDay
 
 -- Mark the pull request as approved, and leave a comment to acknowledge that.
 approvePullRequest :: PullRequestId -> Approval -> ProjectState -> Eff es ProjectState
@@ -764,12 +765,13 @@ handleCommentAdded
   :: forall es. (Action :> es, RetrieveEnvironment :> es)
   => TriggerConfiguration
   -> MergeWindowExemptionConfiguration
+  -> Maybe FeatureFreezeWindow
   -> PullRequestId
   -> Username
   -> Text
   -> ProjectState
   -> Eff es ProjectState
-handleCommentAdded triggerConfig mergeWindowExemption prId author body state
+handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId author body state
   -- Parser error messages contain an excerpt from the original's comment. To
   -- avoid feedback loops, Hoff will insert a special comment into its own
   -- comments with parser error messages that can be checked for here.
@@ -791,13 +793,20 @@ handleCommentAdded triggerConfig mergeWindowExemption prId author body state
         then isReviewer author
         else pure False
 
+      dateTime <- getDateTime
+
       -- To guard against accidental merges we make use of a merge window.
       -- Merging inside this window is discouraged but can be overruled with a
       -- special command or by adding the user to the merge window exemption
       -- list. For now Friday at UTC+0 is good enough. See
       -- https://github.com/channable/hoff/pull/95 for caveats and improvement
       -- ideas.
-      day <- dayOfWeek . utctDay <$> getDateTime
+      let day = dayOfWeek $ utctDay $ dateTime
+
+      let featureFreezeActive = case featureFreezeWindow of
+            Nothing -> False
+            Just (Config.FeatureFreezeWindow start end) -> dateTime > start && dateTime < end
+
       let exempted :: Username -> Bool
           exempted (Username user) =
             let (Config.MergeWindowExemptionConfiguration users) = mergeWindowExemption
@@ -805,6 +814,13 @@ handleCommentAdded triggerConfig mergeWindowExemption prId author body state
 
           verifyMergeWindow :: MergeCommand -> MergeWindow -> Eff es ProjectState -> Eff es ProjectState
           verifyMergeWindow _ _ action | exempted author = action
+          verifyMergeWindow command DuringFeatureFreeze action
+            | featureFreezeActive = action
+            | otherwise = do
+                () <- leaveComment prId ("Your merge request has been denied because \
+                                          \it is not a feature-freeze period. Run '" <>
+                                          Pr.displayMergeCommand command <> "' instead.")
+                pure state
           verifyMergeWindow command OnFriday action
             | day == Friday = action
             | otherwise = do
@@ -812,14 +828,19 @@ handleCommentAdded triggerConfig mergeWindowExemption prId author body state
                                           \it is not Friday. Run '" <>
                                           Pr.displayMergeCommand command <> "' instead.")
                 pure state
-          verifyMergeWindow command NotFriday action
-            | day /= Friday = action
-            | otherwise = do
+          verifyMergeWindow command AnyDay action
+            | featureFreezeActive = do
+                () <- leaveComment prId ("Your merge request has been denied because \
+                                          \we are in a feature-freeze period. Run '" <>
+                                          Pr.displayMergeCommand command <> " as hotfix' instead.")
+                pure state
+            | day == Friday = do
                 () <- leaveComment prId ("Your merge request has been denied, because \
                                           \merging on Fridays is not recommended. \
                                           \To override this behaviour use the command `"
                                           <> Pr.displayMergeCommand command <> " on Friday`.")
                 pure state
+            | otherwise = action
 
       case commandType of
         -- The bot was not mentioned in the comment, ignore
@@ -1370,11 +1391,12 @@ handleEvent
   :: (Action :> es, RetrieveEnvironment :> es)
   => TriggerConfiguration
   -> MergeWindowExemptionConfiguration
+  -> Maybe FeatureFreezeWindow
   -> Event
   -> ProjectState
   -> Eff es ProjectState
-handleEvent triggerConfig mergeWindowExemption event state = do
-  projectState <- handleEventInternal triggerConfig mergeWindowExemption event state >>= proceedUntilFixedPoint
+handleEvent triggerConfig mergeWindowExemption featureFreezeWindow event state = do
+  projectState <- handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow event state >>= proceedUntilFixedPoint
   triggerTrainSizeUpdate projectState
   pure projectState
 

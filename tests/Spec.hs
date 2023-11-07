@@ -83,6 +83,12 @@ testProjectConfig = Config.ProjectConfiguration {
 testmergeWindowExemptionConfig :: Config.MergeWindowExemptionConfiguration
 testmergeWindowExemptionConfig = Config.MergeWindowExemptionConfiguration ["bot"]
 
+testFeatureFreezeWindow :: Maybe Config.FeatureFreezeWindow
+testFeatureFreezeWindow = Just $ Config.FeatureFreezeWindow{
+  start=T.UTCTime (T.fromMondayStartWeek 2021 2 1) (T.secondsToDiffTime 0),
+  end=T.UTCTime (T.fromMondayStartWeek 2021 2 7) (T.secondsToDiffTime 0)
+  }
+
 -- Functions to prepare certain test states.
 
 singlePullRequestState :: PullRequestId -> Branch -> BaseBranch -> Sha -> Username -> ProjectState
@@ -298,12 +304,16 @@ runAction = runActionCustom defaultResults
 -- Handle an event, then advance the state until a fixed point,
 -- and simulate its side effects.
 handleEventTest :: (Action :> es, RetrieveEnvironment :> es) => Event -> ProjectState -> Eff es ProjectState
-handleEventTest = Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig
+handleEventTest = Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing
+
+-- Like the above, but with a feature freeze period configured
+handleEventTestFF :: (Action :> es, RetrieveEnvironment :> es) => Event -> ProjectState -> Eff es ProjectState
+handleEventTestFF = Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig testFeatureFreezeWindow
 
 -- Handle events (advancing the state until a fixed point in between) and
 -- simulate their side effects.
 handleEventsTest :: (Action :> es, RetrieveEnvironment :> es) => [Event] -> ProjectState -> Eff es ProjectState
-handleEventsTest events state = foldlM (flip $ Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig) state events
+handleEventsTest events state = foldlM (flip $ Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing) state events
 
 -- | Like 'classifiedPullRequests' but just with ids.
 -- This should match 'WebInterface.ClassifiedPullRequests'
@@ -1237,6 +1247,146 @@ main = hspec $ do
         [ AIsReviewer "deckard"
         , ALeaveComment prId "Your merge request has been denied, because merging on Fridays is not recommended. To override this behaviour use the command `merge on Friday`."
         ]
+
+    it "refuses 'merge as hotfix' when no feature freeze is configured" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" "@bot merge as hotfix"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
+        (_, actions) = runActionCustom results $ handleEventTest event state
+
+      actions  `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment prId "Your merge request has been denied because it is not a feature-freeze period. Run 'merge' instead."
+        ]
+
+    it "refuses 'merge and deploy to production as hotfix' when no feature freeze is configured" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" "@bot merge and deploy to production as hotfix"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
+        (_, actions) = runActionCustom results $ handleEventTest event state
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment prId "Your merge request has been denied because it is not a feature-freeze period. Run 'merge and deploy to production' instead."
+        ]
+
+    it "accepts 'merge as hotfix' during a feature freeze period" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" "@bot merge as hotfix"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
+        (state', actions) = runActionCustom results $ handleEventTestFF event state
+
+      actions `shouldBe`
+        [
+          AIsReviewer (Username "deckard"),
+          ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now.",
+          ATryIntegrate {
+                   mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n",
+                   integrationCandidate = (prId, Branch "refs/pull/1/head", Sha  "abc1234"),
+                   mergeTrain = [],
+                   alwaysAddMergeCommit = False
+          },
+          ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
+        ]
+
+      fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
+        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.Merge 0 Nothing))
+
+    it "refuses 'merge' (without hotfix) during a feature freeze period" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" "@bot merge"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
+        (_, actions) = runActionCustom results $ handleEventTestFF event state
+
+      actions `shouldBe`
+        [
+          AIsReviewer (Username "deckard"),
+          ALeaveComment prId "Your merge request has been denied because we are in a feature-freeze period. Run 'merge as hotfix' instead."
+        ]
+
+    it "refuses 'merge as hotfix' outside the configured feature freeze period" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" "@bot merge as hotfix"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 3 5) (T.secondsToDiffTime 0)) }
+        (_, actions) = runActionCustom results $ handleEventTestFF event state
+
+      actions  `shouldBe`
+        [
+          AIsReviewer (Username "deckard"),
+          ALeaveComment prId "Your merge request has been denied because it is not a feature-freeze period. Run 'merge' instead."
+        ]
+
+    it "accepts 'merge' (without hotfix) outside the configured feature freeze period" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" "@bot merge"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 3 4) (T.secondsToDiffTime 0)) }
+        (state', actions) = runActionCustom results $ handleEventTestFF event state
+
+      actions `shouldBe`
+        [
+          AIsReviewer (Username "deckard"),
+          ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now.",
+          ATryIntegrate {
+                   mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n",
+                   integrationCandidate = (prId, Branch "refs/pull/1/head", Sha  "abc1234"),
+                   mergeTrain = [],
+                   alwaysAddMergeCommit = False
+          },
+          ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
+        ]
+
+      fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
+        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.Merge 0 Nothing))
+
+    it "accepts 'merge hotfix deploy to production as hotfix' during a feature freeze period" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" "@bot merge and deploy to production as hotfix"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
+        (state', actions) = runActionCustom results $ handleEventTestFF event state
+
+      actions `shouldBe`
+        [
+          AIsReviewer (Username "deckard"),
+          ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now.",
+          ATryIntegrate {
+                   mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\n",
+                   integrationCandidate = (prId, Branch "refs/pull/1/head", Sha  "abc1234"),
+                   mergeTrain = [],
+                   alwaysAddMergeCommit = True
+          },
+          ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
+        ]
+
+      fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
+        (\pr -> Project.approval pr == Just (Approval (Username "deckard") (Project.MergeAndDeploy $ DeployEnvironment "production") 0 Nothing))
 
     it "refuses to merge an empty rebase" $ do
       let

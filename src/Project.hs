@@ -188,7 +188,7 @@ data Approval = Approval
   }
   deriving (Eq, Show, Generic)
 
-data MergeWindow = OnFriday | NotFriday
+data MergeWindow = OnFriday | DuringFeatureFreeze | AnyDay
   deriving (Show)
 
 -- | A check is a key we check incoming build status contexts (in the case of
