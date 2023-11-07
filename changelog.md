@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.32.0
+
+Release 2023-11-07
+
+  - Add `featureFreezeWindow` configuration option. During a configured feature freeze, only commands suffixed with `as hotfix` are allowed. The feature is similar to the `on friday` feature.
+
 ## 0.31.11
 
 Release 2023-10-26
