@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.32.1
+
+Release 2023-11-28
+
+  - Push integration results atomically to avoid PRs being closed incorreclty.
+
 ## 0.32.0
 
 Release 2023-11-07

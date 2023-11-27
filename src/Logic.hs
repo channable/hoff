@@ -194,13 +194,12 @@ triggerTrainSizeUpdate projectState = do
 
 -- | Interpreter that translates high-level actions into more low-level ones.
 runAction
-  :: (MetricsOperation :> es, GitOperation :> es, GithubOperation :> es, TimeOperation :> es)
+  :: (MetricsOperation :> es, GitOperation :> es, GithubOperation :> es)
   => ProjectConfiguration
   -> Eff (Action : es) a
   -> Eff es a
 runAction config =
-  let pushDelayMicroseconds :: Int = 2 * 1_000_000
-   in interpret $ \_ -> \case
+  interpret $ \_ -> \case
     TryIntegrate message (pr, ref, sha) train alwaysAddMergeCommit -> do
       ensureCloned config
 
@@ -219,37 +218,25 @@ runAction config =
         Right integratedSha -> pure $ Right integratedSha
     TryPromote prBranch sha -> do
       ensureCloned config
-      forcePushResult <- Git.forcePush sha prBranch
-      case forcePushResult of
-        PushRejected _ -> pure forcePushResult
-        PushOk -> do
-          -- TODO: Find a safer way to make sure Github doesn't get confused
-          -- by 2 pushes close together, the delay is all arbitrary and not nice.
-          -- See https://github.com/channable/hoff/issues/196
-          Time.sleepMicros pushDelayMicroseconds
-          Git.push sha (Git.Branch $ Config.branch config)
+      Git.pushAtomic [ AsRefSpecForce (sha, prBranch)
+                     , AsRefSpec (sha, Git.Branch $ Config.branch config)]
 
     TryPromoteWithTag prBranch sha newTagName newTagMessage -> do
       ensureCloned config
-      forcePushResult <- Git.forcePush sha prBranch
-      case forcePushResult of
-        PushRejected err -> pure (Left err, forcePushResult)
-        PushOk -> do
-          -- TODO: Find a safer way to make sure Github doesn't get confused
-          -- by 2 pushes close together, the delay is all arbitrary and not nice.
-          -- See https://github.com/channable/hoff/issues/196
-          Time.sleepMicros pushDelayMicroseconds
-          tagResult <- Git.tag sha newTagName newTagMessage
-          case tagResult of
-            TagFailed _ -> do
-              pushResult <- Git.push sha (Git.Branch $ Config.branch config)
-              pure (Left "Please check the logs", pushResult)
-            TagOk tagName -> do
-              atomicPushResult <- Git.pushAtomic [AsRefSpec tagName, AsRefSpec (sha, Git.Branch $ Config.branch config)]
-              Git.deleteTag tagName
-              pure (Right tagName, atomicPushResult)
-              -- Deleting tag after atomic push is important to maintain one "source of truth", namely
-              -- the origin
+      tagResult <- Git.tag sha newTagName newTagMessage
+      case tagResult of
+        TagFailed _ -> do
+          pushResult <- Git.pushAtomic [ AsRefSpecForce (sha, prBranch)
+                                       , AsRefSpec (sha, Git.Branch $ Config.branch config)]
+          pure (Left "Please check the logs", pushResult)
+        TagOk tagName -> do
+          atomicPushResult <- Git.pushAtomic [ AsRefSpecForce (sha, prBranch)
+                                             , AsRefSpec tagName
+                                             , AsRefSpec (sha, Git.Branch $ Config.branch config)]
+          Git.deleteTag tagName
+          pure (Right tagName, atomicPushResult)
+          -- Deleting tag after atomic push is important to maintain one "source of truth", namely
+          -- the origin
 
     CleanupTestBranch pr -> do
       let branch = testBranch config pr

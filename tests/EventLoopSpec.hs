@@ -236,7 +236,6 @@ fakeRunGithub = interpret $ \_ -> \case
 fakeRunTime :: Eff (Time.TimeOperation : es) a -> Eff es a
 fakeRunTime = interpret $ \_ -> \case
   Time.GetDateTime -> pure $ T.UTCTime (T.fromMondayStartWeek 2021 2 1) (T.secondsToDiffTime 0)
-  Time.SleepMicros _ -> pure ()
 
 fakeRunMetrics :: Eff (MetricsOperation : es) a -> Eff es a
 fakeRunMetrics = interpret $ \_ -> \case
