@@ -290,6 +290,8 @@ viewPullRequestWithApproval info prId pullRequest = do
               _                          -> pure ()
           Conflicted _ _      -> span "  | " >> span "❗ Conflicted"
           IncorrectBaseBranch -> span "  | " >> span "❗ Incorrect base branch"
+          Promote _ _         -> span "  | " >> span "Awaiting promotion"
+          PromoteAndTag {}    -> span "  | " >> span "Awaiting promotion"
           -- Promotions are not actually shown in the interface
           -- as a PR is deleted right after it is promoted.
           -- The case is here so we cover all branches

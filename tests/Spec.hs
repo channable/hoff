@@ -34,17 +34,16 @@ import Test.Hspec
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.UUID.V4 as Uuid
-import qualified Data.Text as Text
 import qualified Effectful.State.Static.Local as State
 import qualified Effectful.Writer.Static.Local as Writer
 
 import EventLoop (convertGithubEvent)
-import Format (format, Only (..))
 import Git (BaseBranch (..), Branch (..), PushResult (..), Sha (..), TagMessage (..), TagName (..),
             GitIntegrationFailure (..), Context (..))
 import Github (CommentPayload, CommitStatusPayload, PullRequestPayload, PushPayload)
 import Logic (Action, Action (..), Event (..), IntegrationFailure (..), RetrieveEnvironment (..))
 import Project (Approval (..), DeployEnvironment (..), ProjectState (ProjectState), PullRequest (PullRequest))
+import Time (TimeOperation)
 import Types (PullRequestId (..), Username (..))
 import ProjectSpec (projectSpec)
 
@@ -53,6 +52,7 @@ import qualified Github
 import qualified GithubApi
 import qualified Logic
 import qualified Project
+import qualified Time
 import qualified WebInterface
 
 import qualified Data.Time as T
@@ -89,6 +89,9 @@ testFeatureFreezeWindow = Just $ Config.FeatureFreezeWindow{
   end=T.UTCTime (T.fromMondayStartWeek 2021 2 7) (T.secondsToDiffTime 0)
   }
 
+testPromotionTimeout :: Config.PromotionTimeout
+testPromotionTimeout = Config.PromotionTimeout 600
+
 -- Functions to prepare certain test states.
 
 singlePullRequestState :: PullRequestId -> Branch -> BaseBranch -> Sha -> Username -> ProjectState
@@ -114,8 +117,9 @@ data ActionFlat
     , mergeTrain           :: [PullRequestId]
     , alwaysAddMergeCommit :: Bool
     }
-  | ATryPromote Branch Sha
-  | ATryPromoteWithTag Branch Sha TagName TagMessage
+  | ATryForcePush Branch Sha
+  | ATryPromote Sha
+  | ATryPromoteWithTag Sha TagName TagMessage
   | ALeaveComment PullRequestId Text
   | AIsReviewer Username
   | ACleanupTestBranch PullRequestId
@@ -226,7 +230,7 @@ runRetrieveInfo projectConfig = interpret $ \_ -> \case
   GetDateTime -> takeResultGetDateTime
   GetBaseBranch -> pure $ BaseBranch $ Config.branch testProjectConfig
 
-type ActionResults = [Action, RetrieveEnvironment, State Results, Writer [ActionFlat]]
+type ActionResults = [Action, TimeOperation, RetrieveEnvironment, State Results, Writer [ActionFlat]]
 
 -- This function simulates running the actions, and returns the final state,
 -- together with a list of all actions that would have been performed. Some
@@ -245,11 +249,14 @@ runActionResults =
       TryIntegrate msg candidate train alwaysAddMergeCommit' -> do
         Writer.tell [ATryIntegrate msg candidate train alwaysAddMergeCommit']
         takeResultIntegrate
-      TryPromote prBranch headSha -> do
-        Writer.tell [ATryPromote prBranch headSha]
+      TryForcePush prBranch headSha -> do
+        Writer.tell [ATryForcePush prBranch headSha]
         takeResultPush
-      TryPromoteWithTag prBranch headSha newTag tagMessage -> do
-        Writer.tell [ATryPromoteWithTag prBranch headSha newTag tagMessage]
+      TryPromote headSha -> do
+        Writer.tell [ATryPromote headSha]
+        takeResultPush
+      TryPromoteWithTag headSha newTag tagMessage -> do
+        Writer.tell [ATryPromoteWithTag headSha newTag tagMessage]
         (Right newTag, ) <$> takeResultPush
       CleanupTestBranch pr -> do
         Writer.tell [ACleanupTestBranch pr]
@@ -274,12 +281,19 @@ runActionResults =
         State.put $ results { resultTrainSizeUpdates = n : resultTrainSizeUpdates results }
         pure ()
 
+testTime :: T.UTCTime
+testTime = T.UTCTime (T.fromMondayStartWeek 2021 2 1) (T.secondsToDiffTime 0)
+
+fakeRunTime :: Eff (TimeOperation : es) a -> Eff es a
+fakeRunTime = interpret $ \_ -> \case
+  Time.GetDateTime -> pure $ testTime
+
 runActionEff
   :: (State Results :> es, Writer [ActionFlat] :> es)
   => Config.ProjectConfiguration
-  -> Eff (Action : RetrieveEnvironment : es) a
+  -> Eff (Action : TimeOperation : RetrieveEnvironment : es) a
   -> Eff es a
-runActionEff config eff = runRetrieveInfo config $ runActionResults eff
+runActionEff config eff = runRetrieveInfo config $ fakeRunTime $ runActionResults eff
 
 -- Simulates running the action. Use the provided results as result for various
 -- operations. Results are consumed one by one.
@@ -303,17 +317,17 @@ runAction = runActionCustom defaultResults
 
 -- Handle an event, then advance the state until a fixed point,
 -- and simulate its side effects.
-handleEventTest :: (Action :> es, RetrieveEnvironment :> es) => Event -> ProjectState -> Eff es ProjectState
-handleEventTest = Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing
+handleEventTest :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Event -> ProjectState -> Eff es ProjectState
+handleEventTest = Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing testPromotionTimeout
 
 -- Like the above, but with a feature freeze period configured
-handleEventTestFF :: (Action :> es, RetrieveEnvironment :> es) => Event -> ProjectState -> Eff es ProjectState
-handleEventTestFF = Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig testFeatureFreezeWindow
+handleEventTestFF :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Event -> ProjectState -> Eff es ProjectState
+handleEventTestFF = Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig testFeatureFreezeWindow testPromotionTimeout
 
 -- Handle events (advancing the state until a fixed point in between) and
 -- simulate their side effects.
-handleEventsTest :: (Action :> es, RetrieveEnvironment :> es) => [Event] -> ProjectState -> Eff es ProjectState
-handleEventsTest events state = foldlM (flip $ Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing) state events
+handleEventsTest :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => [Event] -> ProjectState -> Eff es ProjectState
+handleEventsTest events state = foldlM (flip $ Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing testPromotionTimeout) state events
 
 -- | Like 'classifiedPullRequests' but just with ids.
 -- This should match 'WebInterface.ClassifiedPullRequests'
@@ -546,7 +560,7 @@ main = hspec $ do
         state  = candidateState (PullRequestId 1) (Branch "p") masterBranch (Sha "a38") "johanna" "deckard" (Sha "84c")
         state' = fst $ runAction $ handleEventTest event state
         pr     = fromJust $ Project.lookupPullRequest (PullRequestId 1) state'
-      Project.integrationStatus pr `shouldBe` Project.Promoted
+      Project.integrationStatus pr `shouldBe` Project.Promote testTime (Sha "84c")
 
     it "ignores a build status change for commits that are not the integration candidate" $ do
       let
@@ -1595,6 +1609,7 @@ main = hspec $ do
             , BuildStatusChanged (Sha "def2345") "default" (Project.BuildStarted "example.com/1b2")
             , CommentAdded prId "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
             , BuildStatusChanged (Sha "def2345") "default" Project.BuildSucceeded
+            , PullRequestCommitChanged (PullRequestId 1) (Sha "def2345")
             ]
           (_, actions) = runActionCustom results $ handleEventsTest event state
        in actions `shouldBe`
@@ -1603,7 +1618,8 @@ main = hspec $ do
             , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: bot\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
             , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
             , ALeaveComment prId "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
-            , ATryPromote (Branch "p") (Sha "def2345")
+            , ATryForcePush (Branch "p") (Sha "def2345")
+            , ATryPromote (Sha "def2345")
             , ACleanupTestBranch prId
             ]
 
@@ -1842,6 +1858,7 @@ main = hspec $ do
           , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
           , BuildStatusChanged (Sha "3b2") "default" (Project.BuildStarted "example.com/3b2")
           , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1b2")
           , PushPerformed (BaseBranch "refs/heads/master") (Sha "1b2")
           ]
         results = defaultResults {resultIntegrate = [Right (Sha "1b2"), Right (Sha "2b2"), Right (Sha "3b2"), Right (Sha "1b3"), Right (Sha "2b3"), Right (Sha "3b3")]}
@@ -1877,7 +1894,281 @@ main = hspec $ do
                         False
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3b2 behind 2 other PRs, waiting for CI …"
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3b2) started."
-        , ATryPromote (Branch "fst") (Sha "1b2")
+        , ATryForcePush (Branch "fst") (Sha "1b2")
+        , ATryPromote (Sha "1b2")
+        , ACleanupTestBranch (PullRequestId 1)
+        ]
+
+    it "does not promote if timeout has not expired" $
+      let prId = PullRequestId 1
+          state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+          results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
+
+          event =
+            [ CommentAdded prId "deckard" "@bot merge"
+            , BuildStatusChanged (Sha "def2345") "default" (Project.BuildStarted "example.com/1b2")
+            , BuildStatusChanged (Sha "def2345") "default" Project.BuildSucceeded
+            , ClockTick (Time.addTime testTime 100)
+            ]
+          (_, actions) = runActionCustom results $ handleEventsTest event state
+       in actions `shouldBe`
+            [ AIsReviewer (Username "deckard")
+            , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+            , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
+            , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
+            , ALeaveComment prId "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+            , ATryForcePush (Branch "p") (Sha "def2345")
+            ]
+
+    it "promotes if timeout has expired" $
+      let prId = PullRequestId 1
+          state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+          results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
+
+          event =
+            [ CommentAdded prId "deckard" "@bot merge"
+            , BuildStatusChanged (Sha "def2345") "default" (Project.BuildStarted "example.com/1b2")
+            , BuildStatusChanged (Sha "def2345") "default" Project.BuildSucceeded
+            , ClockTick (Time.addTime testTime 700)
+            ]
+          (_, actions) = runActionCustom results $ handleEventsTest event state
+       in actions `shouldBe`
+            [ AIsReviewer (Username "deckard")
+            , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+            , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
+            , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
+            , ALeaveComment prId "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+            , ATryForcePush (Branch "p") (Sha "def2345")
+            , ATryPromote (Sha "def2345")
+            , ACleanupTestBranch prId
+            ]
+
+    it "correctly creates a train if a PR is waiting to be promoted" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 1)
+              (Branch "fst") masterBranch (Sha "ab1") "Improvements..." (Username "huey")
+          $ Project.insertPullRequest (PullRequestId 2)
+              (Branch "snd") masterBranch (Sha "ab2") "... Of the ..." (Username "dewey")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
+          , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
+          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
+          , BuildStatusChanged (Sha "2b2") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1b2")
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "2b2")
+          ]
+        results = defaultResults {resultIntegrate = [Right (Sha "1b2"), Right (Sha "2b2")]}
+        actions = snd $ runActionCustom results $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 1)
+                        "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Improvements...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+        , ATryForcePush (Branch "fst") (Sha "1b2")
+        , AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 2)
+                       "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, \
+                       \waiting for rebase behind one pull request."
+        , ATryIntegrate "Merge #2: ... Of the ...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
+                        [PullRequestId 1]
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b2 behind 1 other PR, waiting for CI …"
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
+        , ATryPromote (Sha "1b2")
+        , ACleanupTestBranch (PullRequestId 1)
+        , ATryForcePush (Branch "snd") (Sha "2b2")
+        , ATryPromote (Sha "2b2")
+        , ACleanupTestBranch (PullRequestId 2)
+        ]
+
+    it "correctly retries integration if there was a push to master" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 1)
+              (Branch "fst") masterBranch (Sha "ab1") "Improvements..." (Username "huey")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
+          , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
+          , PushPerformed (BaseBranch "refs/heads/master") (Sha "1c1")
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1b2")
+          , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
+          , BuildStatusChanged (Sha "2b2") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "2b2")
+          ]
+        results = defaultResults {resultIntegrate = [Right (Sha "1b2"), Right (Sha "2b2")]}
+        actions = snd $ runActionCustom results $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 1)
+                        "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Improvements...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+        , ATryForcePush (Branch "fst") (Sha "1b2")
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
+        , ATryIntegrate "Merge #1: Improvements...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 2b2, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
+        , ATryForcePush (Branch "fst") (Sha "2b2")
+        , ATryPromote (Sha "2b2")
+        , ACleanupTestBranch (PullRequestId 1)
+        ]
+
+    it "correctly retries integration if promoting fails" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 1)
+              (Branch "fst") masterBranch (Sha "ab1") "Improvements..." (Username "huey")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
+          , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1b2")
+          , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
+          , BuildStatusChanged (Sha "2b2") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "2b2")
+          ]
+        results = defaultResults {resultIntegrate = [Right (Sha "1b2"), Right (Sha "2b2"), Right (Sha "3b2")]
+                                 , resultPush = [PushOk, PushRejected "", PushOk, PushOk]}
+        actions = snd $ runActionCustom results $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 1)
+                        "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Improvements...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+        , ATryForcePush (Branch "fst") (Sha "1b2")
+        , ATryPromote (Sha "1b2")
+        , ATryIntegrate "Merge #1: Improvements...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 2b2, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
+        , ATryForcePush (Branch "fst") (Sha "2b2")
+        , ATryPromote (Sha "2b2")
+        , ACleanupTestBranch (PullRequestId 1)
+        ]
+
+    it "correctly waits for a previous PR to be promoted" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 1)
+              (Branch "fst") masterBranch (Sha "ab1") "Improvements..." (Username "huey")
+          $ Project.insertPullRequest (PullRequestId 2)
+              (Branch "snd") masterBranch (Sha "ab2") "... Of the ..." (Username "dewey")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
+          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
+          , BuildStatusChanged (Sha "2b2") "default" Project.BuildSucceeded
+          , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
+          -- Force push to first PR
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1b2")
+          -- Promote first PR and force push second PR
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "2b2")
+          -- Promote second PR
+          ]
+        results = defaultResults {resultIntegrate = [Right (Sha "1b2"), Right (Sha "2b2")]}
+        actions = snd $ runActionCustom results $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 1)
+                        "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Improvements...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+        , AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 2)
+                       "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, \
+                       \waiting for rebase behind one pull request."
+        , ATryIntegrate "Merge #2: ... Of the ...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
+                        [PullRequestId 1]
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b2 behind 1 other PR, waiting for CI …"
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
+        , ATryForcePush (Branch "fst") (Sha "1b2")
+        , ATryPromote (Sha "1b2")
+        , ACleanupTestBranch (PullRequestId 1)
+        , ATryForcePush (Branch "snd") (Sha "2b2")
+        , ATryPromote (Sha "2b2")
+        , ACleanupTestBranch (PullRequestId 2)
+        ]
+
+    it "correctly handles a PR that is closed while waiting for promotion" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 1)
+              (Branch "fst") masterBranch (Sha "ab1") "Improvements..." (Username "huey")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
+          , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
+          , PullRequestClosed (PullRequestId 1)
+          , ClockTick (Time.addTime testTime 700)
+          ]
+        results = defaultResults {resultIntegrate = [Right (Sha "1b2"), Right (Sha "2b2")]}
+        actions = snd $ runActionCustom results $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 1)
+                        "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Improvements...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+        , ATryForcePush (Branch "fst") (Sha "1b2")
+        , ALeaveComment (PullRequestId 1) "Abandoning this pull request because it was closed."
         , ACleanupTestBranch (PullRequestId 1)
         ]
 
@@ -1946,87 +2237,9 @@ main = hspec $ do
           , Project.mandatoryChecks = mempty
           }
         results = defaultResults { resultIntegrate = [Right (Sha "38e")] }
-        (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
-        candidates = getIntegrationCandidates state'
-      -- After a successful push, the candidate should be gone.
-      candidates `shouldBe` []
-      actions    `shouldBe` [ ATryPromote (Branch "results/rachael") (Sha "38d")
-                            , ACleanupTestBranch (PullRequestId 1)
+        actions = snd $ runActionCustom results $ Logic.proceedUntilFixedPoint state
+      actions    `shouldBe` [ ATryForcePush (Branch "results/rachael") (Sha "38d")
                             ]
-
-    it "pushes and tags with a new version after a successful build (merge and tag)" $ do
-      let
-        pullRequest = PullRequest
-          { Project.branch              = Branch "results/rachael"
-          , Project.baseBranch          = masterBranch
-          , Project.sha                 = Sha "f35"
-          , Project.title               = "Add my test results"
-          , Project.author              = "rachael"
-          , Project.approval            = Just (Approval "deckard" Project.MergeAndTag 0 Nothing)
-          , Project.integrationStatus   = Project.Integrated (Sha sha) (Project.AnyCheck Project.BuildSucceeded)
-          , Project.integrationAttempts = []
-          , Project.needsFeedback       = False
-          }
-        state = ProjectState
-          { Project.pullRequests         = IntMap.singleton 1 pullRequest
-          , Project.pullRequestApprovalIndex = 1
-          , Project.mandatoryChecks = mempty
-          }
-        results = defaultResults
-          { resultIntegrate = [Right (Sha sha)]
-          , resultGetChangelog = [Just "changelog"]
-          }
-        (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
-        candidates = getIntegrationCandidates state'
-        sha = "38e"
-        tagMessage = format "@deckard I tagged your PR with [v2](https://github.com/{}/{}/releases/tag/v2). "
-                            (Config.owner testProjectConfig, Config.repository testProjectConfig)
-        commitMessage = format "Please wait for the build of {} to pass and don't forget to deploy it!"
-                               (Only { fromOnly = sha })
-      -- After a successful push, the candidate should be gone.
-      candidates `shouldBe` []
-      actions    `shouldBe`
-        [ ATryPromoteWithTag (Branch "results/rachael") (Sha sha) (TagName "v2")
-            (TagMessage "v2\n\nchangelog")
-        , ALeaveComment (PullRequestId 1) $ Text.concat [tagMessage, commitMessage]
-        , ACleanupTestBranch (PullRequestId 1)
-        ]
-
-    it "pushes and tags with a new version after a successful build (merge and deploy)" $ do
-      let
-        pullRequest = PullRequest
-          { Project.branch              = Branch "results/rachael"
-          , Project.baseBranch          = masterBranch
-          , Project.sha                 = Sha "f35"
-          , Project.title               = "Add my test results"
-          , Project.author              = "rachael"
-          , Project.approval            = Just (Approval "deckard" (Project.MergeAndDeploy $ DeployEnvironment "staging") 0 Nothing)
-          , Project.integrationStatus   = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
-          , Project.integrationAttempts = []
-          , Project.needsFeedback       = False
-          }
-        state = ProjectState
-          { Project.pullRequests         = IntMap.singleton 1 pullRequest
-          , Project.pullRequestApprovalIndex = 1
-          , Project.mandatoryChecks = mempty
-          }
-        results = defaultResults
-          { resultIntegrate = [Right (Sha "38e")]
-          , resultGetChangelog = [Just "changelog"]
-          }
-        (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
-        candidates = getIntegrationCandidates state'
-        tagMessage = format "@deckard I tagged your PR with [v2](https://github.com/{}/{}/releases/tag/v2). "
-                            (Config.owner testProjectConfig, Config.repository testProjectConfig)
-      -- After a successful push, the candidate should be gone.
-      candidates `shouldBe` []
-      actions    `shouldBe`
-        [ ATryPromoteWithTag (Branch "results/rachael") (Sha "38d") (TagName "v2")
-            (TagMessage "v2 (autodeploy)\n\nchangelog")
-        , ALeaveComment (PullRequestId 1) $
-            Text.concat [tagMessage, "It is scheduled for autodeploy!"]
-        , ACleanupTestBranch (PullRequestId 1)
-        ]
 
     it "pushes after successful build even if tagging failed" $ do
       let
@@ -2048,13 +2261,9 @@ main = hspec $ do
           }
         results = defaultResults { resultIntegrate = [Right (Sha "38e")]
                                  , resultGetLatestVersion = [Left (TagName "abcdef")] }
-        (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
-        candidates = getIntegrationCandidates state'
-      -- After a successful push, the candidate should be gone.
-      candidates `shouldBe` []
+        actions = snd $ runActionCustom results $ Logic.proceedUntilFixedPoint state
       actions    `shouldBe` [ ALeaveComment (PullRequestId 1) "@deckard Sorry, I could not tag your PR. The previous tag `abcdef` seems invalid"
-                            , ATryPromote (Branch "results/rachael") (Sha "38d")
-                            , ACleanupTestBranch (PullRequestId 1)
+                            , ATryForcePush (Branch "results/rachael") (Sha "38d")
                             ]
 
 
@@ -2090,7 +2299,7 @@ main = hspec $ do
       Project.integrationStatus   pullRequest' `shouldBe` Project.Integrated (Sha "38e") (Project.AnyCheck Project.BuildPending)
       Project.integrationAttempts pullRequest' `shouldBe` [Sha "38d"]
       actions `shouldBe`
-        [ ATryPromote (Branch "results/rachael") (Sha "38d")
+        [ ATryForcePush (Branch "results/rachael") (Sha "38d")
         , ATryIntegrate "Merge #1: Add my test results\n\nApproved-by: deckard\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "f35") [] False
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 38e, waiting for CI \x2026"
@@ -2129,7 +2338,7 @@ main = hspec $ do
       Project.integrationStatus   pullRequest' `shouldBe` Project.Integrated (Sha "38e") (Project.AnyCheck Project.BuildPending)
       Project.integrationAttempts pullRequest' `shouldBe` [Sha "38d"]
       actions `shouldBe`
-        [ ATryPromoteWithTag (Branch "results/rachael") (Sha "38d") (TagName "v2") (TagMessage "v2\n\nchangelog")
+        [ ATryForcePush (Branch "results/rachael") (Sha "38d")
         , ATryIntegrate "Merge #1: Add my test results\n\nApproved-by: deckard\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "f35") [] True
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 38e, waiting for CI \x2026"
@@ -2176,7 +2385,7 @@ main = hspec $ do
           -- The first rebase succeeds.
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI \x2026"
           -- The first promotion attempt fails
-        , ATryPromote (Branch "n7") (Sha "b71")
+        , ATryForcePush (Branch "n7") (Sha "b71")
           -- The second rebase fails.
         , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "a39") [] False
@@ -2221,14 +2430,11 @@ main = hspec $ do
             }
           -- Proceeding should pick the next pull request as candidate.
           results = defaultResults { resultIntegrate = [Right (Sha "38e")] }
-          (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
-          [(cId, _candidate)] = getIntegrationCandidates state'
-      cId     `shouldBe` PullRequestId 2
+          actions = snd $ runActionCustom results $ Logic.proceedUntilFixedPoint state
       actions `shouldBe`
-        [ ATryPromote (Branch "results/leon") (Sha "38d")
-        , ACleanupTestBranch (PullRequestId 1)
+        [ ATryForcePush (Branch "results/leon") (Sha "38d")
         , ATryIntegrate "Merge #2: Add my test results\n\nApproved-by: deckard\nAuto-deploy: false\n"
-                        (PullRequestId 2, Branch "refs/pull/2/head", Sha "f37") [] False
+                        (PullRequestId 2, Branch "refs/pull/2/head", Sha "f37") [PullRequestId 1] False
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 38e, waiting for CI \x2026"
         ]
 
@@ -2641,6 +2847,7 @@ main = hspec $ do
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
           , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
           , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 12) (Sha "1b2")
           , BuildStatusChanged (Sha "1b2") "default" Project.BuildPending -- ignored
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2") -- ignored
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildFailed (Just "example.com/1b2")) -- ignored
@@ -2657,7 +2864,8 @@ main = hspec $ do
                         False
         , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
         , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
-        , ATryPromote (Branch "tth") (Sha "1b2")
+        , ATryForcePush (Branch "tth") (Sha "1b2")
+        , ATryPromote (Sha "1b2")
         , ACleanupTestBranch (PullRequestId 12)
         ]
       -- test caveat, in reality, when Promote works,
@@ -2693,7 +2901,9 @@ main = hspec $ do
             , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
             , BuildStatusChanged (Sha "1b2") "first" (Project.BuildFailed Nothing)
             , BuildStatusChanged (Sha "1b2") "required" Project.BuildSucceeded
+            , PullRequestCommitChanged (PullRequestId 12) (Sha "1b2")
             , BuildStatusChanged (Sha "1b3") "required" Project.BuildSucceeded
+            , PullRequestCommitChanged (PullRequestId 13) (Sha "1b3")
             ]
           (finalState, actions) = runActionCustom results $ handleEventsTest events state
         actions `shouldBe`
@@ -2718,9 +2928,11 @@ main = hspec $ do
                           False
           , ALeaveComment (PullRequestId 13) "<!-- Hoff: ignore -->\nSpeculatively rebased as 1b3 behind 1 other PR, waiting for CI …"
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
-          , ATryPromote (Branch "tth") (Sha "1b2")
+          , ATryForcePush (Branch "tth") (Sha "1b2")
+          , ATryPromote (Sha "1b2")
           , ACleanupTestBranch (PullRequestId 12)
-          , ATryPromote (Branch "ttg") (Sha "1b3")
+          , ATryForcePush (Branch "ttg") (Sha "1b3")
+          , ATryPromote (Sha "1b3")
           , ACleanupTestBranch (PullRequestId 13)
           ]
         -- test caveat, in reality, when Promote works,
@@ -2750,6 +2962,7 @@ main = hspec $ do
             , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
             , BuildStatusChanged (Sha "1b2") "first" (Project.BuildFailed Nothing)
             , BuildStatusChanged (Sha "1b2") "required" Project.BuildSucceeded
+            , PullRequestCommitChanged (PullRequestId 12) (Sha "1b2")
             ]
           (finalState, actions) = runActionCustom results $ handleEventsTest events state
         actions `shouldBe`
@@ -2763,7 +2976,8 @@ main = hspec $ do
                           False
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
-          , ATryPromote (Branch "tth") (Sha "1b2")
+          , ATryForcePush (Branch "tth") (Sha "1b2")
+          , ATryPromote (Sha "1b2")
           , ACleanupTestBranch (PullRequestId 12)
           ]
         -- test caveat, in reality, when Promote works,
@@ -2792,6 +3006,7 @@ main = hspec $ do
             , BuildStatusChanged (Sha "1b2") "required" (Project.BuildStarted "example.com/required/1b2")
             , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
             , BuildStatusChanged (Sha "1b2") "first" Project.BuildSucceeded
+            , PullRequestCommitChanged (PullRequestId 12) (Sha "1b2")
             , BuildStatusChanged (Sha "1b2") "required" (Project.BuildFailed Nothing)
             ]
           (finalState, actions) = runActionCustom results $ handleEventsTest events state
@@ -2836,6 +3051,7 @@ main = hspec $ do
             , BuildStatusChanged (Sha "1b2") "required" (Project.BuildStarted "example.com/required/1b2")
             , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
             , BuildStatusChanged (Sha "1b2") "first" Project.BuildSucceeded
+            , PullRequestCommitChanged (PullRequestId 12) (Sha "1b2")
             ]
           (finalState, actions) = runActionCustom results $ handleEventsTest events state
         actions `shouldBe`
@@ -2877,6 +3093,7 @@ main = hspec $ do
             , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
             , BuildStatusChanged (Sha "1b2") "first" Project.BuildSucceeded
             , BuildStatusChanged (Sha "1b2") "required" Project.BuildSucceeded
+            , PullRequestCommitChanged (PullRequestId 12) (Sha "1b2")
             ]
           (finalState, actions) = runActionCustom results $ handleEventsTest events state
         actions `shouldBe`
@@ -2890,7 +3107,8 @@ main = hspec $ do
                           False
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
-          , ATryPromote (Branch "tth") (Sha "1b2")
+          , ATryForcePush (Branch "tth") (Sha "1b2")
+          , ATryPromote (Sha "1b2")
           , ACleanupTestBranch (PullRequestId 12)
           ]
         -- test caveat, in reality, when Promote works,
@@ -2920,6 +3138,7 @@ main = hspec $ do
             , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
             , BuildStatusChanged (Sha "1b2") "required" Project.BuildSucceeded
             , BuildStatusChanged (Sha "1b2") "mandatory" Project.BuildSucceeded
+            , PullRequestCommitChanged (PullRequestId 12) (Sha "1b2")
             ]
           (finalState, actions) = runActionCustom results $ handleEventsTest events state
         actions `shouldBe`
@@ -2933,7 +3152,8 @@ main = hspec $ do
                           False
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
-          , ATryPromote (Branch "tth") (Sha "1b2")
+          , ATryForcePush (Branch "tth") (Sha "1b2")
+          , ATryPromote (Sha "1b2")
           , ACleanupTestBranch (PullRequestId 12)
           ]
         -- test caveat, in reality, when Promote works,
@@ -3062,6 +3282,7 @@ main = hspec $ do
           , BuildStatusChanged (Sha "00f") "default" Project.BuildPending
           , BuildStatusChanged (Sha "00f") "default" (Project.BuildStarted "url2")
           , BuildStatusChanged (Sha "00f") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 12) (Sha "00f")
           ]
           [ AIsReviewer (Username "deckard")
           , ACleanupTestBranch (PullRequestId 12)
@@ -3069,7 +3290,8 @@ main = hspec $ do
           , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nAuto-deploy: false\n"  (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 00f, waiting for CI …"
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](url2) started."
-          , ATryPromote (Branch "tth") (Sha "00f")
+          , ATryForcePush (Branch "tth") (Sha "00f")
+          , ATryPromote (Sha "00f")
           , ACleanupTestBranch (PullRequestId 12)
           ]
           (withIntegratedCommits ["00f"])
@@ -3088,6 +3310,7 @@ main = hspec $ do
           , BuildStatusChanged (Sha "00f") "default" Project.BuildPending
           , BuildStatusChanged (Sha "00f") "default" (Project.BuildStarted "url2")
           , BuildStatusChanged (Sha "00f") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 12) (Sha "00f")
           ]
           [ AIsReviewer (Username "deckard")
           , ACleanupTestBranch (PullRequestId 12)
@@ -3095,7 +3318,8 @@ main = hspec $ do
           , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nAuto-deploy: false\n"  (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 00f, waiting for CI …"
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](url2) started."
-          , ATryPromote (Branch "tth") (Sha "00f")
+          , ATryForcePush (Branch "tth") (Sha "00f")
+          , ATryPromote (Sha "00f")
           , ACleanupTestBranch (PullRequestId 12)
           ]
           (withRetryOnFriday . withIntegratedCommits ["00f"])
@@ -3238,10 +3462,12 @@ main = hspec $ do
           , BuildStatusChanged (Sha "ab3") "default" (Project.BuildStarted "url")
 
           , BuildStatusChanged (Sha "ab1") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "ab1")
           , PullRequestClosed (PullRequestId 1)
           , BuildStatusChanged (Sha "ab2") "default" (Project.BuildFailed Nothing)
           , PullRequestClosed (PullRequestId 2)
           , BuildStatusChanged (Sha "ab3") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 3) (Sha "ab3")
           , PullRequestClosed (PullRequestId 3)
           ]
         results = defaultResults { resultIntegrate = [ Right (Sha "ab1")
@@ -3346,6 +3572,7 @@ main = hspec $ do
           , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
           , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded)
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
           ]
         results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
                                                      , Left (IntegrationFailure (BaseBranch "testing/1") RebaseFailed)
@@ -3385,7 +3612,8 @@ main = hspec $ do
                         [PullRequestId 1]
                         False
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3cd behind 1 other PR, waiting for CI …"
-        , ATryPromote (Branch "fst") (Sha "1ab")
+        , ATryForcePush (Branch "fst") (Sha "1ab")
+        , ATryPromote (Sha "1ab")
         , ACleanupTestBranch (PullRequestId 1)
         -- PR#2 is only notified after PR#1 passes or fails
         , ALeaveComment (PullRequestId 2)
@@ -3614,6 +3842,8 @@ main = hspec $ do
           , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded)
           , BuildStatusChanged (Sha "2cd") "default" (Project.BuildSucceeded)
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "2cd")
           ]
         results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
                                                      , Right (Sha "2cd") ] }
@@ -3641,9 +3871,11 @@ main = hspec $ do
                         [PullRequestId 1]
                         False
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2cd behind 1 other PR, waiting for CI …"
-        , ATryPromote (Branch "fst") (Sha "1ab")
+        , ATryForcePush (Branch "fst") (Sha "1ab")
+        , ATryPromote (Sha "1ab")
         , ACleanupTestBranch (PullRequestId 1)
-        , ATryPromote (Branch "snd") (Sha "2cd")
+        , ATryForcePush (Branch "snd") (Sha "2cd")
+        , ATryPromote (Sha "2cd")
         , ACleanupTestBranch (PullRequestId 2)
         ]
 
@@ -3659,6 +3891,8 @@ main = hspec $ do
           -- Build of #2 finishes before build of #1
           , BuildStatusChanged (Sha "2cd") "default" (Project.BuildSucceeded)
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded)
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "2cd")
           ]
         results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
                                                      , Right (Sha "2cd") ] }
@@ -3686,9 +3920,11 @@ main = hspec $ do
                         [PullRequestId 1]
                         False
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2cd behind 1 other PR, waiting for CI …"
-        , ATryPromote (Branch "fst") (Sha "1ab")
+        , ATryForcePush (Branch "fst") (Sha "1ab")
+        , ATryPromote (Sha "1ab")
         , ACleanupTestBranch (PullRequestId 1)
-        , ATryPromote (Branch "snd") (Sha "2cd")
+        , ATryForcePush (Branch "snd") (Sha "2cd")
+        , ATryPromote (Sha "2cd")
         , ACleanupTestBranch (PullRequestId 2)
         ]
 
@@ -3830,6 +4066,7 @@ main = hspec $ do
           [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
           , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
           , BuildStatusChanged (Sha "1ab") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
           , BuildStatusChanged (Sha "2cd") "default" (Project.BuildFailed Nothing)
           ]
         results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
@@ -3858,7 +4095,8 @@ main = hspec $ do
                         [PullRequestId 1]
                         False
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2cd behind 1 other PR, waiting for CI …"
-        , ATryPromote (Branch "fst") (Sha "1ab")
+        , ATryForcePush (Branch "fst") (Sha "1ab")
+        , ATryPromote (Sha "1ab")
         , ACleanupTestBranch (PullRequestId 1)
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nThe build failed :x:.\n\n\
                                           \If this is the result of a flaky test, \
@@ -3877,6 +4115,7 @@ main = hspec $ do
           , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
           , BuildStatusChanged (Sha "2cd") "default" (Project.BuildFailed Nothing)
           , BuildStatusChanged (Sha "1ab") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
           ]
         results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
                                                      , Right (Sha "2cd") ] }
@@ -3905,7 +4144,8 @@ main = hspec $ do
                         False
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2cd behind 1 other PR, waiting for CI …"
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculative build failed :x:.  I will automatically retry after getting build results for #1."
-        , ATryPromote (Branch "fst") (Sha "1ab")
+        , ATryForcePush (Branch "fst") (Sha "1ab")
+        , ATryPromote (Sha "1ab")
         , ACleanupTestBranch (PullRequestId 1)
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nThe build failed :x:.\n\n\
                                           \If this is the result of a flaky test, \
@@ -3925,6 +4165,7 @@ main = hspec $ do
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildFailed Nothing)
           , BuildStatusChanged (Sha "2cd") "default" (Project.BuildFailed Nothing)
           , BuildStatusChanged (Sha "22e") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "22e")
           ]
         results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
                                                      , Right (Sha "2cd")
@@ -3964,7 +4205,8 @@ main = hspec $ do
                         []
                         False
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 22e, waiting for CI …"
-        , ATryPromote (Branch "snd") (Sha "22e")
+        , ATryForcePush (Branch "snd") (Sha "22e")
+        , ATryPromote (Sha "22e")
         , ACleanupTestBranch (PullRequestId 2)
         ]
 
@@ -3980,6 +4222,7 @@ main = hspec $ do
           , BuildStatusChanged (Sha "2cd") "default" Project.BuildSucceeded
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildFailed Nothing)
           , BuildStatusChanged (Sha "22e") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "22e")
           ]
         results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
                                                      , Right (Sha "2cd")
@@ -4019,7 +4262,8 @@ main = hspec $ do
                         []
                         False
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 22e, waiting for CI …"
-        , ATryPromote (Branch "snd") (Sha "22e")
+        , ATryForcePush (Branch "snd") (Sha "22e")
+        , ATryPromote (Sha "22e")
         , ACleanupTestBranch (PullRequestId 2)
         ]
 
@@ -4035,6 +4279,7 @@ main = hspec $ do
           , BuildStatusChanged (Sha "2cd") "default" Project.BuildSucceeded
           , PullRequestClosed (PullRequestId 1)
           , BuildStatusChanged (Sha "22e") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "22e")
           ]
         results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
                                                      , Right (Sha "2cd")
@@ -4072,7 +4317,8 @@ main = hspec $ do
                         []
                         False
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 22e, waiting for CI …"
-        , ATryPromote (Branch "snd") (Sha "22e")
+        , ATryForcePush (Branch "snd") (Sha "22e")
+        , ATryPromote (Sha "22e")
         , ACleanupTestBranch (PullRequestId 2)
         ]
 
@@ -4107,16 +4353,19 @@ main = hspec $ do
           , CommentAdded (PullRequestId 3) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge behind 2 PRs."
           , BuildStatusChanged (Sha "cd2") "default" (Project.BuildSucceeded) -- PR#2 sha, ignored
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded) -- PR#1
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
           , PullRequestClosed (PullRequestId 1)
           , CommentAdded (PullRequestId 2) "bot" "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildStarted "example.com/2bc")
           , CommentAdded (PullRequestId 2) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
           , BuildStatusChanged (Sha "36a") "default" (Project.BuildSucceeded) -- arbitrary sha, ignored
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildSucceeded) -- PR#2
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "2bc")
           , PullRequestClosed (PullRequestId 2)
           , CommentAdded (PullRequestId 3) "bot" "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildStarted "example.com/3cd")
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildSucceeded) -- PR#3
+          , PullRequestCommitChanged (PullRequestId 3) (Sha "3cd")
           , PullRequestClosed (PullRequestId 3)
           ]
         -- For this test, we assume all integrations and pushes succeed.
@@ -4159,13 +4408,16 @@ main = hspec $ do
                         [PullRequestId 1, PullRequestId 2]
                         False
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3cd behind 2 other PRs, waiting for CI …"
-        , ATryPromote (Branch "fst") (Sha "1ab")
+        , ATryForcePush (Branch "fst") (Sha "1ab")
+        , ATryPromote (Sha "1ab")
         , ACleanupTestBranch (PullRequestId 1)
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
-        , ATryPromote (Branch "snd") (Sha "2bc")
+        , ATryForcePush (Branch "snd") (Sha "2bc")
+        , ATryPromote (Sha "2bc")
         , ACleanupTestBranch (PullRequestId 2)
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3cd) started."
-        , ATryPromote (Branch "trd") (Sha "3cd")
+        , ATryForcePush (Branch "trd") (Sha "3cd")
+        , ATryPromote (Sha "3cd")
         , ACleanupTestBranch (PullRequestId 3)
         ]
 
@@ -4199,6 +4451,7 @@ main = hspec $ do
           , CommentAdded (PullRequestId 7) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge behind 2 PRs."
           , BuildStatusChanged (Sha "cd8") "default" (Project.BuildSucceeded) -- PR#8 sha, ignored
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded) -- PR#9
+          , PullRequestCommitChanged (PullRequestId 9) (Sha "1ab")
           , PullRequestClosed (PullRequestId 9)
           , CommentAdded (PullRequestId 8) "bot" "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildStarted "example.com/2bc")
@@ -4211,6 +4464,7 @@ main = hspec $ do
           , CommentAdded (PullRequestId 7) "bot" "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
           , BuildStatusChanged (Sha "3ef") "default" (Project.BuildStarted "example.com/3ef")
           , BuildStatusChanged (Sha "3ef") "default" (Project.BuildSucceeded) -- testing build passed on PR#7
+          , PullRequestCommitChanged (PullRequestId 7) (Sha "3ef")
           , PullRequestClosed (PullRequestId 7)
           ]
         -- For this test, we assume all integrations and pushes succeed.
@@ -4254,7 +4508,8 @@ main = hspec $ do
                         [PullRequestId 9, PullRequestId 8]
                         False
         , ALeaveComment (PullRequestId 7) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3cd behind 2 other PRs, waiting for CI …"
-        , ATryPromote (Branch "nth") (Sha "1ab")
+        , ATryForcePush (Branch "nth") (Sha "1ab")
+        , ATryPromote (Sha "1ab")
         , ACleanupTestBranch (PullRequestId 9)
         , ALeaveComment (PullRequestId 8) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
         , ALeaveComment (PullRequestId 8)
@@ -4271,7 +4526,8 @@ main = hspec $ do
                         False
         , ALeaveComment (PullRequestId 7) "<!-- Hoff: ignore -->\nRebased as 3ef, waiting for CI …"
         , ALeaveComment (PullRequestId 7) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3ef) started."
-        , ATryPromote (Branch "sth") (Sha "3ef")
+        , ATryForcePush (Branch "sth") (Sha "3ef")
+        , ATryPromote (Sha "3ef")
         , ACleanupTestBranch (PullRequestId 7)
         ]
 
@@ -4309,19 +4565,23 @@ main = hspec $ do
           , CommentAdded (PullRequestId 4) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge behind 3 PRs."
           , BuildStatusChanged (Sha "cd2") "default" (Project.BuildSucceeded) -- PR#2 sha, ignored
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded) -- PR#1
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
           , PullRequestClosed (PullRequestId 1)
           , CommentAdded (PullRequestId 2) "bot" "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildStarted "example.com/2bc")
           , CommentAdded (PullRequestId 2) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
           , BuildStatusChanged (Sha "36a") "default" (Project.BuildSucceeded) -- arbitrary sha, ignored
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildSucceeded) -- PR#2
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "2bc")
           , PullRequestClosed (PullRequestId 2)
           , CommentAdded (PullRequestId 3) "bot" "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildStarted "example.com/3cd")
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildSucceeded) -- PR#3
+          , PullRequestCommitChanged (PullRequestId 3) (Sha "3cd")
           , PullRequestClosed (PullRequestId 3)
           , BuildStatusChanged (Sha "4de") "default" (Project.BuildStarted "example.com/4de")
           , BuildStatusChanged (Sha "4de") "default" (Project.BuildSucceeded) -- PR#4
+          , PullRequestCommitChanged (PullRequestId 4) (Sha "4de")
           , PullRequestClosed (PullRequestId 4)
           ]
         -- For this test, we assume all integrations and pushes succeed.
@@ -4376,16 +4636,20 @@ main = hspec $ do
                         [PullRequestId 1, PullRequestId 2, PullRequestId 3]
                         False
         , ALeaveComment (PullRequestId 4) "<!-- Hoff: ignore -->\nSpeculatively rebased as 4de behind 3 other PRs, waiting for CI …"
-        , ATryPromote (Branch "fst") (Sha "1ab")
+        , ATryForcePush (Branch "fst") (Sha "1ab")
+        , ATryPromote (Sha "1ab")
         , ACleanupTestBranch (PullRequestId 1)
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
-        , ATryPromote (Branch "snd") (Sha "2bc")
+        , ATryForcePush (Branch "snd") (Sha "2bc")
+        , ATryPromote (Sha "2bc")
         , ACleanupTestBranch (PullRequestId 2)
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3cd) started."
-        , ATryPromote (Branch "trd") (Sha "3cd")
+        , ATryForcePush (Branch "trd") (Sha "3cd")
+        , ATryPromote (Sha "3cd")
         , ACleanupTestBranch (PullRequestId 3)
         , ALeaveComment (PullRequestId 4) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/4de) started."
-        , ATryPromote (Branch "fth") (Sha "4de")
+        , ATryForcePush (Branch "fth") (Sha "4de")
+        , ATryPromote (Sha "4de")
         , ACleanupTestBranch (PullRequestId 4)
         ]
 
@@ -4411,8 +4675,11 @@ main = hspec $ do
           , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildStarted "example.com/3cd")
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildSucceeded) -- PR#2 second
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "3cd")
           , BuildStatusChanged (Sha "5ef") "default" (Project.BuildSucceeded) -- PR#3 second
           , BuildStatusChanged (Sha "4de") "default" (Project.BuildSucceeded) -- PR#1 second
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "4de")
+          , PullRequestCommitChanged (PullRequestId 3) (Sha "5ef")
           ]
         -- For this test, we assume all integrations and pushes succeed.
         results = defaultResults { resultIntegrate = [ Right (Sha "1ab") -- P1 first
@@ -4470,11 +4737,14 @@ main = hspec $ do
                           }
                     , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 5ef behind 2 other PRs, waiting for CI …"
                     , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3cd) started."
-                    , ATryPromote (Branch "snd") (Sha "3cd")
+                    , ATryForcePush (Branch "snd") (Sha "3cd")
+                    , ATryPromote (Sha "3cd")
                     , ACleanupTestBranch (PullRequestId 2)
-                    , ATryPromote (Branch "fst") (Sha "4de")
+                    , ATryForcePush (Branch "fst") (Sha "4de")
+                    , ATryPromote (Sha "4de")
                     , ACleanupTestBranch (PullRequestId 1)
-                    , ATryPromote (Branch "trd") (Sha "5ef")
+                    , ATryForcePush (Branch "trd") (Sha "5ef")
+                    , ATryPromote (Sha "5ef")
                     , ACleanupTestBranch (PullRequestId 3)
                     ]
 
@@ -4491,6 +4761,8 @@ main = hspec $ do
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildSucceeded) -- PR#2
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab")
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded) -- PR#1
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "2bc")
           , CommentAdded (PullRequestId 1) "deckard" "@bot merge"
           ]
         -- For this test, we assume all integrations and pushes succeed.
@@ -4520,9 +4792,11 @@ main = hspec $ do
                     , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2bc behind 1 other PR, waiting for CI \8230"
                     , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
                     , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
-                    , ATryPromote (Branch "fst") (Sha "1ab")
+                    , ATryForcePush (Branch "fst") (Sha "1ab")
+                    , ATryPromote (Sha "1ab")
                     , ACleanupTestBranch (PullRequestId 1)
-                    , ATryPromote (Branch "snd") (Sha "2bc")
+                    , ATryForcePush (Branch "snd") (Sha "2bc")
+                    , ATryPromote (Sha "2bc")
                     , ACleanupTestBranch (PullRequestId 2)
                     , AIsReviewer (Username "deckard")
                     , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nThe build succeeded."
@@ -4541,7 +4815,9 @@ main = hspec $ do
           , BuildStatusChanged (Sha "2bc") "default" Project.BuildSucceeded -- PR#2 ignored, due to remerge
           , BuildStatusChanged (Sha "1ab") "default" Project.BuildSucceeded -- PR#1 ignored, due to remerge
           , BuildStatusChanged (Sha "3cd") "default" Project.BuildSucceeded -- PR#2
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "3cd")
           , BuildStatusChanged (Sha "4de") "default" Project.BuildSucceeded -- PR#1
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "4de")
           ]
         -- For this test, we assume all integrations and pushes succeed.
         results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
@@ -4588,9 +4864,11 @@ main = hspec $ do
                           , alwaysAddMergeCommit = True
                           }
                      , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nSpeculatively rebased as 4de behind 1 other PR, waiting for CI …"
-                     , ATryPromote (Branch "snd") (Sha "3cd")
+                     , ATryForcePush (Branch "snd") (Sha "3cd")
+                     , ATryPromote (Sha "3cd")
                      , ACleanupTestBranch (PullRequestId 2)
-                     , ATryPromoteWithTag (Branch "fst") (Sha "4de") (TagName "v2") (TagMessage "v2 (autodeploy)\n\nchangelog")
+                     , ATryForcePush (Branch "fst") (Sha "4de")
+                     , ATryPromoteWithTag (Sha "4de") (TagName "v2") (TagMessage "v2 (autodeploy)\n\nchangelog")
                      , ALeaveComment (PullRequestId 1) "@deckard I tagged your PR with [v2](https://github.com/peter/rep/releases/tag/v2). It is scheduled for autodeploy!"
                      , ACleanupTestBranch (PullRequestId 1)
                      ]

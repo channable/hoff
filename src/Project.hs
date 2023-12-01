@@ -45,6 +45,9 @@ module Project
   getQueuePosition,
   insertPullRequest,
   integrationSha,
+  promotionSha,
+  promotionTime,
+  awaitingPromotion,
   lookupIntegrationSha,
   integrationShas,
   loadProjectState,
@@ -89,7 +92,7 @@ import Data.Set (Set)
 import Data.String (IsString)
 import Format (format)
 import GHC.Generics
-import Git (Branch (..), BaseBranch (..), Sha (..), GitIntegrationFailure (..))
+import Git (Branch (..), BaseBranch (..), Sha (..), GitIntegrationFailure (..), TagName, TagMessage)
 import Prelude hiding (readFile, writeFile)
 import System.Directory (renameFile)
 
@@ -102,6 +105,7 @@ import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
 
 import Types (PullRequestId (..), Username)
+import Data.Time (UTCTime)
 
 -- For any integrated sha, we either wait for the first check, or for
 -- a variety of mandatory checks to pass before merging the pullrequest.
@@ -137,6 +141,8 @@ data IntegrationStatus
   = NotIntegrated
   | Outdated
   | Integrated Sha OutstandingChecks
+  | Promote UTCTime Sha
+  | PromoteAndTag UTCTime Sha TagName TagMessage
   | Promoted
   | Conflicted BaseBranch GitIntegrationFailure
   | IncorrectBaseBranch
@@ -148,6 +154,7 @@ data PullRequestStatus
   | PrStatusOutdated                  -- ^ Approved, but master updated during integration.
   | PrStatusBuildPending              -- ^ Integrated, and build pending or in progress.
   | PrStatusBuildStarted Text         -- ^ Integrated, and build pending or in progress.
+  | PrStatusAwaitingPromotion         -- ^ Integrated, waiting to be pushed to target branch
   | PrStatusIntegrated                -- ^ Integrated, build passed, merged into target branch.
   | PrStatusIncorrectBaseBranch       -- ^ Integration branch not being valid.
   | PrStatusWrongFixups               -- ^ Failed to integrate due to the presence of orphan fixup commits.
@@ -395,6 +402,8 @@ classifyPullRequest pr = case approval pr of
       BuildStarted url -> PrStatusBuildStarted url
       BuildSucceeded   -> PrStatusIntegrated
       BuildFailed url  -> PrStatusFailedBuild url
+    Promote _ _ -> PrStatusAwaitingPromotion
+    PromoteAndTag {} -> PrStatusAwaitingPromotion
     Promoted -> PrStatusIntegrated
 
 -- Classify every pull request into one status. Orders pull requests by id in
@@ -451,6 +460,8 @@ isQueued pr = case approval pr of
     IncorrectBaseBranch -> False
     Conflicted _ _ -> False
     Integrated _ _ -> False
+    Promote _ _ -> False
+    PromoteAndTag {} -> False
     Promoted -> False
 
 -- Returns whether a pull request is in the process of being integrated (pending
@@ -466,8 +477,10 @@ isInProgress pr = case approval pr of
     Integrated _ buildStatus -> case summarize buildStatus of
       BuildPending   -> True
       BuildStarted _ -> True
-      BuildSucceeded -> False
+      BuildSucceeded -> True
       BuildFailed _  -> False
+    Promote _ _ -> True
+    PromoteAndTag {} -> True
     Promoted -> False
 
 -- Return whether the given commit is, or in this approval cycle ever was, an
@@ -558,6 +571,24 @@ lookupIntegrationSha pid = integrationSha <=< lookupPullRequest pid
 integrationShas :: PullRequest -> [Sha]
 integrationShas pr = maybeToList (integrationSha pr) ++ integrationAttempts pr
 
+promotionSha :: PullRequest -> Maybe Sha
+promotionSha pr = case integrationStatus pr of
+  Promote       _ newHead     -> Just newHead
+  PromoteAndTag _ newHead _ _ -> Just newHead
+  _                           -> Nothing
+
+promotionTime :: PullRequest -> Maybe UTCTime
+promotionTime pr = case integrationStatus pr of
+  Promote       time _     -> Just time
+  PromoteAndTag time _ _ _ -> Just time
+  _                        -> Nothing
+
+awaitingPromotion :: PullRequest -> Bool
+awaitingPromotion pr = case integrationStatus pr of
+  Promote _ _      -> True
+  PromoteAndTag {} -> True
+  _                -> False
+
 -- | Returns whether the first pull request was approved after the second.
 -- To be used in infix notation:
 --
@@ -571,8 +602,10 @@ pr1 `approvedAfter` pr2 = case (mo1, mo2) of
   mo2 = approvalOrder <$> approval pr2
 
 isIntegrated :: IntegrationStatus -> Bool
-isIntegrated (Integrated _ _) = True
-isIntegrated _                = False
+isIntegrated (Integrated _ _)   = True
+isIntegrated (Promote _ _)      = True
+isIntegrated (PromoteAndTag {}) = True
+isIntegrated _                  = False
 
 -- | Returns whether an 'IntegrationStatus' is integrated with a build failure:
 --   @ Integrated _ (BuildFailed _) @
@@ -588,6 +621,8 @@ isUnfailedIntegrated (Integrated _ buildStatus) = case summarize buildStatus of
                                                   (BuildStarted _) -> True
                                                   BuildSucceeded   -> True
                                                   (BuildFailed _)  -> False
+isUnfailedIntegrated (Promote _ _ )     = True
+isUnfailedIntegrated (PromoteAndTag {}) = True
 isUnfailedIntegrated _ = False
 
 -- | Returns whether a 'PullRequest' is integrated or conflicted speculatively.
@@ -595,6 +630,8 @@ isIntegratedOrSpeculativelyConflicted :: PullRequest -> Bool
 isIntegratedOrSpeculativelyConflicted pr =
   case integrationStatus pr of
   (Integrated _ _)                            -> True
+  (Promote _ _)                               -> True
+  (PromoteAndTag {})                          -> True
   (Conflicted base _) | base /= baseBranch pr -> True
   _                                           -> False
 

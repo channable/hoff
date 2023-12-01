@@ -18,6 +18,8 @@ module Configuration
   MergeWindowExemptionConfiguration (..),
   MetricsConfiguration (..),
   FeatureFreezeWindow (..),
+  PromotionTimeout (..),
+  ClockTickInterval (..),
   loadConfiguration
 )
 where
@@ -26,7 +28,7 @@ import Data.Aeson (FromJSON, eitherDecodeStrict')
 import Data.ByteString (readFile)
 import Data.Set (Set)
 import Data.Text (Text)
-import Data.Time (UTCTime)
+import Data.Time (DiffTime, UTCTime)
 import GHC.Generics
 import Prelude hiding (readFile)
 import qualified Network.Wai.Handler.Warp as Warp
@@ -98,6 +100,12 @@ data MetricsConfiguration = MetricsConfiguration
 newtype MergeWindowExemptionConfiguration = MergeWindowExemptionConfiguration [Text]
   deriving (Generic, Show)
 
+newtype PromotionTimeout = PromotionTimeout DiffTime
+  deriving (Generic, Show)
+
+newtype ClockTickInterval = ClockTickInterval DiffTime
+  deriving (Generic, Show)
+
 data Configuration = Configuration
   {
     -- The projects to manage.
@@ -134,7 +142,13 @@ data Configuration = Configuration
     metricsConfig :: Maybe MetricsConfiguration,
 
     -- Feature freeze period in which only 'merge hotfix' commands are allowed
-    featureFreezeWindow :: Maybe FeatureFreezeWindow
+    featureFreezeWindow :: Maybe FeatureFreezeWindow,
+
+    -- The timeout for promoting an integrated pull request
+    promotionTimeout :: PromotionTimeout,
+
+    -- The interval to send clock tick events
+    clockTickInterval :: Maybe ClockTickInterval
   }
   deriving (Generic)
 
@@ -147,6 +161,8 @@ instance FromJSON UserConfiguration
 instance FromJSON MergeWindowExemptionConfiguration
 instance FromJSON MetricsConfiguration
 instance FromJSON FeatureFreezeWindow
+instance FromJSON PromotionTimeout
+instance FromJSON ClockTickInterval
 
 -- Reads and parses the configuration. Returns Nothing if parsing failed, but
 -- crashes if the file could not be read.

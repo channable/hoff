@@ -1,6 +1,6 @@
 name:                hoff
 -- please keep version consistent with hoff.nix
-version:             0.32.1
+version:             0.32.2
 category:            Development
 synopsis:            A gatekeeper for your commits
 
@@ -19,7 +19,8 @@ library
   default-language: Haskell2010
   ghc-options:     -Wall -Werror -Wincomplete-uni-patterns -Wincomplete-record-updates -fno-ignore-asserts
   hs-source-dirs:  src
-  exposed-modules: Configuration
+  exposed-modules: ClockTickLoop
+                 , Configuration
                  , EventLoop
                  , Format
                  , Git

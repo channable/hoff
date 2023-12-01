@@ -2,10 +2,10 @@
 {-# LANGUAGE GHC2021 #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeFamilies #-}
-module Time (getDateTime, runTime, TimeOperation (..)) where
+module Time (addTime, getDateTime, runTime, TimeOperation (..)) where
 
 import Control.Monad.IO.Class (liftIO)
-import Data.Time (UTCTime, getCurrentTime)
+import Data.Time (DiffTime, UTCTime, addUTCTime, getCurrentTime)
 import Effectful (Dispatch (Dynamic), DispatchOf, Eff, Effect, IOE, (:>))
 import Effectful.Dispatch.Dynamic (interpret, send)
 
@@ -20,3 +20,6 @@ getDateTime = send GetDateTime
 runTime :: IOE :> es => Eff (TimeOperation : es) a -> Eff es a
 runTime = interpret $ \_ -> \case
   GetDateTime -> liftIO getCurrentTime
+
+addTime :: UTCTime -> DiffTime -> UTCTime
+addTime t d = addUTCTime (realToFrac d) t

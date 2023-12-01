@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.32.2
+
+Release 2023-12-14
+
+  - Wait with promoting to master until the PR has been updated after the force push.
+
 ## 0.32.1
 
 Release 2023-11-28

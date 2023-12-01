@@ -67,7 +67,7 @@ import Data.Time (UTCTime, DayOfWeek (Friday), dayOfWeek, utctDay)
 import qualified Text.Megaparsec as P
 import qualified Text.Megaparsec.Char as P
 
-import Configuration (ProjectConfiguration (owner, repository, deployEnvironments), TriggerConfiguration, MergeWindowExemptionConfiguration, FeatureFreezeWindow)
+import Configuration (ProjectConfiguration (owner, repository, deployEnvironments), TriggerConfiguration, MergeWindowExemptionConfiguration, FeatureFreezeWindow, PromotionTimeout)
 import Effectful (Dispatch (Dynamic), DispatchOf, Eff, Effect, (:>))
 import Effectful.Dispatch.Dynamic (interpret, send)
 import Format (format)
@@ -98,8 +98,9 @@ data Action :: Effect where
     , _train                :: [PullRequestId]
     , _alwaysAddMergeCommit :: Bool
     } -> Action m (Either IntegrationFailure Sha)
-  TryPromote :: Branch -> Sha -> Action m PushResult
-  TryPromoteWithTag :: Branch -> Sha -> TagName -> TagMessage -> Action m PushWithTagResult
+  TryForcePush :: Branch -> Sha -> Action m PushResult
+  TryPromote :: Sha -> Action m PushResult
+  TryPromoteWithTag :: Sha -> TagName -> TagMessage -> Action m PushWithTagResult
   CleanupTestBranch :: PullRequestId -> Action m ()
   LeaveComment :: PullRequestId -> Text -> Action m ()
   IsReviewer :: Username -> Action m Bool
@@ -145,13 +146,21 @@ tryIntegrate mergeMessage candidate train alwaysAddMergeCommit =
 -- Before doing so, force-push that SHA to the pull request branch, and after
 -- success, delete the pull request branch. These steps ensure that Github marks
 -- the pull request as merged, rather than closed.
-tryPromote :: Action :> es => Branch -> Sha -> Eff es PushResult
-tryPromote prBranch newHead = send $ TryPromote prBranch newHead
 
-tryPromoteWithTag :: Action :> es => Branch -> Sha -> TagName -> TagMessage -> Eff es PushWithTagResult
-tryPromoteWithTag prBranch newHead tagName tagMessage =
-  send $ TryPromoteWithTag prBranch newHead tagName tagMessage
+-- | Try to force push a new commit to a specific branch.
+tryForcePush :: Action :> es => Branch -> Sha -> Eff es PushResult
+tryForcePush prBranch newHead = send $ TryForcePush prBranch newHead
 
+-- | Try to push a new commit to the master branch.
+tryPromote :: Action :> es => Sha -> Eff es PushResult
+tryPromote newHead = send $ TryPromote newHead
+
+-- | Try to push a new commit to the master branch and push a new tag.
+tryPromoteWithTag :: Action :> es => Sha -> TagName -> TagMessage -> Eff es PushWithTagResult
+tryPromoteWithTag newHead tagName tagMessage =
+  send $ TryPromoteWithTag newHead tagName tagMessage
+
+-- | Clean up a branch that has been merged.
 cleanupTestBranch :: Action :> es => PullRequestId -> Eff es ()
 cleanupTestBranch pullRequestId = send $ CleanupTestBranch pullRequestId
 
@@ -216,23 +225,23 @@ runAction config =
       case shaOrFailed of
         Left failure -> pure $ Left $ IntegrationFailure (Git.toBaseBranch targetBranch) failure
         Right integratedSha -> pure $ Right integratedSha
-    TryPromote prBranch sha -> do
+    TryForcePush prBranch sha -> do
       ensureCloned config
-      Git.pushAtomic [ AsRefSpecForce (sha, prBranch)
-                     , AsRefSpec (sha, Git.Branch $ Config.branch config)]
+      Git.forcePush sha prBranch
 
-    TryPromoteWithTag prBranch sha newTagName newTagMessage -> do
+    TryPromote sha -> do
+      ensureCloned config
+      Git.push sha (Git.Branch $ Config.branch config)
+
+    TryPromoteWithTag sha newTagName newTagMessage -> do
       ensureCloned config
       tagResult <- Git.tag sha newTagName newTagMessage
       case tagResult of
         TagFailed _ -> do
-          pushResult <- Git.pushAtomic [ AsRefSpecForce (sha, prBranch)
-                                       , AsRefSpec (sha, Git.Branch $ Config.branch config)]
+          pushResult <- Git.push sha (Git.Branch $ Config.branch config)
           pure (Left "Please check the logs", pushResult)
         TagOk tagName -> do
-          atomicPushResult <- Git.pushAtomic [ AsRefSpecForce (sha, prBranch)
-                                             , AsRefSpec tagName
-                                             , AsRefSpec (sha, Git.Branch $ Config.branch config)]
+          atomicPushResult <- Git.pushAtomic [AsRefSpec tagName, AsRefSpec (sha, Git.Branch $ Config.branch config)]
           Git.deleteTag tagName
           pure (Right tagName, atomicPushResult)
           -- Deleting tag after atomic push is important to maintain one "source of truth", namely
@@ -312,6 +321,7 @@ data Event
   -- ^ sha, possible mandatory check that was submitted with the status update, new build status
   -- Internal events
   | Synchronize
+  | ClockTick UTCTime
   deriving (Eq, Show)
 
 type EventQueue = TBQueue (Maybe Event)
@@ -367,10 +377,11 @@ handleEventInternal
   => TriggerConfiguration
   -> MergeWindowExemptionConfiguration
   -> Maybe FeatureFreezeWindow
+  -> PromotionTimeout
   -> Event
   -> ProjectState
   -> Eff es ProjectState
-handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow event = case event of
+handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow promotionTimeout event = case event of
   PullRequestOpened pr branch baseBranch sha title author body
     -> handlePullRequestOpenedByUser triggerConfig mergeWindowExemption featureFreezeWindow pr branch baseBranch sha title author body
   PullRequestCommitChanged pr sha -> handlePullRequestCommitChanged pr sha
@@ -381,6 +392,7 @@ handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow event
   BuildStatusChanged sha context status   -> handleBuildStatusChanged sha context status
   PushPerformed branch sha        -> handleTargetChanged branch sha
   Synchronize                     -> synchronizeState
+  ClockTick currTime              -> handleClockTickUpdate promotionTimeout currTime
 
 handlePullRequestOpenedByUser
   :: forall es. (Action :> es, RetrieveEnvironment :> es)
@@ -415,7 +427,7 @@ handlePullRequestOpened pr branch baseBranch sha title author =
   return . Pr.insertPullRequest pr branch baseBranch sha title author
 
 handlePullRequestCommitChanged
-  :: Action :> es
+  :: (Action :> es, RetrieveEnvironment :> es)
   => PullRequestId
   -> Sha
   -> ProjectState
@@ -427,6 +439,8 @@ handlePullRequestCommitChanged prId newSha state =
     let updateSha pr = pr { Pr.sha = newSha } in
     case Pr.lookupPullRequest prId state of
       Just pullRequest
+        -- If this is the result of our force push, we promote the PR.
+        | Pr.promotionSha pullRequest == Just newSha -> tryPromotePullRequest pullRequest prId state
         -- If the change notification was a false positive, ignore it.
         | Pr.sha pullRequest == newSha -> pure state
         -- If the new commit hash is one that we pushed ourselves, ignore the
@@ -435,6 +449,49 @@ handlePullRequestCommitChanged prId newSha state =
         | otherwise -> clearPullRequest prId (updateSha pullRequest) state
       -- If the pull request was not present in the first place, do nothing.
       Nothing -> pure state
+
+-- | Try to push the final result of a pull request to the target branch.
+tryPromotePullRequest :: (Action :> es, RetrieveEnvironment :> es) => PullRequest -> PullRequestId -> ProjectState -> Eff es ProjectState
+tryPromotePullRequest pullRequest prId state = do
+  pushResult <- case Pr.integrationStatus pullRequest of
+    -- If we only need to promote, we can just try pushing.
+    Pr.Promote _ sha -> tryPromote sha
+    -- If we also want to tag the PR we additionally need to handle the result of promoting and tagging.
+    -- Specifically, we need to leave a comment about the result of the tag.
+    Pr.PromoteAndTag _ sha@(Sha shaText) tagName tagMessage -> do
+      (tagResult, pushResult) <- tryPromoteWithTag sha tagName tagMessage
+      let approval = fromJust $ Pr.approval pullRequest
+          Username approvedBy = approver approval
+          approvalKind = Pr.approvedFor approval
+      config <- getProjectConfig
+      when (pushResult == PushOk) $ leaveComment prId . (<>) ("@" <> approvedBy <> " ") $
+        case tagResult of
+          Left err -> "Sorry, I could not tag your PR. " <> err
+          Right (TagName t) -> do
+            let link = format "[{}](https://github.com/{}/{}/releases/tag/{})" (t, owner config, repository config, t)
+            "I tagged your PR with " <> link <> ". " <>
+              if Pr.needsDeploy approvalKind
+              then "It is scheduled for autodeploy!"
+              else Text.concat ["Please wait for the build of ", shaText, " to pass and don't forget to deploy it!"]
+      pure pushResult
+    _ -> error ""
+  case pushResult of
+    -- If the push worked, then this was the final stage of the pull request.
+    -- GitHub will mark the pull request as closed, and when we receive that
+    -- event, we delete the pull request from the state. Until then, reset
+    -- the integration candidate, so we proceed with the next pull request.
+    PushOk -> do
+      cleanupTestBranch prId
+      registerMergedPR
+      pure $ Pr.updatePullRequests (unspeculateConflictsAfter pullRequest)
+          $ Pr.updatePullRequests (unspeculateFailuresAfter pullRequest)
+          $ Pr.setIntegrationStatus prId Promoted state
+    -- If something was pushed to the target branch while the candidate was
+    -- being tested, try to integrate again and hope that next time the push
+    -- succeeds.  We also cancel integrations in the merge train.
+    -- These should be automatically restarted when we 'proceed'.
+    PushRejected _why -> tryIntegratePullRequest prId
+                      $ unintegrateAfter prId state
 
 -- | Describe what caused the PR to close.
 prClosingMessage :: PRCloseCause -> Text
@@ -516,6 +573,18 @@ handleTargetChanged (BaseBranch baseBranch) sha state
     update pr = pr
   in pure $ Pr.updatePullRequests update state
 handleTargetChanged _ _ state = pure state
+
+handleClockTickUpdate :: (Action :> es, RetrieveEnvironment :> es) => PromotionTimeout -> UTCTime -> ProjectState -> Eff es ProjectState
+handleClockTickUpdate (Config.PromotionTimeout timeout) currTime state = do
+  let prsToPromote = Pr.filterPullRequestsBy Pr.awaitingPromotion state
+  foldM update state prsToPromote
+  where
+    update state' prId = let pr = fromJust $ Pr.lookupPullRequest prId state
+      in case Pr.promotionTime pr of
+      Nothing -> pure state'
+      Just time -> if Time.addTime time timeout < currTime
+        then tryPromotePullRequest pr prId state'
+        else pure state'
 
 -- | Internal result type for parsing a merge command, which allows the
 -- consumer of `parseMergeCommand` to inspect the reason why a message
@@ -1066,7 +1135,7 @@ synchronizeState stateInitial =
 -- always called from 'proceedUntilFixedPoint', this happens as a single
 -- action.
 proceed
-  :: (Action :> es, RetrieveEnvironment :> es)
+  :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
   => ProjectState
   -> Eff es ProjectState
 proceed = provideFeedback
@@ -1077,7 +1146,7 @@ proceed = provideFeedback
 -- by pushing it to be the new master if the build succeeded.
 -- (cf. 'proceedCandidate')
 proceedFirstCandidate
-  :: (Action :> es, RetrieveEnvironment :> es)
+  :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
   => ProjectState
   -> Eff es ProjectState
 proceedFirstCandidate state = case Pr.unfailedIntegratedPullRequests state of
@@ -1094,7 +1163,7 @@ tryIntegrateFirstPullRequest state = case Pr.candidatePullRequests state of
 
 -- | Pushes the given integrated PR to be the new master if the build succeeded
 proceedCandidate
-  :: (Action :> es, RetrieveEnvironment :> es)
+  :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
   => PullRequestId
   -> ProjectState
   -> Eff es ProjectState
@@ -1171,12 +1240,12 @@ tryIntegratePullRequest pr state =
 -- candidate.
 -- TODO: Get rid of the tuple; just pass the ID and do the lookup with fromJust.
 pushCandidate
-  :: (Action :> es, RetrieveEnvironment :> es)
+  :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
   => (PullRequestId, PullRequest)
   -> Sha
   -> ProjectState
   -> Eff es ProjectState
-pushCandidate (pullRequestId, pullRequest) newHead@(Sha sha) state =
+pushCandidate (pullRequestId, pullRequest) newHead state =
   -- Look up the sha that will be pushed to the target branch. Also assert that
   -- the pull request has really been approved. If it was
   -- not, there is a bug in the program.
@@ -1186,51 +1255,31 @@ pushCandidate (pullRequestId, pullRequest) newHead@(Sha sha) state =
       commentToUser = leaveComment pullRequestId . (<>) ("@" <> approvedBy <> " ")
   in assert (isJust $ Pr.approval pullRequest) $ do
     let approvalKind = Pr.approvedFor approval
-    pushResult <- if Pr.needsTag approvalKind
-      then do
-        versionOrBadTag <- getLatestVersion newHead
-        config <- getProjectConfig
-        case versionOrBadTag of
-          Left (TagName bad) -> do
-            commentToUser ("Sorry, I could not tag your PR. The previous tag `" <> bad <> "` seems invalid")
-            tryPromote prBranch newHead
-          Right v -> do
-            let previousTag = versionToTag v
-            mChangelog <- getChangelog previousTag newHead
-            let
-              tagName = versionToTag $ v + 1
-              changelog = fromMaybe "Failed to get the changelog" mChangelog
-              tagMessage = messageForTag tagName approvalKind changelog
-            (tagResult, pushResult) <- tryPromoteWithTag prBranch newHead tagName tagMessage
-            when (pushResult == PushOk) $ commentToUser $
-              case tagResult of
-                Left err -> "Sorry, I could not tag your PR. " <> err
-                Right (TagName t) -> do
-                  let link = format "[{}](https://github.com/{}/{}/releases/tag/{})" (t, owner config, repository config, t)
-                  "I tagged your PR with " <> link <> ". " <>
-                    if Pr.needsDeploy approvalKind
-                    then "It is scheduled for autodeploy!"
-                    else Text.concat ["Please wait for the build of ", sha, " to pass and don't forget to deploy it!"]
-            pure pushResult
-      else
-        tryPromote prBranch newHead
+    currTime <- Time.getDateTime
+    (pushResult, newStatus) <- if Pr.needsTag approvalKind
+        then do
+          versionOrBadTag <- getLatestVersion newHead
+          case versionOrBadTag of
+            Left (TagName bad) -> do
+              commentToUser ("Sorry, I could not tag your PR. The previous tag `" <> bad <> "` seems invalid")
+              pushResult <- tryForcePush prBranch newHead
+              pure (pushResult, Pr.Promote currTime newHead)
+            Right v -> do
+              let previousTag = versionToTag v
+              mChangelog <- getChangelog previousTag newHead
+              let
+                tagName = versionToTag $ v + 1
+                changelog = fromMaybe "Failed to get the changelog" mChangelog
+                tagMessage = messageForTag tagName approvalKind changelog
+              pushResult <- tryForcePush prBranch newHead
+              pure (pushResult, Pr.PromoteAndTag currTime newHead tagName tagMessage)
+      else do
+        pushResult <- tryForcePush prBranch newHead
+        pure (pushResult, Pr.Promote currTime newHead)
     case pushResult of
-      -- If the push worked, then this was the final stage of the pull request.
-      -- GitHub will mark the pull request as closed, and when we receive that
-      -- event, we delete the pull request from the state. Until then, reset
-      -- the integration candidate, so we proceed with the next pull request.
-      PushOk -> do
-        cleanupTestBranch pullRequestId
-        registerMergedPR
-        pure $ Pr.updatePullRequests (unspeculateConflictsAfter pullRequest)
-             $ Pr.updatePullRequests (unspeculateFailuresAfter pullRequest)
-             $ Pr.setIntegrationStatus pullRequestId Promoted state
-      -- If something was pushed to the target branch while the candidate was
-      -- being tested, try to integrate again and hope that next time the push
-      -- succeeds.  We also cancel integrations in the merge train.
-      -- These should be automatically restarted when we 'proceed'.
-      PushRejected _why -> tryIntegratePullRequest pullRequestId
-                         $ unintegrateAfter pullRequestId state
+      PushOk -> pure $ Pr.setIntegrationStatus pullRequestId newStatus state
+      PushRejected _ -> tryIntegratePullRequest pullRequestId
+                      $ unintegrateAfter pullRequestId state
 
 -- | When a pull request has been promoted to master this means that any
 -- conflicts (failed rebases) built on top of it are not speculative anymore:
@@ -1268,7 +1317,7 @@ unspeculateFailuresAfter promotedPullRequest pr
 -- For this to work properly, it is essential that 'proceed' does not have any
 -- side effects if it does not change the state.
 proceedUntilFixedPoint
-  :: (Action :> es, RetrieveEnvironment :> es)
+  :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
   => ProjectState
   -> Eff es ProjectState
 proceedUntilFixedPoint state = do
@@ -1309,6 +1358,7 @@ describeStatus (BaseBranch projectBaseBranchName) prId pr state = case Pr.classi
                                                   , ", waiting for CI …"
                                                   ]
   PrStatusBuildStarted url -> Text.concat ["[CI job :yellow_circle:](", url, ") started."]
+  PrStatusAwaitingPromotion -> "The PR is waiting to be pushed to the target branch"
   PrStatusIntegrated -> "The build succeeded."
   PrStatusIncorrectBaseBranch ->
     let BaseBranch baseBranchName = Pr.baseBranch pr
@@ -1375,15 +1425,16 @@ provideFeedback state
   $ IntMap.toList $ Pr.pullRequests state
 
 handleEvent
-  :: (Action :> es, RetrieveEnvironment :> es)
+  :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
   => TriggerConfiguration
   -> MergeWindowExemptionConfiguration
   -> Maybe FeatureFreezeWindow
+  -> PromotionTimeout
   -> Event
   -> ProjectState
   -> Eff es ProjectState
-handleEvent triggerConfig mergeWindowExemption featureFreezeWindow event state = do
-  projectState <- handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow event state >>= proceedUntilFixedPoint
+handleEvent triggerConfig mergeWindowExemption featureFreezeWindow promotionTimeout event state = do
+  projectState <- handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow promotionTimeout event state >>= proceedUntilFixedPoint
   triggerTrainSizeUpdate projectState
   pure projectState
 

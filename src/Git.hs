@@ -136,13 +136,10 @@ instance RefSpec (Sha, BaseBranch) where
 instance RefSpec TagName where
   refSpec (TagName name) = Text.unpack name
 
-data SomeRefSpec
-  = forall a . RefSpec a => AsRefSpec a
-  | forall a . RefSpec a => AsRefSpecForce a
+data SomeRefSpec = forall a . RefSpec a => AsRefSpec a
 
 instance RefSpec SomeRefSpec where
   refSpec (AsRefSpec a) = refSpec a
-  refSpec (AsRefSpecForce a) = "+" ++ refSpec a
 
 instance FromJSON Branch where
   parseJSON (String str) = return (Branch str)
@@ -164,6 +161,20 @@ instance FromJSON Sha where
 
 instance ToJSON Sha where
   toJSON (Sha str) = String str
+
+instance FromJSON TagName where
+  parseJSON (String str) = return (TagName str)
+  parseJSON _            = mzero
+
+instance ToJSON TagName where
+  toJSON (TagName str) = String str
+
+instance FromJSON TagMessage where
+  parseJSON (String str) = return (TagMessage str)
+  parseJSON _            = mzero
+
+instance ToJSON TagMessage where
+  toJSON (TagMessage str) = String str
 
 instance FromJSON RemoteUrl where
   parseJSON (String url) = pure (RemoteUrl url)

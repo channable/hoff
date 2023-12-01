@@ -13,7 +13,7 @@ import Control.Applicative ((<**>))
 import Control.Monad (forM, unless, void)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Logger (runStdoutLoggingT)
-import Data.Maybe (maybeToList)
+import Data.Maybe (fromMaybe, maybeToList)
 import Data.String (fromString)
 import Data.Version (showVersion)
 import Effectful (runEff)
@@ -28,7 +28,8 @@ import qualified GitHub.Auth as Github3
 import qualified System.Directory as FileSystem
 import qualified Options.Applicative as Opts
 
-import Configuration (Configuration, MetricsConfiguration (metricsPort, metricsHost))
+import ClockTickLoop (clockTickLoop)
+import Configuration (ClockTickInterval (..), Configuration, MetricsConfiguration (metricsPort, metricsHost))
 import EventLoop (runGithubEventLoop, runLogicEventLoop)
 import MonadLoggerEffect (runLoggerStdout)
 import Project (ProjectInfo (ProjectInfo), Owner, ProjectState, emptyProjectState,
@@ -185,6 +186,10 @@ runMain options = do
   -- Start a worker thread to put the GitHub webhook events in the right queue.
   ghThread <- Async.async $ runStdoutLoggingT $ runGithubEventLoop ghQueue enqueueEvent
 
+  -- Create a thread that will send a clock tick events with an interval. The default interval is 30 seconds.
+  let interval =  fromMaybe (ClockTickInterval 30) (Config.clockTickInterval config)
+  timerThread <- Async.async $ clockTickLoop interval (map projectThreadQueue (Map.elems projectThreadState))
+
   -- Start a main event loop for every project.
   metrics <- Metrics.registerProjectMetrics
   Metrics.registerGHCMetrics
@@ -220,7 +225,7 @@ runMain options = do
 
   -- Note that a stop signal is never enqueued. The application just runs until
   -- until it is killed, or until any of the threads stop due to an exception.
-  void $ Async.waitAny $ [serverThread, ghThread] ++ metricsThread ++ projectThreads
+  void $ Async.waitAny $ [serverThread, ghThread, timerThread] ++ metricsThread ++ projectThreads
 
 data ProjectThreadData = ProjectThreadData
   { projectThreadConfig   :: Config.ProjectConfiguration
@@ -254,6 +259,7 @@ projectThread config options metrics projectThreadData = do
           projectConfig
           (Config.mergeWindowExemption config)
           (Config.featureFreezeWindow config)
+          (Config.promotionTimeout config)
           getNextEvent
           publish
           projectThreadState
