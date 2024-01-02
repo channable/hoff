@@ -35,8 +35,8 @@ import Prelude hiding (div, head, id, span)
 import Text.Blaze (toValue, (!))
 import Text.Blaze.Html.Renderer.Utf8
 import Text.Blaze.Html5 (Html, a, body, div, docTypeHtml, h1, h2, h3, head, link, meta, p, span,
-                         title, toHtml)
-import Text.Blaze.Html5.Attributes (charset, class_, content, href, id, name, rel)
+                         title, toHtml, script, preEscapedToHtml)
+import Text.Blaze.Html5.Attributes (charset, class_, content, href, id, name, rel, onclick)
 import Text.Blaze.Internal (Attribute, AttributeValue, attribute)
 
 import qualified Data.ByteString.Lazy as LazyByteString
@@ -84,6 +84,10 @@ googlefontsUrl = "https://fonts.googleapis.com/css?family=Source+Sans+Pro&displa
 stylesheetUrl :: Text
 stylesheetUrl = "/style/" <> stylesheetUrlDigest <> ".css"
 
+jsScript :: Text
+jsScript = $(embedStringFile "static/script.js")
+
+
 -- Wraps the given body html in html for an actual page, and encodes the
 -- resulting page in utf-8.
 renderPage :: Text -> Html -> LazyByteString.ByteString
@@ -95,10 +99,17 @@ renderPage pageTitle bodyHtml = renderHtml $ docTypeHtml $ do
     title $ toHtml pageTitle
     link ! rel "stylesheet" ! href (toValue googlefontsUrl)
     link ! rel "stylesheet" ! href (toValue stylesheetUrl) ! integrity (toValue $ "sha256-" <> stylesheetBase64Digest)
-  body $
+  body $ do
+    autoRefreshToggle
     div ! id "content" $ do
       bodyHtml
       p ! class_ "version" $ "Hoff v" <> toHtml (showVersion version)
+    script $ preEscapedToHtml jsScript
+
+autoRefreshToggle :: Html
+autoRefreshToggle = 
+  div ! class_ "autoRefresh" $ do
+    span ! id "autoRefreshToggle" ! onclick "toggleAutoRefresh();" $ "toggle autoRefresh"
 
 -- Integrity attribute for subresource integrity. Blaze doesn't have
 -- this yet, but this is what their implementation would look like.

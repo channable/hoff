@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.32.3
+
+Release 2024-01-03
+
+  - Add 'auto-refresh' button to web UI which, when turned on, refreshes the web UI every few seconds to make it easier to stay informed of Hoff's progress. (This change only touches the web UI. No changes in Hoff's functionality itself.)
+
 ## 0.32.2
 
 Release 2023-12-14
