@@ -184,6 +184,7 @@ data MergeCommand
     Approve ApprovedFor
   | -- | Retry the merge if it has previously failed.
     Retry
+  deriving (Eq, Show)
 
 -- | For a PR to be approved a specific user must give a specific approval
 --   command, i.e. either just "merge" or "merge and deploy".
@@ -196,7 +197,7 @@ data Approval = Approval
   deriving (Eq, Show, Generic)
 
 data MergeWindow = OnFriday | DuringFeatureFreeze | AnyDay
-  deriving (Show)
+  deriving (Eq, Show)
 
 -- | A check is a key we check incoming build status contexts (in the case of
 -- github) against.
