@@ -11,6 +11,7 @@ module Configuration
 (
   Configuration (..),
   ProjectConfiguration (..),
+  knownEnvironments,
   ChecksConfiguration (..),
   TlsConfiguration (..),
   TriggerConfiguration (..),
@@ -26,6 +27,7 @@ where
 
 import Data.Aeson (FromJSON, eitherDecodeStrict')
 import Data.ByteString (readFile)
+import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import Data.Text (Text)
 import Data.Time (DiffTime, UTCTime)
@@ -45,6 +47,9 @@ data ProjectConfiguration = ProjectConfiguration
     deployEnvironments :: Maybe [Text]               -- The environments which the `deploy to <environment>` command should be enabled for
   }
   deriving (Generic)
+
+knownEnvironments :: ProjectConfiguration -> [Text]
+knownEnvironments = fromMaybe [] . deployEnvironments
 
 data FeatureFreezeWindow = FeatureFreezeWindow
   {

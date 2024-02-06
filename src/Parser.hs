@@ -6,7 +6,6 @@ module Parser where
 import Control.Monad (void)
 import Data.Either (fromRight)
 import Data.List (intercalate, intersperse)
-import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Void (Void)
 import Text.Megaparsec (ParseErrorBundle, Parsec, (<|>))
@@ -15,7 +14,7 @@ import qualified Data.Text as Text
 import qualified Text.Megaparsec as P
 import qualified Text.Megaparsec.Char as P
 
-import Configuration (ProjectConfiguration (..), TriggerConfiguration (..))
+import Configuration (ProjectConfiguration (..), TriggerConfiguration (..), knownEnvironments)
 import Project (ApprovedFor (..), DeployEnvironment (..), MergeCommand (..), MergeWindow (..))
 
 -- | Internal result type for parsing a merge command, which allows the
@@ -114,7 +113,7 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     -- No whitespace stripping or case folding is performed here since they are
     -- also matched verbatim elsewhere in Hoff.
     environments :: [Text]
-    environments = fromMaybe [] (deployEnvironments projectConfig)
+    environments = knownEnvironments projectConfig
 
     -- The punctuation characters that are allowed at the end of a merge
     -- command. This doesn't use the included punctuation predicate because that
