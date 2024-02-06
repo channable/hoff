@@ -45,6 +45,7 @@ import Logic (Action, Action (..), Event (..), IntegrationFailure (..), Retrieve
 import Project (Approval (..), DeployEnvironment (..), ProjectState (ProjectState), PullRequest (PullRequest))
 import Time (TimeOperation)
 import Types (PullRequestId (..), Username (..))
+import ParserSpec (parserSpec)
 import ProjectSpec (projectSpec)
 
 import qualified Configuration as Config
@@ -382,6 +383,7 @@ expectSimpleParseFailure commentMsg errorMsg =
 
 main :: IO ()
 main = hspec $ do
+  parserSpec
   projectSpec
   describe "Logic.handleEvent" $ do
 
@@ -512,45 +514,6 @@ main = hspec $ do
           event4 = CommentAdded (PullRequestId 1) "deckard" "@botmerge"
           event5 = CommentAdded (PullRequestId 1) "deckard" "@bot, merge"
           state' = fst $ runAction $ handleEventsTest [event1, event2, event3, event4, event5] state
-          pr     = fromJust $ Project.lookupPullRequest (PullRequestId 1) state'
-      Project.approval pr `shouldBe` Nothing
-
-    it "accepts command comments case-insensitively" $ do
-      let state  = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "6412ef5") "sacha"
-          -- Note: "deckard" is marked as reviewer in the test config.
-          event  = CommentAdded (PullRequestId 1) "deckard" "@BoT MeRgE"
-          state' = fst $ runAction $ handleEventTest event state
-          pr     = fromJust $ Project.lookupPullRequest (PullRequestId 1) state'
-      Project.approval pr `shouldBe` Just (Approval "deckard" Project.Merge 0 Nothing)
-
-    it "accepts command at end of other comments" $ do
-      let state  = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "6412ef5") "sacha"
-          -- Note: "deckard" is marked as reviewer in the test config.
-          event  = CommentAdded (PullRequestId 1) "deckard" "looks good to me, @bot merge"
-          state' = fst $ runAction $ handleEventTest event state
-          pr     = fromJust $ Project.lookupPullRequest (PullRequestId 1) state'
-      Project.approval pr `shouldBe` Just (Approval "deckard" Project.Merge 0 Nothing)
-
-    -- The first mention/prefix is parsed as a command, and since this
-    -- particular example isn't a valid command this should be treated as a
-    -- parsing failure. Before the parser was rewritten this was valid as long
-    -- as the message also contained a valid command.
-    it "rejects command at end of other comments on the same line if tagged multiple times" $
-      expectSimpleParseFailure "@bot looks good to me, @bot merge" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:6:\n      |\n    1 | @bot looks good to me, @bot merge\n      |      ^^^^^\n    unexpected \"looks\"\n    expecting \"merge\", \"retry\", or white space\n"
-
-    it "accepts command before comments" $ do
-      let state  = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "6412ef5") "sacha"
-          -- Note: "deckard" is marked as reviewer in the test config.
-          event  = CommentAdded (PullRequestId 1) "deckard" "@bot merge\nYou did some fine work here."
-          state' = fst $ runAction $ handleEventTest event state
-          pr     = fromJust $ Project.lookupPullRequest (PullRequestId 1) state'
-      Project.approval pr `shouldBe` Just (Approval "deckard" Project.Merge 0 Nothing)
-
-    it "does not accepts merge command with interleaved comments" $ do
-      let state  = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "6412ef5") "sacha"
-          -- Note: "deckard" is marked as reviewer in the test config.
-          event  = CommentAdded (PullRequestId 1) "deckard" "@bot foo merge"
-          state' = fst $ runAction $ handleEventTest event state
           pr     = fromJust $ Project.lookupPullRequest (PullRequestId 1) state'
       Project.approval pr `shouldBe` Nothing
 
@@ -1550,29 +1513,6 @@ main = hspec $ do
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
         (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy $ DeployEnvironment "staging") 0 Nothing))
 
-    -- The same as the above, but with a space preceding the punctuation and
-    -- with multiple punctuation characters.
-    it "allows merge commands followed by overly enthusiastic punctuation" $ do
-      let
-        prId = PullRequestId 1
-        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
-
-        event = CommentAdded prId "deckard" "Let's do this, @bot merge and deploy to staging !!?!"
-
-        results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
-        (state', actions) = runActionCustom results $ handleEventTest event state
-
-      actions `shouldBe`
-        [ AIsReviewer "deckard"
-        , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\n"
-                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
-        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
-        ]
-
-      fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy $ DeployEnvironment "staging") 0 Nothing))
-
     -- For ergonomics' sake, the command can be part of a sentence that ends
     -- with one or more punctuation characters, but only if the line ends after
     -- that sentence. This avoids a class of ambiguities if at some point
@@ -1632,28 +1572,6 @@ main = hspec $ do
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
         event = CommentAdded prId "deckard" "Hi @bo. @bot merge and deploy to staging"
-
-        results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
-        (state', actions) = runActionCustom results $ handleEventTest event state
-
-      actions `shouldBe`
-        [ AIsReviewer "deckard"
-        , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\n"
-                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
-        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
-        ]
-
-      fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy $ DeployEnvironment "staging") 0 Nothing))
-
-    it "matches merge commands case-insensitively and ignores duplicate whitespace" $ do
-      let
-        prId = PullRequestId 1
-        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
-
-        -- note that the deployment environments are not case insensitive
-        event = CommentAdded prId "deckard" "@BOt   mErgE aND     DePloY To     staging"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -3323,16 +3241,6 @@ main = hspec $ do
           , ACleanupTestBranch (PullRequestId 12)
           ]
           (withRetryOnFriday . withIntegratedCommits ["00f"])
-
-      it "rejects the 'retry on friday' commands when it's not Friday" $ do
-        runRetryTest
-          [ CommentAdded (PullRequestId 12) "deckard" "@bot retry on friday" ]
-          [ AIsReviewer (Username "deckard")
-          , ALeaveComment (PullRequestId 12) "Your merge request has been denied because it is not Friday. Run 'retry' instead."
-          ]
-          -- This shouldn't be allowed on other days, just like @merge on
-          -- friday@ isn't allowed on other weekdays
-          (withIntegratedCommits ["00f"])
 
       it "rejects 'retry on friday' commands when it's not Friday" $ do
         runRetryTest
