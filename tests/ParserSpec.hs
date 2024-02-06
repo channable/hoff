@@ -124,15 +124,23 @@ parserSpec = do
               dummyParse ("@bot merge" <> suffix) ==
                 Success (Approve Merge, AnyDay)
 
+      it "understands HTML comments" $
+        dummyParse
+          "@bot <!-- hi --> merge <!-- there --> and <!-- this --> deploy\
+          \ <!-- is --> to <!-- a --> production <!-- secret --> on <!-- message --> friday"
+          `shouldBe`
+          Success (Approve $ MergeAndDeploy (DeployEnvironment "production"), OnFriday)
+
+      -- Giving silly commands to the bot is a highly-valued feature ;)
+      it "allows HTML comment chicanery" $
+        dummyParse "<!--\n@bot merge\n--> @bot YEET" `shouldBe`
+          Success (Approve Merge, AnyDay)
+
 {-
       TODO I would like to change the parser to be able to recognise the hoff
       ignore messages at any point and just bail. We can do that by using the
       recovery / deferred errors for normal parse errors and immediately giving
       up when we see an error of our custom "ignore me" type.
-
-      it "understands HTML comments" $ do
-        dummyParse "@bot <!-- hi --> merge and <!-- revert --> tag" `shouldBe`
-          Success (Approve MergeAndTag, AnyDay)
 
       it "understands ignore comments at the beginning" $ do
         dummyParse "<!-- hoff: ignore --> @bot merge" `shouldBe`
