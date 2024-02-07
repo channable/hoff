@@ -73,7 +73,8 @@ import Git (Branch (..), BaseBranch (..), GitOperation, PushResult (..),
 import GithubApi (GithubOperation)
 import Metrics.Metrics (MetricsOperation, increaseMergedPRTotal, updateTrainSizeGauge)
 import Parser (ParseResult (..), hoffIgnoreComment, isSuccess, parseMergeCommand, shouldIgnoreComment)
-import Project (Approval (..), ApprovedFor (..), MergeCommand (..), BuildStatus (..), Check (..), DeployEnvironment (..), IntegrationStatus (..),
+import Project (Approval (..), ApprovedFor (..), MergeCommand (..), BuildStatus (..), Check (..),
+                DeployEnvironment (..), DeploySubprojects (..), IntegrationStatus (..),
                 MergeWindow(..), ProjectState, PullRequest, PullRequestStatus (..),
                 summarize, supersedes)
 import Time (TimeOperation)
@@ -975,9 +976,16 @@ tryIntegratePullRequest pr state =
       , format "Approved-by: {}" [approvedBy]
       ] ++
         case approvalType of
-          MergeAndDeploy (DeployEnvironment env) ->
+          MergeAndDeploy EntireProject (DeployEnvironment env) ->
             [ "Auto-deploy: true"
-            , format "Deploy-Environment: {}" [env]]
+            , format "Deploy-Environment: {}" [env]
+            , "Deploy-Subprojects: all"
+            ]
+          MergeAndDeploy (OnlySubprojects subs) (DeployEnvironment env) ->
+            [ "Auto-deploy: true"
+            , format "Deploy-Environment: {}" [env]
+            , format "Deploy-Subprojects: {}" [Text.intercalate ", " subs]
+            ]
           _ -> [ "Auto-deploy: false" ]
 
     mergeMessage = Text.unlines mergeMessageLines

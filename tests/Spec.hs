@@ -42,7 +42,8 @@ import Git (BaseBranch (..), Branch (..), PushResult (..), Sha (..), TagMessage 
             GitIntegrationFailure (..), Context (..))
 import Github (CommentPayload, CommitStatusPayload, PullRequestPayload, PushPayload)
 import Logic (Action, Action (..), Event (..), IntegrationFailure (..), RetrieveEnvironment (..))
-import Project (Approval (..), DeployEnvironment (..), ProjectState (ProjectState), PullRequest (PullRequest))
+import Project (Approval (..), DeployEnvironment (..), DeploySubprojects (..),
+                ProjectState (ProjectState), PullRequest (PullRequest))
 import Time (TimeOperation)
 import Types (PullRequestId (..), Username (..))
 import ParserSpec (parserSpec)
@@ -78,7 +79,8 @@ testProjectConfig = Config.ProjectConfiguration {
   Config.checkout = "/var/lib/hoff/checkouts/peter/rep",
   Config.stateFile = "/var/lib/hoff/state/peter/rep.json",
   Config.checks = Just (Config.ChecksConfiguration mempty),
-  Config.deployEnvironments = Just ["staging", "production"]
+  Config.deployEnvironments = Just ["staging", "production"],
+  Config.deploySubprojects = Just ["aaa", "bbb"]
 }
 
 testmergeWindowExemptionConfig :: Config.MergeWindowExemptionConfiguration
@@ -592,7 +594,7 @@ main = hspec $ do
 
         , AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, waiting for rebase behind 2 pull requests."
-        , ATryIntegrate "Merge #3: Another PR\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\n"
+        , ATryIntegrate "Merge #3: Another PR\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                         (PullRequestId 3, Branch "refs/pull/3/head", Sha "f16")
                         [PullRequestId 1, PullRequestId 2]
                         True
@@ -911,13 +913,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy $ DeployEnvironment "staging") 0 Nothing))
+        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing))
 
     it "recognizes 'merge and deploy to <environment>' commands as the proper ApprovedFor value" $ do
       let
@@ -932,13 +934,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy $ DeployEnvironment "production") 0 Nothing))
+        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "production") 0 Nothing))
 
     -- There is no default environment to deploy to when no deployment
     -- environments have been configured. Earlier versions would silently ignore
@@ -968,7 +970,7 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
@@ -986,7 +988,7 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
@@ -1004,7 +1006,7 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
@@ -1025,13 +1027,55 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy $ DeployEnvironment "staging") 0 Nothing))
+        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing))
+
+    it "allows 'merge and deploy <subproject> to <environment>'" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" "@bot merge and deploy aaa to production"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
+        (state', actions) = runActionCustom results $ handleEventTest event state
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy aaa to production by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: aaa\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
+        ]
+
+      fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
+        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy (OnlySubprojects ["aaa"]) $ DeployEnvironment "production") 0 Nothing))
+
+    it "allows 'merge and deploy <subproject list> to <environment>'" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" "@bot merge and deploy aaa, bbb to production"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
+        (state', actions) = runActionCustom results $ handleEventTest event state
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy aaa, bbb to production by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: aaa, bbb\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
+        ]
+
+      fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
+        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy (OnlySubprojects ["aaa", "bbb"]) $ DeployEnvironment "production") 0 Nothing))
 
     it "recognizes 'merge and tag' command" $ do
       let
@@ -1354,7 +1398,7 @@ main = hspec $ do
           AIsReviewer (Username "deckard"),
           ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now.",
           ATryIntegrate {
-                   mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\n",
+                   mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n",
                    integrationCandidate = (prId, Branch "refs/pull/1/head", Sha  "abc1234"),
                    mergeTrain = [],
                    alwaysAddMergeCommit = True
@@ -1363,7 +1407,7 @@ main = hspec $ do
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr == Just (Approval (Username "deckard") (Project.MergeAndDeploy $ DeployEnvironment "production") 0 Nothing))
+        (\pr -> Project.approval pr == Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "production") 0 Nothing))
 
     it "refuses to merge an empty rebase" $ do
       let
@@ -1505,13 +1549,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy $ DeployEnvironment "staging") 0 Nothing))
+        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing))
 
     -- For ergonomics' sake, the command can be part of a sentence that ends
     -- with one or more punctuation characters, but only if the line ends after
@@ -1579,13 +1623,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy $ DeployEnvironment "staging") 0 Nothing))
+        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing))
 
     it "restarts when pushed to master" $ do
       let
@@ -4766,7 +4810,7 @@ main = hspec $ do
                           }
                      , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
                      , ATryIntegrate
-                          { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\n"
+                          { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                           , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                           , mergeTrain = [PullRequestId 2]
                           , alwaysAddMergeCommit = True

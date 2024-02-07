@@ -15,8 +15,10 @@ import qualified Text.Megaparsec as P
 import qualified Text.Megaparsec.Char as P
 import qualified Text.Megaparsec.Char.Lexer as P (skipBlockComment)
 
-import Configuration (ProjectConfiguration (..), TriggerConfiguration (..), knownEnvironments)
-import Project (ApprovedFor (..), DeployEnvironment (..), MergeCommand (..), MergeWindow (..))
+import Configuration (ProjectConfiguration (..), TriggerConfiguration (..),
+                      knownEnvironments, knownSubprojects)
+import Project (ApprovedFor (..), DeployEnvironment (..), DeploySubprojects (..),
+                MergeCommand (..), MergeWindow (..))
 
 -- | Internal result type for parsing a merge command, which allows the
 -- consumer of `parseMergeCommand` to inspect the reason why a message
@@ -77,6 +79,11 @@ pString =
     . fmap (void . P.string')
     . Text.words
 
+-- | Parse a comma-separated list of items. The list must be non-empty
+pCommaList1 :: Parser a -> Parser [a]
+pCommaList1 item =
+  P.sepBy1 item (P.try (pSpace *> P.single ',' *> pSpace))
+
 -- | Checks if a comment contains 'hoffIgnoreComment', matching case
 -- insensitively and allowing variations in whitespace. This is used to prevent
 -- feedback cycles when Hoff repeats part of a message posted by the user. This
@@ -127,6 +134,11 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     -- prefix (but not the environment names) before matching.
     commandPrefix :: Text
     commandPrefix = Text.strip $ commentPrefix triggerConfig
+
+    -- No whitespace stripping or case folding is performed here to be
+    -- consistent with how environments are handled.
+    subprojects :: [Text]
+    subprojects = knownSubprojects projectConfig
 
     -- No whitespace stripping or case folding is performed here since they are
     -- also matched verbatim elsewhere in Hoff.
@@ -223,7 +235,22 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
 
     -- Parses @merge and deploy[ to <environment>]@ commands.
     pDeploy :: Parser ApprovedFor
-    pDeploy = MergeAndDeploy <$> (P.string' "deploy" *> pDeployToEnvironment)
+    pDeploy = do
+      void (P.string' "deploy")
+      MergeAndDeploy <$> pDeploySubprojects <*> pDeployToEnvironment
+
+    pSubproject :: Parser Text
+    pSubproject = P.choice (fmap P.string subprojects)
+
+    pDeploySubprojects :: Parser DeploySubprojects
+    pDeploySubprojects
+      | null subprojects
+      = pure EntireProject
+
+      | otherwise
+      = -- Without the try this could consume the space and break 'to <env>' and merge windows
+        P.try (pSpace1 *> (OnlySubprojects <$> pCommaList1 pSubproject))
+          <|> pure EntireProject
 
     -- This parser is run directly after parsing "deploy", so it may need to
     -- parse a space character first since specifying a deployment environment
