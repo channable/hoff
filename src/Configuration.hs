@@ -11,6 +11,8 @@ module Configuration
 (
   Configuration (..),
   ProjectConfiguration (..),
+  knownEnvironments,
+  knownSubprojects,
   ChecksConfiguration (..),
   TlsConfiguration (..),
   TriggerConfiguration (..),
@@ -26,6 +28,7 @@ where
 
 import Data.Aeson (FromJSON, eitherDecodeStrict')
 import Data.ByteString (readFile)
+import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import Data.Text (Text)
 import Data.Time (DiffTime, UTCTime)
@@ -42,9 +45,16 @@ data ProjectConfiguration = ProjectConfiguration
     checkout           :: FilePath,                  -- The path to a local checkout of the repository.
     stateFile          :: FilePath,                  -- The file where project state is stored.
     checks             :: Maybe ChecksConfiguration, -- Optional configuration related to checks for the project.
-    deployEnvironments :: Maybe [Text]               -- The environments which the `deploy to <environment>` command should be enabled for
+    deployEnvironments :: Maybe [Text],              -- The environments which the `deploy to <environment>` command should be enabled for
+    deploySubprojects  :: Maybe [Text]               -- The subprojects which the `deploy` command should be enabled for
   }
   deriving (Generic)
+
+knownEnvironments :: ProjectConfiguration -> [Text]
+knownEnvironments = fromMaybe [] . deployEnvironments
+
+knownSubprojects :: ProjectConfiguration -> [Text]
+knownSubprojects = fromMaybe [] . deploySubprojects
 
 data FeatureFreezeWindow = FeatureFreezeWindow
   {

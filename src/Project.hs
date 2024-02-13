@@ -20,6 +20,7 @@ module Project
   MergeCommand (..),
   BuildStatus (..),
   DeployEnvironment(..),
+  DeploySubprojects(..),
   MandatoryChecks (..),
   Check (..),
   IntegrationStatus (..),
@@ -103,6 +104,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encode.Pretty as Aeson
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
 
 import Types (PullRequestId (..), Username)
 import Data.Time (UTCTime)
@@ -169,12 +171,17 @@ data PullRequestStatus
 newtype DeployEnvironment = DeployEnvironment Text
   deriving (Eq, Show, Generic)
 
+data DeploySubprojects
+  = EntireProject
+  | OnlySubprojects [Text]
+  deriving (Eq, Show, Generic)
+
 -- | A PR can be approved to be merged with "<prefix> merge", or it can be
 -- approved to be merged and also deployed with "<prefix> merge and deploy".
 -- This enumeration distinguishes these cases.
 data ApprovedFor
   = Merge
-  | MergeAndDeploy DeployEnvironment
+  | MergeAndDeploy DeploySubprojects DeployEnvironment
   | MergeAndTag
   deriving (Eq, Show, Generic)
 
@@ -266,6 +273,7 @@ instance Buildable ProjectInfo where
 instance FromJSON BuildStatus
 instance FromJSON IntegrationStatus
 instance FromJSON DeployEnvironment
+instance FromJSON DeploySubprojects
 instance FromJSON ApprovedFor
 instance FromJSON Approval
 instance FromJSON ProjectState
@@ -274,6 +282,7 @@ instance FromJSON PullRequest
 instance ToJSON BuildStatus where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON IntegrationStatus where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON DeployEnvironment where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
+instance ToJSON DeploySubprojects where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON ApprovedFor where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON Approval where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON ProjectState where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
@@ -542,7 +551,11 @@ getOwners = nub . map owner
 -- friday@ merge window suffix.
 displayMergeCommand :: MergeCommand -> Text
 displayMergeCommand (Approve Merge)                                    = "merge"
-displayMergeCommand (Approve (MergeAndDeploy (DeployEnvironment env))) = format "merge and deploy to {}" [env]
+displayMergeCommand (Approve (MergeAndDeploy subprojects (DeployEnvironment env))) =
+  case subprojects of
+    EntireProject      -> format "merge and deploy to {}" [env]
+    OnlySubprojects ss  -> let subs = T.intercalate ", " ss
+                            in format "merge and deploy {} to {}" (subs, env)
 displayMergeCommand (Approve MergeAndTag)                              = "merge and tag"
 displayMergeCommand Retry                                              = "retry"
 
@@ -554,12 +567,12 @@ alwaysAddMergeCommit = needsTag
 
 needsDeploy :: ApprovedFor -> Bool
 needsDeploy Merge              = False
-needsDeploy (MergeAndDeploy _) = True
+needsDeploy MergeAndDeploy{}   = True
 needsDeploy MergeAndTag        = False
 
 needsTag :: ApprovedFor -> Bool
 needsTag Merge              = False
-needsTag (MergeAndDeploy _) = True
+needsTag MergeAndDeploy{}   = True
 needsTag MergeAndTag        = True
 
 integrationSha :: PullRequest -> Maybe Sha

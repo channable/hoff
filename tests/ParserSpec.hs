@@ -11,7 +11,8 @@ import qualified Test.QuickCheck as QC
 
 import Configuration (ProjectConfiguration (..), TriggerConfiguration (..))
 import Parser (ParseResult (..), parseMergeCommand)
-import Project (ApprovedFor (..), DeployEnvironment (..), MergeCommand (..), MergeWindow (..))
+import Project (ApprovedFor (..), DeployEnvironment (..), DeploySubprojects (..),
+                MergeCommand (..), MergeWindow (..))
 
 parserSpec :: Spec
 parserSpec = do
@@ -44,19 +45,19 @@ parserSpec = do
 
       it "selects the environment implicitly when there is only one" $
         oneEnvParse "@bot merge and deploy" `shouldBe`
-          Success (Approve $ MergeAndDeploy (DeployEnvironment "foo"), AnyDay)
+          Success (Approve $ MergeAndDeploy EntireProject (DeployEnvironment "foo"), AnyDay)
 
       it "allows the environment to be specified when there is only one" $
         oneEnvParse "@bot merge and deploy to foo" `shouldBe`
-          Success (Approve $ MergeAndDeploy (DeployEnvironment "foo"), AnyDay)
+          Success (Approve $ MergeAndDeploy EntireProject (DeployEnvironment "foo"), AnyDay)
 
       it "can parse a merge window after an implicit environment" $
         oneEnvParse "@bot merge and deploy as hotfix" `shouldBe`
-          Success (Approve $ MergeAndDeploy (DeployEnvironment "foo"), DuringFeatureFreeze)
+          Success (Approve $ MergeAndDeploy EntireProject (DeployEnvironment "foo"), DuringFeatureFreeze)
 
       it "allows the environment to be specified when there are multiple" $
         dummyParse "@bot merge and deploy to staging" `shouldBe`
-          Success (Approve $ MergeAndDeploy (DeployEnvironment "staging"), AnyDay)
+          Success (Approve $ MergeAndDeploy EntireProject (DeployEnvironment "staging"), AnyDay)
 
       it "fails when the environment is not specified and ambiguous" $
         dummyParse "@bot merge and deploy" `shouldBe`
@@ -77,7 +78,31 @@ parserSpec = do
       -- Do we still correctly parse merge windows after a deploy environment
       it "can parse a merge window after an explicit environment" $
         dummyParse "@bot merge and deploy to production on friday" `shouldBe`
-          Success (Approve $ MergeAndDeploy (DeployEnvironment "production"), OnFriday)
+          Success (Approve $ MergeAndDeploy EntireProject (DeployEnvironment "production"), OnFriday)
+
+      it "allows a specific subproject to be deployed" $
+        dummyParse "@bot merge and deploy aaa to production" `shouldBe`
+          Success (Approve $ MergeAndDeploy (OnlySubprojects ["aaa"]) (DeployEnvironment "production"), AnyDay)
+
+      it "allows many specific subprojects to be deployed" $
+        dummyParse "@bot merge and deploy aaa, bbb to production" `shouldBe`
+          Success (Approve $ MergeAndDeploy (OnlySubprojects ["aaa", "bbb"]) (DeployEnvironment "production"), AnyDay)
+
+      it "fails when an unknown subproject is specified" $
+        dummyParse "@bot merge and deploy ccc to production" `shouldBe`
+          -- I'm not super happy with this error message, it _should_ say that we expect to see
+          -- either 'to', or the name of a known subproject.
+          ParseError
+            "comment:1:23:\n  |\n1 | @bot merge and deploy ccc to production\n\
+            \  |                       ^^\nunexpected \"cc\"\nexpecting \"to\" or white space\n"
+
+      it "allows subprojects to be specified with an implicit environment" $
+        oneEnvParse "@bot merge and deploy aaa" `shouldBe`
+          Success (Approve $ MergeAndDeploy (OnlySubprojects ["aaa"]) (DeployEnvironment "foo"), AnyDay)
+
+      it "allows subprojects, an implicit environment, and a merge window" $
+        oneEnvParse "@bot merge and deploy bbb on friday" `shouldBe`
+          Success (Approve $ MergeAndDeploy (OnlySubprojects ["bbb"]) (DeployEnvironment "foo"), OnFriday)
 
     describe "retry commands" $ do
       it "can parse 'retry'" $
@@ -124,15 +149,23 @@ parserSpec = do
               dummyParse ("@bot merge" <> suffix) ==
                 Success (Approve Merge, AnyDay)
 
+      it "understands HTML comments" $
+        dummyParse
+          "@bot <!-- hi --> merge <!-- there --> and <!-- this --> deploy\
+          \ <!-- is --> to <!-- a --> production <!-- secret --> on <!-- message --> friday"
+          `shouldBe`
+          Success (Approve $ MergeAndDeploy EntireProject (DeployEnvironment "production"), OnFriday)
+
+      -- Giving silly commands to the bot is a highly-valued feature ;)
+      it "allows HTML comment chicanery" $
+        dummyParse "<!--\n@bot merge\n--> @bot YEET" `shouldBe`
+          Success (Approve Merge, AnyDay)
+
 {-
       TODO I would like to change the parser to be able to recognise the hoff
       ignore messages at any point and just bail. We can do that by using the
       recovery / deferred errors for normal parse errors and immediately giving
       up when we see an error of our custom "ignore me" type.
-
-      it "understands HTML comments" $ do
-        dummyParse "@bot <!-- hi --> merge and <!-- revert --> tag" `shouldBe`
-          Success (Approve MergeAndTag, AnyDay)
 
       it "understands ignore comments at the beginning" $ do
         dummyParse "<!-- hoff: ignore --> @bot merge" `shouldBe`
@@ -157,6 +190,7 @@ dummyProject =
     , stateFile           = "/dev/null"
     , checks              = Nothing
     , deployEnvironments  = Just ["production", "staging"]
+    , deploySubprojects   = Just ["aaa", "bbb"]
     }
 
 dummyTrigger :: TriggerConfiguration

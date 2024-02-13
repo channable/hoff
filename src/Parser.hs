@@ -6,7 +6,6 @@ module Parser where
 import Control.Monad (void)
 import Data.Either (fromRight)
 import Data.List (intercalate, intersperse)
-import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Void (Void)
 import Text.Megaparsec (ParseErrorBundle, Parsec, (<|>))
@@ -14,9 +13,12 @@ import Text.Megaparsec (ParseErrorBundle, Parsec, (<|>))
 import qualified Data.Text as Text
 import qualified Text.Megaparsec as P
 import qualified Text.Megaparsec.Char as P
+import qualified Text.Megaparsec.Char.Lexer as P (skipBlockComment)
 
-import Configuration (ProjectConfiguration (..), TriggerConfiguration (..))
-import Project (ApprovedFor (..), DeployEnvironment (..), MergeCommand (..), MergeWindow (..))
+import Configuration (ProjectConfiguration (..), TriggerConfiguration (..),
+                      knownEnvironments, knownSubprojects)
+import Project (ApprovedFor (..), DeployEnvironment (..), DeploySubprojects (..),
+                MergeCommand (..), MergeWindow (..))
 
 -- | Internal result type for parsing a merge command, which allows the
 -- consumer of `parseMergeCommand` to inspect the reason why a message
@@ -51,14 +53,36 @@ type Parser = Parsec Void Text
 hoffIgnoreComment :: Text
 hoffIgnoreComment = "<!-- Hoff: ignore -->\n"
 
+-- | Helper to parse over whitespace and HTML comments. There must be at least
+-- one group of whitespace consumed, although this does not need to be at the
+-- start or end of the series of spaces and comments.
+pSpace1 :: Parser ()
+pSpace1 =
+  P.choice
+    [ P.hspace1 *> pSpace
+    , P.hidden (P.skipBlockComment "<!--" "-->") *> pSpace1
+    ]
+
+pSpace :: Parser ()
+pSpace =
+  P.skipMany $ P.choice
+    [ P.hspace1
+    , P.hidden (P.skipBlockComment "<!--" "-->")
+    ]
+
 -- Helper to parse a string, case insensitively, and ignoring excess spaces
 -- between words. Also allows line breaks.
 pString :: Text -> Parser ()
 pString =
   sequence_
-    . intersperse P.hspace1
+    . intersperse pSpace1
     . fmap (void . P.string')
     . Text.words
+
+-- | Parse a comma-separated list of items. The list must be non-empty
+pCommaList1 :: Parser a -> Parser [a]
+pCommaList1 item =
+  P.sepBy1 item (P.try (pSpace *> P.single ',' *> pSpace))
 
 -- | Checks if a comment contains 'hoffIgnoreComment', matching case
 -- insensitively and allowing variations in whitespace. This is used to prevent
@@ -111,10 +135,15 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     commandPrefix :: Text
     commandPrefix = Text.strip $ commentPrefix triggerConfig
 
+    -- No whitespace stripping or case folding is performed here to be
+    -- consistent with how environments are handled.
+    subprojects :: [Text]
+    subprojects = knownSubprojects projectConfig
+
     -- No whitespace stripping or case folding is performed here since they are
     -- also matched verbatim elsewhere in Hoff.
     environments :: [Text]
-    environments = fromMaybe [] (deployEnvironments projectConfig)
+    environments = knownEnvironments projectConfig
 
     -- The punctuation characters that are allowed at the end of a merge
     -- command. This doesn't use the included punctuation predicate because that
@@ -152,7 +181,7 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     -- Parse a full merge command. Does not consume any input if the prefix
     -- could not be matched fully.
     pCommand :: Parser (MergeCommand, MergeWindow)
-    pCommand = P.try pCommandPrefix *> P.hspace1 *> (pApprovalCommand <|> pRetryCommand) <* P.hspace <* pCommandSuffix
+    pCommand = P.try pCommandPrefix *> pSpace1 *> (pApprovalCommand <|> pRetryCommand) <* pSpace <* pCommandSuffix
 
     -- Parse the (normalized) command prefix. Matched non-greedily in 'pCommand'
     -- using 'P.try'.
@@ -165,7 +194,7 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     pCommandSuffix :: Parser ()
     pCommandSuffix =
       P.many (P.oneOf allowedPunctuation)
-      *> P.hspace
+      *> pSpace
       *> (void P.eol <|> P.eof <|> fail commentSuffixError)
 
     -- Parse the actual merge approval command following the command prefix. The
@@ -192,21 +221,36 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     -- When the comment isn't folowed by @ and @ this is treated as a plain
     -- merge command.
     pMergeApproval :: Parser ApprovedFor
-    pMergeApproval = pString "merge" *> P.option Merge pMergeAnd
+    pMergeApproval = P.string' "merge" *> P.option Merge pMergeAnd
 
     -- NOTE: As mentioned above, only the @ and @ part will backtrack. This is
     --       needed so a) the custom error message in pDeploy works and b) so
     --       'merge on friday' can be parsed correctly.
     pMergeAnd :: Parser ApprovedFor
-    pMergeAnd = P.try (P.hspace1 *> pString "and" *> P.hspace1) *> (pTag <|> pDeploy)
+    pMergeAnd = P.try (pSpace1 *> P.string' "and" *> pSpace1) *> (pTag <|> pDeploy)
 
     -- Parses @merge and tag@ commands.
     pTag :: Parser ApprovedFor
-    pTag = MergeAndTag <$ pString "tag"
+    pTag = MergeAndTag <$ P.string' "tag"
 
     -- Parses @merge and deploy[ to <environment>]@ commands.
     pDeploy :: Parser ApprovedFor
-    pDeploy = MergeAndDeploy <$> (pString "deploy" *> pDeployToEnvironment)
+    pDeploy = do
+      void (P.string' "deploy")
+      MergeAndDeploy <$> pDeploySubprojects <*> pDeployToEnvironment
+
+    pSubproject :: Parser Text
+    pSubproject = P.choice (fmap P.string subprojects)
+
+    pDeploySubprojects :: Parser DeploySubprojects
+    pDeploySubprojects
+      | null subprojects
+      = pure EntireProject
+
+      | otherwise
+      = -- Without the try this could consume the space and break 'to <env>' and merge windows
+        P.try (pSpace1 *> (OnlySubprojects <$> pCommaList1 pSubproject))
+          <|> pure EntireProject
 
     -- This parser is run directly after parsing "deploy", so it may need to
     -- parse a space character first since specifying a deployment environment
@@ -220,7 +264,7 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
 
       | otherwise
       = -- Without the try this could consume the space and break 'merge and deploy on friday'
-        P.try (P.hspace1 *> pString "to" *> P.hspace1 *> P.choice pDeployEnvironments)
+        P.try (pSpace1 *> P.string' "to" *> pSpace1 *> P.choice pDeployEnvironments)
           <|> defaultEnvironment
 
     -- The default environment to deploy to on a "merge and deploy". This
@@ -240,6 +284,6 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     -- space, it's important that the last run parser has not yet consumed it.
     pMergeWindow :: Parser MergeWindow
     pMergeWindow =
-      (OnFriday <$ P.try (P.hspace1 *> pString "on friday"))
-        <|> (DuringFeatureFreeze <$ P.try (P.hspace1 *> pString "as hotfix"))
+      (OnFriday <$ P.try (pSpace1 *> pString "on friday"))
+        <|> (DuringFeatureFreeze <$ P.try (pSpace1 *> pString "as hotfix"))
         <|> pure AnyDay
