@@ -12,6 +12,10 @@
     "deployEnvironments": [
       "staging",
       "production"
+    ],
+    "deploySubprojects": [
+      "staging",
+      "production"
     ]
   }],
   "secret": "REPLACE with output of 'head --bytes 32 /dev/urandom | base64'",

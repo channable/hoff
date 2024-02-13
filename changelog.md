@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.33.0
+
+Release 2024-01-13
+
+**Compatibility**:
+
+ * The state serialization format of previous versions is incompatible with
+   0.33.0. The recommended way to update is to stop Hoff at a quiet time when no
+   builds are in progress, delete the state files, and start 0.33.0. The new
+   version of Hoff will automatically create a new state file using the new
+   format when run.
+
+Changes:
+
+ - Add `Deploy-Subprojects: <subprojects>` to merge commit messages of PRs
+   approved with the `merge and deploy` command. <subprojects> is a
+   comma-separated subset of the configured subprojects of the project, or the
+   string "all".
+ - The `merge and deploy` command now accepts a comma-separated list of
+   subprojects. If no subprojects are configured or passed to the command, `all`
+   is assumed.
+ - Subprojects can be configured per repository in your
+   `config.json` under `deploySubprojects`.
+
 ## 0.32.3
 
 Release 2024-01-03
