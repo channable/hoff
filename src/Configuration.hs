@@ -20,7 +20,7 @@ module Configuration
   MergeWindowExemptionConfiguration (..),
   MetricsConfiguration (..),
   FeatureFreezeWindow (..),
-  PromotionTimeout (..),
+  Timeouts (..),
   ClockTickInterval (..),
   loadConfiguration
 )
@@ -110,7 +110,11 @@ data MetricsConfiguration = MetricsConfiguration
 newtype MergeWindowExemptionConfiguration = MergeWindowExemptionConfiguration [Text]
   deriving (Generic, Show)
 
-newtype PromotionTimeout = PromotionTimeout DiffTime
+data Timeouts = Timeouts
+  {
+    promotionTimeout :: DiffTime,
+    rememberTimeout :: DiffTime
+  }
   deriving (Generic, Show)
 
 newtype ClockTickInterval = ClockTickInterval DiffTime
@@ -154,8 +158,8 @@ data Configuration = Configuration
     -- Feature freeze period in which only 'merge hotfix' commands are allowed
     featureFreezeWindow :: Maybe FeatureFreezeWindow,
 
-    -- The timeout for promoting an integrated pull request
-    promotionTimeout :: PromotionTimeout,
+    -- The timeouts for promoting an integrated pull request and remembering promoted pull requests
+    timeouts :: Timeouts,
 
     -- The interval to send clock tick events
     clockTickInterval :: Maybe ClockTickInterval
@@ -171,7 +175,7 @@ instance FromJSON UserConfiguration
 instance FromJSON MergeWindowExemptionConfiguration
 instance FromJSON MetricsConfiguration
 instance FromJSON FeatureFreezeWindow
-instance FromJSON PromotionTimeout
+instance FromJSON Timeouts
 instance FromJSON ClockTickInterval
 
 -- Reads and parses the configuration. Returns Nothing if parsing failed, but

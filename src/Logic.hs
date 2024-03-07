@@ -62,7 +62,7 @@ import qualified Data.Text.Lazy.Builder.Int as B
 import qualified Data.Text.Read as Text
 import Data.Time (UTCTime, DayOfWeek (Friday), dayOfWeek, utctDay)
 
-import Configuration (ProjectConfiguration (owner, repository), TriggerConfiguration, MergeWindowExemptionConfiguration, FeatureFreezeWindow, PromotionTimeout)
+import Configuration (ProjectConfiguration (owner, repository), TriggerConfiguration, MergeWindowExemptionConfiguration, FeatureFreezeWindow, Timeouts)
 import Effectful (Dispatch (Dynamic), DispatchOf, Eff, Effect, (:>))
 import Effectful.Dispatch.Dynamic (interpret, send)
 import Format (format)
@@ -370,15 +370,15 @@ clearPullRequest prId pr state =
 -- of the event, we must also call `proceed` on the state until we reach a fixed
 -- point. This is handled by `handleEvent`.
 handleEventInternal
-  :: (Action :> es, RetrieveEnvironment :> es)
+  :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
   => TriggerConfiguration
   -> MergeWindowExemptionConfiguration
   -> Maybe FeatureFreezeWindow
-  -> PromotionTimeout
+  -> Timeouts
   -> Event
   -> ProjectState
   -> Eff es ProjectState
-handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow promotionTimeout event = case event of
+handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow timeouts event = case event of
   PullRequestOpened pr branch baseBranch sha title author body
     -> handlePullRequestOpenedByUser triggerConfig mergeWindowExemption featureFreezeWindow pr branch baseBranch sha title author body
   PullRequestCommitChanged pr sha -> handlePullRequestCommitChanged pr sha
@@ -389,7 +389,7 @@ handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow promo
   BuildStatusChanged sha context status   -> handleBuildStatusChanged sha context status
   PushPerformed branch sha        -> handleTargetChanged branch sha
   Synchronize                     -> synchronizeState
-  ClockTick currTime              -> handleClockTickUpdate promotionTimeout currTime
+  ClockTick currTime              -> handleClockTickUpdate timeouts currTime
 
 handlePullRequestOpenedByUser
   :: forall es. (Action :> es, RetrieveEnvironment :> es)
@@ -424,7 +424,7 @@ handlePullRequestOpened pr branch baseBranch sha title author =
   return . Pr.insertPullRequest pr branch baseBranch sha title author
 
 handlePullRequestCommitChanged
-  :: (Action :> es, RetrieveEnvironment :> es)
+  :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
   => PullRequestId
   -> Sha
   -> ProjectState
@@ -448,7 +448,7 @@ handlePullRequestCommitChanged prId newSha state =
       Nothing -> pure state
 
 -- | Try to push the final result of a pull request to the target branch.
-tryPromotePullRequest :: (Action :> es, RetrieveEnvironment :> es) => PullRequest -> PullRequestId -> ProjectState -> Eff es ProjectState
+tryPromotePullRequest :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => PullRequest -> PullRequestId -> ProjectState -> Eff es ProjectState
 tryPromotePullRequest pullRequest prId state = do
   pushResult <- case Pr.integrationStatus pullRequest of
     -- If we only need to promote, we can just try pushing.
@@ -480,8 +480,10 @@ tryPromotePullRequest pullRequest prId state = do
     PushOk -> do
       cleanupTestBranch prId
       registerMergedPR
+      currTime <- getDateTime
       pure $ Pr.updatePullRequests (unspeculateConflictsAfter pullRequest)
           $ Pr.updatePullRequests (unspeculateFailuresAfter pullRequest)
+          $ Pr.addPromotedPullRequest pullRequest currTime
           $ Pr.setIntegrationStatus prId Promoted state
     -- If something was pushed to the target branch while the candidate was
     -- being tested, try to integrate again and hope that next time the push
@@ -558,7 +560,8 @@ handleTargetChanged
   -> Eff es ProjectState
 handleTargetChanged (BaseBranch baseBranch) sha state
   | Just branch <- Text.stripPrefix "refs/heads/" baseBranch
-  , sha `notElem` concatMap Pr.integrationShas (Pr.pullRequests state) =
+  , sha `notElem` concatMap Pr.integrationShas (Pr.pullRequests state)
+  , sha `notElem` map Pr.promotedPRSha (Pr.recentlyPromoted state) =
   let
     update pr
       | Pr.isInProgress pr
@@ -571,15 +574,16 @@ handleTargetChanged (BaseBranch baseBranch) sha state
   in pure $ Pr.updatePullRequests update state
 handleTargetChanged _ _ state = pure state
 
-handleClockTickUpdate :: (Action :> es, RetrieveEnvironment :> es) => PromotionTimeout -> UTCTime -> ProjectState -> Eff es ProjectState
-handleClockTickUpdate (Config.PromotionTimeout timeout) currTime state = do
+handleClockTickUpdate :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Timeouts -> UTCTime -> ProjectState -> Eff es ProjectState
+handleClockTickUpdate timeouts currTime state = do
   let prsToPromote = Pr.filterPullRequestsBy Pr.awaitingPromotion state
-  foldM update state prsToPromote
+  state' <- foldM update state prsToPromote
+  pure $ Pr.filterRecentlyPromoted ((<) currTime . flip Time.addTime (Config.rememberTimeout timeouts)) state'
   where
     update state' prId = let pr = fromJust $ Pr.lookupPullRequest prId state
       in case Pr.promotionTime pr of
       Nothing -> pure state'
-      Just time -> if Time.addTime time timeout < currTime
+      Just time -> if Time.addTime time (Config.promotionTimeout timeouts) < currTime
         then tryPromotePullRequest pr prId state'
         else pure state'
 
@@ -1210,12 +1214,12 @@ handleEvent
   => TriggerConfiguration
   -> MergeWindowExemptionConfiguration
   -> Maybe FeatureFreezeWindow
-  -> PromotionTimeout
+  -> Timeouts
   -> Event
   -> ProjectState
   -> Eff es ProjectState
-handleEvent triggerConfig mergeWindowExemption featureFreezeWindow promotionTimeout event state = do
-  projectState <- handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow promotionTimeout event state >>= proceedUntilFixedPoint
+handleEvent triggerConfig mergeWindowExemption featureFreezeWindow timeouts event state = do
+  projectState <- handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow timeouts event state >>= proceedUntilFixedPoint
   triggerTrainSizeUpdate projectState
   pure projectState
 

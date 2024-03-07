@@ -92,8 +92,8 @@ testFeatureFreezeWindow = Just $ Config.FeatureFreezeWindow{
   end=T.UTCTime (T.fromMondayStartWeek 2021 2 7) (T.secondsToDiffTime 0)
   }
 
-testPromotionTimeout :: Config.PromotionTimeout
-testPromotionTimeout = Config.PromotionTimeout 600
+testTimeouts :: Config.Timeouts
+testTimeouts = Config.Timeouts 600 600
 
 -- Functions to prepare certain test states.
 
@@ -321,16 +321,16 @@ runAction = runActionCustom defaultResults
 -- Handle an event, then advance the state until a fixed point,
 -- and simulate its side effects.
 handleEventTest :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Event -> ProjectState -> Eff es ProjectState
-handleEventTest = Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing testPromotionTimeout
+handleEventTest = Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing testTimeouts
 
 -- Like the above, but with a feature freeze period configured
 handleEventTestFF :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Event -> ProjectState -> Eff es ProjectState
-handleEventTestFF = Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig testFeatureFreezeWindow testPromotionTimeout
+handleEventTestFF = Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig testFeatureFreezeWindow testTimeouts
 
 -- Handle events (advancing the state until a fixed point in between) and
 -- simulate their side effects.
 handleEventsTest :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => [Event] -> ProjectState -> Eff es ProjectState
-handleEventsTest events state = foldlM (flip $ Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing testPromotionTimeout) state events
+handleEventsTest events state = foldlM (flip $ Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing testTimeouts) state events
 
 -- | Like 'classifiedPullRequests' but just with ids.
 -- This should match 'WebInterface.ClassifiedPullRequests'
@@ -1861,6 +1861,121 @@ main = hspec $ do
         , ACleanupTestBranch (PullRequestId 1)
         ]
 
+    it "does not restart integration after a push to master from a previous merge in the merge train with out of order push events" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 1)
+              (Branch "fst") masterBranch (Sha "ab1") "Improvements..." (Username "huey")
+          $ Project.insertPullRequest (PullRequestId 2)
+              (Branch "snd") masterBranch (Sha "ab2") "... Of the ..." (Username "dewey")
+          $ Project.insertPullRequest (PullRequestId 3)
+              (Branch "trd") masterBranch (Sha "ab3") "... Performance" (Username "louie")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
+          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
+          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "3b2") "default" (Project.BuildStarted "example.com/3b2")
+          , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1b2")
+          , PullRequestClosed (PullRequestId 1)
+          , PushPerformed (BaseBranch "refs/heads/master") (Sha "1b2")
+          ]
+        results = defaultResults {resultIntegrate = [Right (Sha "1b2"), Right (Sha "2b2"), Right (Sha "3b2"), Right (Sha "1b3"), Right (Sha "2b3"), Right (Sha "3b3")]}
+        actions = snd $ runActionCustom results $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer (Username "deckard")
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Improvements...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head",Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+        , AIsReviewer (Username "deckard")
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
+        , ATryIntegrate "Merge #2: ... Of the ...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
+                        [PullRequestId 1]
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b2 behind 1 other PR, waiting for CI …"
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
+        , AIsReviewer (Username "deckard")
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind 2 pull requests."
+        , ATryIntegrate "Merge #3: ... Performance\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 3,Branch "refs/pull/3/head",Sha "ab3")
+                        [PullRequestId 1, PullRequestId 2]
+                        False
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3b2 behind 2 other PRs, waiting for CI …"
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3b2) started."
+        , ATryForcePush (Branch "fst") (Sha "1b2")
+        , ATryPromote (Sha "1b2")
+        , ACleanupTestBranch (PullRequestId 1)
+        ]
+
+    it "does restart integration after a push to master from a previous merge in the merge train if that PR has been forgotten" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 1)
+              (Branch "fst") masterBranch (Sha "ab1") "Improvements..." (Username "huey")
+          $ Project.insertPullRequest (PullRequestId 2)
+              (Branch "snd") masterBranch (Sha "ab2") "... Of the ..." (Username "dewey")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
+          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
+          , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1b2")
+          , PullRequestClosed (PullRequestId 1)
+          , ClockTick (Time.addTime testTime 700)
+          , PushPerformed (BaseBranch "refs/heads/master") (Sha "1b2")
+          ]
+        results = defaultResults {resultIntegrate = [Right (Sha "1b2"), Right (Sha "2b2"), Right (Sha "2b3")]}
+        actions = snd $ runActionCustom results $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer (Username "deckard")
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: Improvements...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head",Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+        , AIsReviewer (Username "deckard")
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
+        , ATryIntegrate "Merge #2: ... Of the ...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
+                        [PullRequestId 1]
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b2 behind 1 other PR, waiting for CI …"
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
+        , ATryForcePush (Branch "fst") (Sha "1b2")
+        , ATryPromote (Sha "1b2")
+        , ACleanupTestBranch (PullRequestId 1)
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
+        , ATryIntegrate "Merge #2: ... Of the ...\n\n\
+                        \Approved-by: deckard\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 2b3, waiting for CI …"
+        ]
+
     it "does not promote if timeout has not expired" $
       let prId = PullRequestId 1
           state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
@@ -2197,6 +2312,7 @@ main = hspec $ do
           { Project.pullRequests         = IntMap.singleton 1 pullRequest
           , Project.pullRequestApprovalIndex = 1
           , Project.mandatoryChecks = mempty
+          , Project.recentlyPromoted = []
           }
         results = defaultResults { resultIntegrate = [Right (Sha "38e")] }
         actions = snd $ runActionCustom results $ Logic.proceedUntilFixedPoint state
@@ -2220,6 +2336,7 @@ main = hspec $ do
           { Project.pullRequests         = IntMap.singleton 1 pullRequest
           , Project.pullRequestApprovalIndex = 1
           , Project.mandatoryChecks = mempty
+          , Project.recentlyPromoted = []
           }
         results = defaultResults { resultIntegrate = [Right (Sha "38e")]
                                  , resultGetLatestVersion = [Left (TagName "abcdef")] }
@@ -2248,6 +2365,7 @@ main = hspec $ do
           { Project.pullRequests         = IntMap.singleton 1 pullRequest
           , Project.pullRequestApprovalIndex = 1
           , Project.mandatoryChecks = mempty
+          , Project.recentlyPromoted = []
           }
         -- Run 'proceedUntilFixedPoint', and pretend that pushes fail (because
         -- something was pushed in the mean time, for instance).
@@ -2286,6 +2404,7 @@ main = hspec $ do
           { Project.pullRequests         = IntMap.singleton 1 pullRequest
           , Project.pullRequestApprovalIndex = 1
           , Project.mandatoryChecks          = mempty
+          , Project.recentlyPromoted         = []
           }
         -- Run 'proceedUntilFixedPoint', and pretend that pushes fail (because
         -- something was pushed in the mean time, for instance).
@@ -2388,7 +2507,8 @@ main = hspec $ do
             {
               Project.pullRequests         = prMap,
               Project.pullRequestApprovalIndex = 2,
-              Project.mandatoryChecks = mempty
+              Project.mandatoryChecks = mempty,
+              Project.recentlyPromoted = []
             }
           -- Proceeding should pick the next pull request as candidate.
           results = defaultResults { resultIntegrate = [Right (Sha "38e")] }

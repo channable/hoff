@@ -1,6 +1,6 @@
 name:                hoff
 -- please keep version consistent with hoff.nix
-version:             0.33.0
+version:             0.33.1
 category:            Development
 synopsis:            A gatekeeper for your commits
 

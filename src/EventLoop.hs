@@ -29,7 +29,7 @@ import Data.Text (Text)
 import Effectful (Eff, (:>), IOE)
 import qualified Data.Text as Text
 
-import Configuration (ProjectConfiguration, TriggerConfiguration, MergeWindowExemptionConfiguration, FeatureFreezeWindow, PromotionTimeout)
+import Configuration (ProjectConfiguration, TriggerConfiguration, MergeWindowExemptionConfiguration, FeatureFreezeWindow, Timeouts)
 import Github (PullRequestPayload, CommentPayload, CommitStatusPayload, PushPayload, WebhookEvent (..))
 import Github (eventProjectInfo)
 import MonadLoggerEffect (MonadLoggerEffect)
@@ -138,7 +138,7 @@ runLogicEventLoop
   -> ProjectConfiguration
   -> MergeWindowExemptionConfiguration
   -> Maybe FeatureFreezeWindow
-  -> PromotionTimeout
+  -> Timeouts
   -- Action that gets the next event from the queue.
   -> IO (Maybe Logic.Event)
   -- Action to perform after the state has changed, such as
@@ -148,7 +148,7 @@ runLogicEventLoop
   -> ProjectState
   -> Eff es ProjectState
 runLogicEventLoop
-  triggerConfig projectConfig mergeWindowExemptionConfig featureFreezeWindow promotionTimeout
+  triggerConfig projectConfig mergeWindowExemptionConfig featureFreezeWindow timeouts
   getNextEvent publish initialState =
   let
     repo             = Config.repository projectConfig
@@ -156,9 +156,12 @@ runLogicEventLoop
       -- Handle the event and then perform any additional required actions until
       -- the state reaches a fixed point (when there are no further actions to
       -- perform).
-      logInfoN  $ "logic loop received event (" <> repo <> "): " <> showText event
+      case event of
+        -- Do not log clock ticks since they happen a lot and are not very interesting.
+        Logic.ClockTick _ -> pure ()
+        _ -> logInfoN  $ "logic loop received event (" <> repo <> "): " <> showText event
       state1 <-
-        Logic.handleEvent triggerConfig mergeWindowExemptionConfig featureFreezeWindow promotionTimeout event state0
+        Logic.handleEvent triggerConfig mergeWindowExemptionConfig featureFreezeWindow timeouts event state0
       liftIO $ publish state1
       runLoop state1
 

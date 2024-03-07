@@ -27,6 +27,7 @@ module Project
   OutstandingChecks (..),
   ProjectInfo (..),
   ProjectState (..),
+  PromotedPullRequest (..),
   PullRequest (..),
   PullRequestId (..),
   PullRequestStatus (..),
@@ -66,6 +67,8 @@ module Project
   updatePullRequest,
   updatePullRequestM,
   updatePullRequests,
+  addPromotedPullRequest,
+  filterRecentlyPromoted,
   getOwners,
   wasIntegrationAttemptFor,
   filterPullRequestsBy,
@@ -218,6 +221,12 @@ newtype MandatoryChecks = MandatoryChecks (Set Check)
   deriving (Eq, Show)
   deriving newtype (FromJSON, ToJSON, Monoid, Semigroup)
 
+data PromotedPullRequest = PromotedPullRequest
+  { promotedPRSha   :: Sha
+  , promotedPRTime :: UTCTime
+  }
+  deriving (Eq, Show, Generic)
+
 data PullRequest = PullRequest
   { sha                 :: Sha
   , branch              :: Branch
@@ -235,6 +244,7 @@ data ProjectState = ProjectState
   { pullRequests              :: IntMap PullRequest
   , pullRequestApprovalIndex  :: Int
   , mandatoryChecks           :: MandatoryChecks
+  , recentlyPromoted          :: [PromotedPullRequest]
   }
   deriving (Eq, Show, Generic)
 
@@ -270,6 +280,7 @@ instance Buildable ProjectInfo where
     <> Text.singleton '/'
     <> Text.fromText (repository info)
 
+instance FromJSON PromotedPullRequest
 instance FromJSON BuildStatus
 instance FromJSON IntegrationStatus
 instance FromJSON DeployEnvironment
@@ -279,6 +290,8 @@ instance FromJSON Approval
 instance FromJSON ProjectState
 instance FromJSON PullRequest
 
+
+instance ToJSON PromotedPullRequest where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON BuildStatus where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON IntegrationStatus where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON DeployEnvironment where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
@@ -305,7 +318,8 @@ emptyProjectState :: ProjectState
 emptyProjectState = ProjectState {
   pullRequests             = IntMap.empty,
   pullRequestApprovalIndex = 0,
-  mandatoryChecks          = mempty
+  mandatoryChecks          = mempty,
+  recentlyPromoted         = []
 }
 
 -- Inserts a new pull request into the project, with approval set to Nothing,
@@ -367,6 +381,15 @@ updatePullRequests :: (PullRequest -> PullRequest) -> ProjectState -> ProjectSta
 updatePullRequests f state = state {
   pullRequests = IntMap.map f $ pullRequests state
 }
+
+addPromotedPullRequest :: PullRequest -> UTCTime -> ProjectState -> ProjectState
+addPromotedPullRequest pr currTime state =
+  case promotionSha pr of
+    Just promotedSha -> state { recentlyPromoted = PromotedPullRequest promotedSha currTime : recentlyPromoted state }
+    Nothing -> error "Can't add promoted pull request that is not being promoted."
+
+filterRecentlyPromoted :: (UTCTime -> Bool) -> ProjectState -> ProjectState
+filterRecentlyPromoted p state = state {recentlyPromoted = filter (p . promotedPRTime) (recentlyPromoted state)}
 
 -- Marks the pull request as approved by somebody or nobody.
 setApproval :: PullRequestId -> Maybe Approval -> ProjectState -> ProjectState

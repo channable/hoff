@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.33.1
+
+Release 2024-03-12
+
+  - Adds a list of recently promoted PRs to check if a push to master is one of these recently promoted PRs.
+
 ## 0.33.0
 
 Release 2024-01-13
