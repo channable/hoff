@@ -39,5 +39,8 @@
     "start": "2023-01-01T00:00:00Z",
     "end": "2023-01-07T00:00:00Z"
   },
-  "promotionTimeout": 60
+  "timeouts": {
+    "promotionTimeout": 60,
+    "rememberTimeout": 600
+  }
 }
