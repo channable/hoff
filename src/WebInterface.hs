@@ -96,6 +96,7 @@ renderPage pageTitle bodyHtml = renderHtml $ docTypeHtml $ do
     meta ! charset "utf-8"
     meta ! name "viewport" ! content "width=device-width, initial-scale=1"
     meta ! name "robots" ! content "noindex, nofollow"
+    meta ! httpEquiv "Content-Security-Policy" ! content "default-src 'self'"
     title $ toHtml pageTitle
     link ! rel "stylesheet" ! href (toValue googlefontsUrl)
     link ! rel "stylesheet" ! href (toValue stylesheetUrl) ! integrity (toValue $ "sha256-" <> stylesheetBase64Digest)
@@ -110,6 +111,8 @@ autoRefreshToggle :: Html
 autoRefreshToggle = 
   div ! class_ "autoRefresh" $ do
     span ! id "autoRefreshToggle" ! onclick "toggleAutoRefresh();" $ "toggle autoRefresh"
+
+httpEquiv
 
 -- Integrity attribute for subresource integrity. Blaze doesn't have
 -- this yet, but this is what their implementation would look like.
