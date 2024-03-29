@@ -1012,7 +1012,7 @@ main = hspec $ do
         ]
 
     it "rejects merge and deploy without an environment specified if multiple environments are configured"
-      $ expectSimpleParseFailure  "@bot merge and deploy" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:22:\n      |\n    1 | @bot merge and deploy\n      |                      ^\n    Merge and deploy has been deprecated. Please use merge and deploy to <environment>\n    where <environment> is one of staging, production\n"
+      $ expectSimpleParseFailure  "@bot merge and deploy" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:22:\n      |\n    1 | @bot merge and deploy\n      |                      ^\n    Merge and deploy has been deprecated. Please use merge and deploy to <environment>\n    where <environment> is one of production, staging\n"
 
     it "recognizes 'merge and deploy on Friday' commands as the proper ApprovedFor value" $ do
       let

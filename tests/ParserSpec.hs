@@ -75,7 +75,6 @@ parserSpec = do
             "comment:1:22:\n  |\n1 | @bot merge and deploy\n  |                      ^\n\
             \No deployment environments have been configured.\n"
 
-      -- Do we still correctly parse merge windows after a deploy environment
       it "can parse a merge window after an explicit environment" $
         dummyParse "@bot merge and deploy to production on friday" `shouldBe`
           Success (Approve $ MergeAndDeploy EntireProject (DeployEnvironment "production"), OnFriday)
@@ -103,6 +102,20 @@ parserSpec = do
       it "allows subprojects, an implicit environment, and a merge window" $
         oneEnvParse "@bot merge and deploy bbb on friday" `shouldBe`
           Success (Approve $ MergeAndDeploy (OnlySubprojects ["bbb"]) (DeployEnvironment "foo"), OnFriday)
+
+      let prefixProject = dummyProject
+                            { deployEnvironments = Just ["foo", "fooooooo"]
+                            , deploySubprojects  = Just ["bar", "barrrrrr"]
+                            }
+      let prefixParse = parseMergeCommand prefixProject dummyTrigger
+
+      it "allows environment names to be prefixes of each other" $
+        prefixParse "@bot merge and deploy to fooooooo" `shouldBe`
+          Success (Approve $ MergeAndDeploy EntireProject (DeployEnvironment "fooooooo"), AnyDay)
+
+      it "allows subproject names to be prefixes of each other" $
+        prefixParse "@bot merge and deploy barrrrrr to fooooooo" `shouldBe`
+          Success (Approve $ MergeAndDeploy (OnlySubprojects ["barrrrrr"]) (DeployEnvironment "fooooooo"), AnyDay)
 
     describe "retry commands" $ do
       it "can parse 'retry'" $

@@ -6,10 +6,12 @@ module Parser where
 import Control.Monad (void)
 import Data.Either (fromRight)
 import Data.List (intercalate, intersperse)
+import Data.Ord (Down(..))
 import Data.Text (Text)
 import Data.Void (Void)
 import Text.Megaparsec (ParseErrorBundle, Parsec, (<|>))
 
+import qualified Data.List as List
 import qualified Data.Text as Text
 import qualified Text.Megaparsec as P
 import qualified Text.Megaparsec.Char as P
@@ -135,15 +137,18 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     commandPrefix :: Text
     commandPrefix = Text.strip $ commentPrefix triggerConfig
 
+    largestMatchFirst :: [Text] -> [Text]
+    largestMatchFirst = List.sortOn (Down . Text.length)
+
     -- No whitespace stripping or case folding is performed here to be
     -- consistent with how environments are handled.
     subprojects :: [Text]
-    subprojects = knownSubprojects projectConfig
+    subprojects = largestMatchFirst $ knownSubprojects projectConfig
 
     -- No whitespace stripping or case folding is performed here since they are
     -- also matched verbatim elsewhere in Hoff.
     environments :: [Text]
-    environments = knownEnvironments projectConfig
+    environments = largestMatchFirst $ knownEnvironments projectConfig
 
     -- The punctuation characters that are allowed at the end of a merge
     -- command. This doesn't use the included punctuation predicate because that
