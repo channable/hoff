@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.33.2
+
+Release 2024-03-29
+
+  - Fixes a bug where the parser didn't backtrack when one of the configured environments or subprojects is a prefix of another.
+
 ## 0.33.1
 
 Release 2024-03-12
