@@ -25,6 +25,7 @@ module Project
   Check (..),
   IntegrationStatus (..),
   OutstandingChecks (..),
+  Priority (..),
   ProjectInfo (..),
   ProjectState (..),
   PromotedPullRequest (..),
@@ -203,11 +204,15 @@ data Approval = Approval
   , approvedFor :: ApprovedFor
   , approvalOrder :: Int
   , approvalRetriedBy :: Maybe Username
+  , approvalPriority :: Priority
   }
   deriving (Eq, Show, Generic)
 
 data MergeWindow = OnFriday | DuringFeatureFreeze | AnyDay
   deriving (Eq, Show)
+
+data Priority = Normal | High
+  deriving (Eq, Show, Generic)
 
 -- | A check is a key we check incoming build status contexts (in the case of
 -- github) against.
@@ -287,6 +292,7 @@ instance FromJSON DeployEnvironment
 instance FromJSON DeploySubprojects
 instance FromJSON ApprovedFor
 instance FromJSON Approval
+instance FromJSON Priority
 instance FromJSON ProjectState
 instance FromJSON PullRequest
 
@@ -298,6 +304,7 @@ instance ToJSON DeployEnvironment where toEncoding = Aeson.genericToEncoding Aes
 instance ToJSON DeploySubprojects where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON ApprovedFor where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON Approval where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
+instance ToJSON Priority where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON ProjectState where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON PullRequest where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 
@@ -667,8 +674,6 @@ isIntegratedOrSpeculativelyConflicted :: PullRequest -> Bool
 isIntegratedOrSpeculativelyConflicted pr =
   case integrationStatus pr of
   (Integrated _ _)                            -> True
-  (Promote _ _)                               -> True
-  (PromoteAndTag {})                          -> True
   (Conflicted base _) | base /= baseBranch pr -> True
   _                                           -> False
 

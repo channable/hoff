@@ -20,7 +20,7 @@ import qualified Text.Megaparsec.Char.Lexer as P (skipBlockComment)
 import Configuration (ProjectConfiguration (..), TriggerConfiguration (..),
                       knownEnvironments, knownSubprojects)
 import Project (ApprovedFor (..), DeployEnvironment (..), DeploySubprojects (..),
-                MergeCommand (..), MergeWindow (..))
+                MergeCommand (..), MergeWindow (..), Priority (..))
 
 -- | Internal result type for parsing a merge command, which allows the
 -- consumer of `parseMergeCommand` to inspect the reason why a message
@@ -123,7 +123,7 @@ shouldIgnoreComment = cvtParseResult . P.parse pComment "comment"
 --
 -- If the trigger prefix is "@hoffbot", a command "@hoffbot merge" would
 -- indicate the `Merge` approval type.
-parseMergeCommand :: ProjectConfiguration -> TriggerConfiguration -> Text -> ParseResult (MergeCommand, MergeWindow)
+parseMergeCommand :: ProjectConfiguration -> TriggerConfiguration -> Text -> ParseResult (MergeCommand, MergeWindow, Priority)
 parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pComment "comment"
   where
     cvtParseResult :: Either (ParseErrorBundle Text Void) (Maybe a) -> ParseResult a
@@ -178,14 +178,14 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     -- parser returns @Nothing@. The prefix is matched greedily in 'pCommand',
     -- so if the comment contains an invaild command followed by a valid command
     -- an error will be returned based on that earlier invalid command.
-    pComment :: Parser (Maybe (MergeCommand, MergeWindow))
+    pComment :: Parser (Maybe (MergeCommand, MergeWindow, Priority))
     pComment = (Just <$> pCommand)
       <|> (P.anySingle *> pComment)
       <|> pure Nothing
 
     -- Parse a full merge command. Does not consume any input if the prefix
     -- could not be matched fully.
-    pCommand :: Parser (MergeCommand, MergeWindow)
+    pCommand :: Parser (MergeCommand, MergeWindow, Priority)
     pCommand = P.try pCommandPrefix *> pSpace1 *> (pApprovalCommand <|> pRetryCommand) <* pSpace <* pCommandSuffix
 
     -- Parse the (normalized) command prefix. Matched non-greedily in 'pCommand'
@@ -210,11 +210,11 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
     --       This is a bit tricky, and using 'P.hspace' instead of 'P.hspace1'
     --       in 'pMergeWindow' would allow @mergeon friday@ which is also not
     --       desirable.
-    pApprovalCommand :: Parser (MergeCommand, MergeWindow)
-    pApprovalCommand = (,) . Approve <$> pMergeApproval <*> pMergeWindow
+    pApprovalCommand :: Parser (MergeCommand, MergeWindow, Priority)
+    pApprovalCommand = (,,) . Approve <$> pMergeApproval <*> pMergeWindow <*> pPriority
 
-    pRetryCommand :: Parser (MergeCommand, MergeWindow)
-    pRetryCommand = (Retry,) <$> (P.string' "retry" *> pMergeWindow)
+    pRetryCommand :: Parser (MergeCommand, MergeWindow, Priority)
+    pRetryCommand = (Retry,,) <$> (P.string' "retry" *> pMergeWindow) <*> pPriority
 
     -- We'll avoid unnecessary backtracking here by parsing the common prefixes.
     -- Note that 'P.try' is used sparingly here. It's mostly used when parsing
@@ -292,3 +292,6 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
       (OnFriday <$ P.try (pSpace1 *> pString "on friday"))
         <|> (DuringFeatureFreeze <$ P.try (pSpace1 *> pString "as hotfix"))
         <|> pure AnyDay
+
+    pPriority :: Parser Priority
+    pPriority = High <$ P.try (pSpace1 *> pString "with priority") <|> pure Normal

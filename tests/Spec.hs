@@ -43,7 +43,7 @@ import Git (BaseBranch (..), Branch (..), PushResult (..), Sha (..), TagMessage 
 import Github (CommentPayload, CommitStatusPayload, PullRequestPayload, PushPayload)
 import Logic (Action, Action (..), Event (..), IntegrationFailure (..), RetrieveEnvironment (..))
 import Project (Approval (..), DeployEnvironment (..), DeploySubprojects (..),
-                ProjectState (ProjectState), PullRequest (PullRequest))
+                Priority (..), ProjectState (ProjectState), PullRequest (PullRequest))
 import Time (TimeOperation)
 import Types (PullRequestId (..), Username (..))
 import ParserSpec (parserSpec)
@@ -108,7 +108,7 @@ candidateState
   :: PullRequestId -> Branch -> BaseBranch -> Sha -> Username -> Username -> Sha -> ProjectState
 candidateState pr prBranch baseBranch prSha prAuthor approvedBy candidateSha
   = Project.setIntegrationStatus pr (Project.Integrated candidateSha (Project.AnyCheck Project.BuildPending))
-  $ Project.setApproval pr (Just (Approval approvedBy Project.Merge 0 Nothing))
+  $ Project.setApproval pr (Just (Approval approvedBy Project.Merge 0 Nothing Normal))
   $ singlePullRequestState pr prBranch baseBranch prSha prAuthor
 
 -- Types and functions to mock running an action without actually doing anything.
@@ -406,7 +406,7 @@ main = hspec $ do
       let pr = fromJust $ Project.lookupPullRequest (PullRequestId 3) state
       Project.sha pr               `shouldBe` Sha "e0f"
       Project.author pr            `shouldBe` "deckard"
-      Project.approval pr          `shouldBe` Just (Approval "deckard" Project.Merge 0 Nothing)
+      Project.approval pr          `shouldBe` Just (Approval "deckard" Project.Merge 0 Nothing Normal)
 
     it "handles PullRequestClosed" $ do
       let event1 = PullRequestOpened (PullRequestId 1) (Branch "p") masterBranch (Sha "abc") "title" "peter" Nothing
@@ -439,17 +439,17 @@ main = hspec $ do
     it "loses approval after the PR commit has changed" $ do
       let event  = PullRequestCommitChanged (PullRequestId 1) (Sha "def")
           state0 = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "abc") "alice"
-          state1 = Project.setApproval (PullRequestId 1) (Just (Approval "hatter" Project.Merge 0 Nothing)) state0
+          state1 = Project.setApproval (PullRequestId 1) (Just (Approval "hatter" Project.Merge 0 Nothing Normal)) state0
           state2 = fst $ runAction $ handleEventTest event state1
           pr1    = fromJust $ Project.lookupPullRequest (PullRequestId 1) state1
           pr2    = fromJust $ Project.lookupPullRequest (PullRequestId 1) state2
-      Project.approval pr1 `shouldBe` Just (Approval "hatter" Project.Merge 0 Nothing)
+      Project.approval pr1 `shouldBe` Just (Approval "hatter" Project.Merge 0 Nothing Normal)
       Project.approval pr2 `shouldBe` Nothing
 
     it "does not lose approval after the PR commit has changed due to a push we caused" $ do
       let
         state0 = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "abc") "alice"
-        state1 = Project.setApproval (PullRequestId 1) (Just (Approval "hatter" Project.Merge 0 Nothing)) state0
+        state1 = Project.setApproval (PullRequestId 1) (Just (Approval "hatter" Project.Merge 0 Nothing Normal)) state0
         state2 = Project.setIntegrationStatus (PullRequestId 1) (Project.Integrated (Sha "dc0") (Project.AnyCheck Project.BuildPending)) state1
         state3 = Project.setIntegrationStatus (PullRequestId 1) (Project.Integrated (Sha "dc1") (Project.AnyCheck Project.BuildPending)) state2
         event  = PullRequestCommitChanged (PullRequestId 1) (Sha "dc0")
@@ -469,7 +469,7 @@ main = hspec $ do
         state2  = fst $ runAction $ handleEventTest newPush state1
         prAt1   = fromJust $ Project.lookupPullRequest (PullRequestId 1) state1
         prAt2   = fromJust $ Project.lookupPullRequest (PullRequestId 1) state2
-      Project.approval          prAt1 `shouldBe` Just (Approval "deckard" Project.Merge 0 Nothing)
+      Project.approval          prAt1 `shouldBe` Just (Approval "deckard" Project.Merge 0 Nothing Normal)
       Project.integrationStatus prAt1 `shouldBe` Project.Integrated (Sha "bcd") (Project.AnyCheck Project.BuildPending)
       Project.approval          prAt2 `shouldBe` Nothing
       Project.integrationStatus prAt2 `shouldBe` Project.NotIntegrated
@@ -480,13 +480,13 @@ main = hspec $ do
         -- lose the approval status.
         event  = PullRequestCommitChanged (PullRequestId 1) (Sha "000")
         state0 = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "000") "cindy"
-        state1 = Project.setApproval (PullRequestId 1) (Just (Approval "daniel" Project.Merge 0 Nothing)) state0
+        state1 = Project.setApproval (PullRequestId 1) (Just (Approval "daniel" Project.Merge 0 Nothing Normal)) state0
         (state2, _actions) = runAction $ Logic.proceedUntilFixedPoint state1
         (state3, actions)  = runAction $ handleEventTest event state2
         prAt3 = fromJust $ Project.lookupPullRequest (PullRequestId 1) state3
       state3 `shouldBe` state2
       actions `shouldBe` []
-      Project.approval prAt3 `shouldBe` Just (Approval "daniel" Project.Merge 0 Nothing)
+      Project.approval prAt3 `shouldBe` Just (Approval "daniel" Project.Merge 0 Nothing Normal)
 
     it "sets approval after a stamp from a reviewer" $ do
       let state  = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "6412ef5") "toby"
@@ -494,7 +494,7 @@ main = hspec $ do
           event  = CommentAdded (PullRequestId 1) "deckard" "@bot merge"
           state' = fst $ runAction $ handleEventTest event state
           pr     = fromJust $ Project.lookupPullRequest (PullRequestId 1) state'
-      Project.approval pr `shouldBe` Just (Approval "deckard" Project.Merge 0 Nothing)
+      Project.approval pr `shouldBe` Just (Approval "deckard" Project.Merge 0 Nothing Normal)
 
     it "does not set approval after a stamp from a non-reviewer" $ do
       let state  = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "6412ef5") "toby"
@@ -551,7 +551,7 @@ main = hspec $ do
       actions1 `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "a38") [] False
         , ALeaveComment (PullRequestId 1)
             "<!-- Hoff: ignore -->\nFailed to rebase, please rebase manually using\n\n\
@@ -580,13 +580,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "a38") [] False
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
 
         , AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
-        , ATryIntegrate "Merge #2: Some PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #2: Some PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "dec")
                         [PullRequestId 1]
                         False
@@ -594,7 +594,7 @@ main = hspec $ do
 
         , AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, waiting for rebase behind 2 pull requests."
-        , ATryIntegrate "Merge #3: Another PR\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
+        , ATryIntegrate "Merge #3: Another PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                         (PullRequestId 3, Branch "refs/pull/3/head", Sha "f16")
                         [PullRequestId 1, PullRequestId 2]
                         True
@@ -626,17 +626,17 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "a38") [] False
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
         , AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
-        , ATryIntegrate "Merge #3: Another PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #3: Another PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 3, Branch "refs/pull/3/head", Sha "f16") [PullRequestId 1] False
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as b72 behind 1 other PR, waiting for CI …"
         , AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind 2 pull requests."
-        , ATryIntegrate "Merge #2: Some PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #2: Some PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "dec") [PullRequestId 1, PullRequestId 3] False
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as b73 behind 2 other PRs, waiting for CI …"
         ]
@@ -649,7 +649,7 @@ main = hspec $ do
             baseBranch = BaseBranch "master",
             title = "Add Nexus 7 experiment",
             author = Username "tyrell",
-            approval = Just (Approval (Username "deckard") Project.Merge 0 Nothing),
+            approval = Just (Approval (Username "deckard") Project.Merge 0 Nothing Normal),
             integrationStatus = Project.Integrated (Sha "b71") (Project.AnyCheck Project.BuildPending),
             integrationAttempts = [],
             needsFeedback = False
@@ -660,7 +660,7 @@ main = hspec $ do
             baseBranch = BaseBranch "master",
             title = "Some PR",
             author = Username "rachael",
-            approval = Just (Approval (Username "deckard") Project.Merge 2 Nothing),
+            approval = Just (Approval (Username "deckard") Project.Merge 2 Nothing Normal),
             integrationStatus = Project.Integrated (Sha "b73") (Project.AnyCheck Project.BuildPending),
             integrationAttempts = [],
             needsFeedback = False
@@ -671,7 +671,7 @@ main = hspec $ do
             baseBranch = BaseBranch "master",
             title = "Another PR",
             author = Username "rachael",
-            approval = Just (Approval (Username "deckard") Project.Merge 1 Nothing),
+            approval = Just (Approval (Username "deckard") Project.Merge 1 Nothing Normal),
             integrationStatus = Project.Integrated (Sha "b72") (Project.AnyCheck Project.BuildPending),
             integrationAttempts = [],
             needsFeedback = False
@@ -695,19 +695,19 @@ main = hspec $ do
       actionsPermuted `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-        , ATryIntegrate "Merge #2: Some PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #2: Some PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "dec") [] False
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
 
         , AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
-        , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "a38") [PullRequestId 2] False
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nSpeculatively rebased as b72 behind 1 other PR, waiting for CI …"
 
         , AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind 2 pull requests."
-        , ATryIntegrate "Merge #3: Another PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #3: Another PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 3, Branch "refs/pull/3/head", Sha "f16") [PullRequestId 2, PullRequestId 1] False
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as b73 behind 2 other PRs, waiting for CI …"
         ]
@@ -737,17 +737,17 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "a38") [] False
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
         , AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
-        , ATryIntegrate "Merge #2: Some PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #2: Some PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "dec") [PullRequestId 1] False
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as b72 behind 1 other PR, waiting for CI …"
         , ALeaveComment (PullRequestId 1) "Abandoning this pull request because it was closed."
         , ACleanupTestBranch (PullRequestId 1)
-        , ATryIntegrate "Merge #2: Some PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #2: Some PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "dec") [] False
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as b73, waiting for CI …"
         ]
@@ -770,7 +770,7 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: title\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: title\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "e0f") [] False
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
         ]
@@ -797,7 +797,7 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: title\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: title\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "e0f") [] False
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
         , ALeaveComment (PullRequestId 1) "Abandoning this pull request because it was closed."
@@ -913,13 +913,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing))
+        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing Normal))
 
     it "recognizes 'merge and deploy to <environment>' commands as the proper ApprovedFor value" $ do
       let
@@ -934,13 +934,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "production") 0 Nothing))
+        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "production") 0 Nothing Normal))
 
     -- There is no default environment to deploy to when no deployment
     -- environments have been configured. Earlier versions would silently ignore
@@ -970,7 +970,7 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
@@ -988,7 +988,7 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
@@ -1006,7 +1006,7 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
@@ -1027,13 +1027,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing))
+        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing Normal))
 
     it "allows 'merge and deploy <subproject> to <environment>'" $ do
       let
@@ -1048,13 +1048,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy aaa to production by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: aaa\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: aaa\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy (OnlySubprojects ["aaa"]) $ DeployEnvironment "production") 0 Nothing))
+        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy (OnlySubprojects ["aaa"]) $ DeployEnvironment "production") 0 Nothing Normal))
 
     it "allows 'merge and deploy <subproject list> to <environment>'" $ do
       let
@@ -1069,13 +1069,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy aaa, bbb to production by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: aaa, bbb\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: aaa, bbb\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy (OnlySubprojects ["aaa", "bbb"]) $ DeployEnvironment "production") 0 Nothing))
+        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy (OnlySubprojects ["aaa", "bbb"]) $ DeployEnvironment "production") 0 Nothing Normal))
 
     it "recognizes 'merge and tag' command" $ do
       let
@@ -1090,13 +1090,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and tag by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.MergeAndTag 0 Nothing))
+        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.MergeAndTag 0 Nothing Normal))
 
     it "recognizes 'merge and  tag' command" $ do
       let
@@ -1111,13 +1111,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and tag by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.MergeAndTag 0 Nothing))
+        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.MergeAndTag 0 Nothing Normal))
 
     it "recognizes 'merge  and tag' command" $ do
       let
@@ -1132,13 +1132,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and tag by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.MergeAndTag 0 Nothing))
+        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.MergeAndTag 0 Nothing Normal))
 
     it "recognizes 'merge and tag on friday' command" $ do
       let
@@ -1153,13 +1153,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and tag by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.MergeAndTag 0 Nothing))
+        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.MergeAndTag 0 Nothing Normal))
 
     it "recognizes 'merge' command" $ do
       let
@@ -1174,13 +1174,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.Merge 0 Nothing))
+        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.Merge 0 Nothing Normal))
 
     it "recognizes 'merge on Friday' command" $ do
       let
@@ -1195,13 +1195,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.Merge 0 Nothing))
+        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.Merge 0 Nothing Normal))
 
     it "notifies when command not recognized"
       $ expectSimpleParseFailure  "@bot mergre" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:6:\n      |\n    1 | @bot mergre\n      |      ^^^^^\n    unexpected \"mergr\"\n    expecting \"merge\", \"retry\", or white space\n"
@@ -1219,7 +1219,7 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "bot"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @bot, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: bot\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: bot\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
@@ -1314,7 +1314,7 @@ main = hspec $ do
           AIsReviewer (Username "deckard"),
           ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now.",
           ATryIntegrate {
-                   mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n",
+                   mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n",
                    integrationCandidate = (prId, Branch "refs/pull/1/head", Sha  "abc1234"),
                    mergeTrain = [],
                    alwaysAddMergeCommit = False
@@ -1323,7 +1323,7 @@ main = hspec $ do
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.Merge 0 Nothing))
+        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.Merge 0 Nothing Normal))
 
     it "refuses 'merge' (without hotfix) during a feature freeze period" $ do
       let
@@ -1372,7 +1372,7 @@ main = hspec $ do
           AIsReviewer (Username "deckard"),
           ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now.",
           ATryIntegrate {
-                   mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n",
+                   mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n",
                    integrationCandidate = (prId, Branch "refs/pull/1/head", Sha  "abc1234"),
                    mergeTrain = [],
                    alwaysAddMergeCommit = False
@@ -1381,7 +1381,7 @@ main = hspec $ do
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.Merge 0 Nothing))
+        (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.Merge 0 Nothing Normal))
 
     it "accepts 'merge hotfix deploy to production as hotfix' during a feature freeze period" $ do
       let
@@ -1398,7 +1398,7 @@ main = hspec $ do
           AIsReviewer (Username "deckard"),
           ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, rebasing now.",
           ATryIntegrate {
-                   mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n",
+                   mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n",
                    integrationCandidate = (prId, Branch "refs/pull/1/head", Sha  "abc1234"),
                    mergeTrain = [],
                    alwaysAddMergeCommit = True
@@ -1407,7 +1407,7 @@ main = hspec $ do
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr == Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "production") 0 Nothing))
+        (\pr -> Project.approval pr == Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "production") 0 Nothing Normal))
 
     it "refuses to merge an empty rebase" $ do
       let
@@ -1425,7 +1425,7 @@ main = hspec $ do
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate
-            { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
+            { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
             , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
             , mergeTrain = []
             , alwaysAddMergeCommit = False
@@ -1469,7 +1469,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nMerge rejected: the base branch of this pull request must be set to master. It is currently set to m."
         , AIsReviewer (Username "deckard")
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
         ]
@@ -1494,7 +1494,7 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer (Username "deckard")
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
         , ALeaveComment (PullRequestId 1) "Stopping integration because the PR changed after approval."
@@ -1521,7 +1521,7 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer (Username "deckard")
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
         , ALeaveComment (PullRequestId 1) "Stopping integration because the PR changed after approval."
@@ -1549,13 +1549,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing))
+        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing Normal))
 
     -- For ergonomics' sake, the command can be part of a sentence that ends
     -- with one or more punctuation characters, but only if the line ends after
@@ -1599,7 +1599,7 @@ main = hspec $ do
        in actions `shouldBe`
             [ AIsReviewer (Username "bot")
             , ALeaveComment prId approvalMessage
-            , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: bot\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
+            , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: bot\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
             , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
             , ALeaveComment prId "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
             , ATryForcePush (Branch "p") (Sha "def2345")
@@ -1623,13 +1623,13 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] True
         , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
         ]
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
-        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing))
+        (\pr -> Project.approval pr== Just (Approval (Username "deckard") (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing Normal))
 
     it "restarts when pushed to master" $ do
       let
@@ -1650,6 +1650,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #12: Twelfth PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 12,Branch "refs/pull/12/head",Sha "12a")
                         []
@@ -1659,6 +1660,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
         , ATryIntegrate "Merge #12: Twelfth PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 12,Branch "refs/pull/12/head",Sha "12a")
                         []
@@ -1690,6 +1692,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: Improvements...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head",Sha "ab1")
                         []
@@ -1700,6 +1703,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: ... Of the ...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
                         [PullRequestId 1]
@@ -1709,6 +1713,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nThe [build failed :x:](example.com/1b2).\n\nIf this is the result of a flaky test, then tag me again with the `retry` command.  Otherwise, push a new commit and tag me again."
         , ATryIntegrate "Merge #2: ... Of the ...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
                         []
@@ -1717,6 +1722,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
         , ATryIntegrate "Merge #2: ... Of the ...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
                         []
@@ -1750,6 +1756,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: Improvements...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head",Sha "ab1")
                         []
@@ -1760,6 +1767,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: ... Of the ...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
                         [PullRequestId 1]
@@ -1770,6 +1778,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind 2 pull requests."
         , ATryIntegrate "Merge #3: ... Performance\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 3,Branch "refs/pull/3/head",Sha "ab3")
                         [PullRequestId 1, PullRequestId 2]
@@ -1781,6 +1790,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
         , ATryIntegrate "Merge #1: Improvements...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head",Sha "ab1")
                         []
@@ -1788,6 +1798,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b3, waiting for CI …"
         , ATryIntegrate "Merge #2: ... Of the ...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
                         [PullRequestId 1]
@@ -1795,6 +1806,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b3 behind 1 other PR, waiting for CI …"
         , ATryIntegrate "Merge #3: ... Performance\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 3,Branch "refs/pull/3/head",Sha "ab3")
                         [PullRequestId 1, PullRequestId 2]
@@ -1830,6 +1842,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: Improvements...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head",Sha "ab1")
                         []
@@ -1840,6 +1853,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: ... Of the ...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
                         [PullRequestId 1]
@@ -1850,6 +1864,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind 2 pull requests."
         , ATryIntegrate "Merge #3: ... Performance\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 3,Branch "refs/pull/3/head",Sha "ab3")
                         [PullRequestId 1, PullRequestId 2]
@@ -1890,6 +1905,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: Improvements...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head",Sha "ab1")
                         []
@@ -1900,6 +1916,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: ... Of the ...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
                         [PullRequestId 1]
@@ -1910,6 +1927,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind 2 pull requests."
         , ATryIntegrate "Merge #3: ... Performance\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 3,Branch "refs/pull/3/head",Sha "ab3")
                         [PullRequestId 1, PullRequestId 2]
@@ -1947,6 +1965,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: Improvements...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head",Sha "ab1")
                         []
@@ -1957,6 +1976,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: ... Of the ...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
                         [PullRequestId 1]
@@ -1969,6 +1989,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
         , ATryIntegrate "Merge #2: ... Of the ...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2,Branch "refs/pull/2/head",Sha "ab2")
                         []
@@ -1991,7 +2012,7 @@ main = hspec $ do
        in actions `shouldBe`
             [ AIsReviewer (Username "deckard")
             , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-            , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
+            , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
             , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
             , ALeaveComment prId "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
             , ATryForcePush (Branch "p") (Sha "def2345")
@@ -2012,7 +2033,7 @@ main = hspec $ do
        in actions `shouldBe`
             [ AIsReviewer (Username "deckard")
             , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-            , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
+            , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
             , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
             , ALeaveComment prId "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
             , ATryForcePush (Branch "p") (Sha "def2345")
@@ -2046,6 +2067,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: Improvements...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -2059,6 +2081,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: ... Of the ...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
                         [PullRequestId 1]
@@ -2096,6 +2119,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: Improvements...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -2106,6 +2130,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
         , ATryIntegrate "Merge #1: Improvements...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -2141,6 +2166,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: Improvements...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -2151,6 +2177,7 @@ main = hspec $ do
         , ATryPromote (Sha "1b2")
         , ATryIntegrate "Merge #1: Improvements...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -2191,6 +2218,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: Improvements...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -2203,6 +2231,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: ... Of the ...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
                         [PullRequestId 1]
@@ -2238,6 +2267,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: Improvements...\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -2254,7 +2284,7 @@ main = hspec $ do
     it "finds a new candidate" $ do
       let
         state
-          = Project.setApproval (PullRequestId 1) (Just (Approval "fred" Project.Merge 0 Nothing))
+          = Project.setApproval (PullRequestId 1) (Just (Approval "fred" Project.Merge 0 Nothing Normal))
           $ singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "f34") "sally"
         results = defaultResults
           { resultIntegrate = [Right (Sha "38c")]
@@ -2265,15 +2295,15 @@ main = hspec $ do
       Project.integrationStatus pullRequest `shouldBe` Project.Integrated (Sha "38c") (Project.AnyCheck Project.BuildPending)
       prId    `shouldBe` PullRequestId 1
       actions `shouldBe`
-        [ ATryIntegrate "Merge #1: Untitled\n\nApproved-by: fred\nAuto-deploy: false\n"
+        [ ATryIntegrate "Merge #1: Untitled\n\nApproved-by: fred\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "f34") [] False
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 38c, waiting for CI \x2026"
         ]
     it "finds a new candidate with multiple PRs" $ do
       let
         state
-          = Project.setApproval (PullRequestId 2) (Just (Approval "fred" Project.Merge 0 Nothing))
-          $ Project.setApproval (PullRequestId 1) (Just (Approval "fred" Project.Merge 1 Nothing))
+          = Project.setApproval (PullRequestId 2) (Just (Approval "fred" Project.Merge 0 Nothing Normal))
+          $ Project.setApproval (PullRequestId 1) (Just (Approval "fred" Project.Merge 1 Nothing Normal))
           $ fst $ runAction $ handleEventsTest
             [ PullRequestOpened (PullRequestId 1) (Branch "p") masterBranch (Sha "f34") "Untitled" "sally" Nothing
             , PullRequestOpened (PullRequestId 2) (Branch "s") masterBranch (Sha "g35") "Another untitled" "rachael" Nothing
@@ -2287,10 +2317,10 @@ main = hspec $ do
       Project.integrationStatus pullRequest `shouldBe` Project.Integrated (Sha "38c") (Project.AnyCheck Project.BuildPending)
       prId    `shouldBe` PullRequestId 2
       actions `shouldBe`
-        [ ATryIntegrate "Merge #2: Another untitled\n\nApproved-by: fred\nAuto-deploy: false\n"
+        [ ATryIntegrate "Merge #2: Another untitled\n\nApproved-by: fred\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "g35") [] False
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 38c, waiting for CI \x2026"
-        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: fred\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: fred\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "f34") [PullRequestId 2] False
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nSpeculatively rebased as 49d behind 1 other PR, waiting for CI \x2026"
         ]
@@ -2303,7 +2333,7 @@ main = hspec $ do
           , Project.sha                 = Sha "f35"
           , Project.title               = "Add my test results"
           , Project.author              = "rachael"
-          , Project.approval            = Just (Approval "deckard" Project.Merge 0 Nothing)
+          , Project.approval            = Just (Approval "deckard" Project.Merge 0 Nothing Normal)
           , Project.integrationStatus   = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
           , Project.integrationAttempts = []
           , Project.needsFeedback       = False
@@ -2327,7 +2357,7 @@ main = hspec $ do
           , Project.sha                 = Sha "f35"
           , Project.title               = "Add my test results"
           , Project.author              = "rachael"
-          , Project.approval            = Just (Approval "deckard" Project.MergeAndTag 0 Nothing)
+          , Project.approval            = Just (Approval "deckard" Project.MergeAndTag 0 Nothing Normal)
           , Project.integrationStatus   = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
           , Project.integrationAttempts = []
           , Project.needsFeedback       = False
@@ -2356,7 +2386,7 @@ main = hspec $ do
           , Project.sha                 = Sha "f35"
           , Project.title               = "Add my test results"
           , Project.author              = "rachael"
-          , Project.approval            = Just (Approval "deckard" Project.Merge 0 Nothing)
+          , Project.approval            = Just (Approval "deckard" Project.Merge 0 Nothing Normal)
           , Project.integrationStatus   = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
           , Project.integrationAttempts = []
           , Project.needsFeedback       = False
@@ -2380,7 +2410,7 @@ main = hspec $ do
       Project.integrationAttempts pullRequest' `shouldBe` [Sha "38d"]
       actions `shouldBe`
         [ ATryForcePush (Branch "results/rachael") (Sha "38d")
-        , ATryIntegrate "Merge #1: Add my test results\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Add my test results\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "f35") [] False
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 38e, waiting for CI \x2026"
         ]
@@ -2395,7 +2425,7 @@ main = hspec $ do
           , Project.sha                 = Sha "f35"
           , Project.title               = "Add my test results"
           , Project.author              = "rachael"
-          , Project.approval            = Just (Approval "deckard" Project.MergeAndTag 0 Nothing)
+          , Project.approval            = Just (Approval "deckard" Project.MergeAndTag 0 Nothing Normal)
           , Project.integrationStatus   = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
           , Project.integrationAttempts = []
           , Project.needsFeedback       = False
@@ -2420,7 +2450,7 @@ main = hspec $ do
       Project.integrationAttempts pullRequest' `shouldBe` [Sha "38d"]
       actions `shouldBe`
         [ ATryForcePush (Branch "results/rachael") (Sha "38d")
-        , ATryIntegrate "Merge #1: Add my test results\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Add my test results\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "f35") [] True
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 38e, waiting for CI \x2026"
         ]
@@ -2461,14 +2491,14 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "a39") [] False
           -- The first rebase succeeds.
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI \x2026"
           -- The first promotion attempt fails
         , ATryForcePush (Branch "n7") (Sha "b71")
           -- The second rebase fails.
-        , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "a39") [] False
         , ALeaveComment (PullRequestId 1)
             "<!-- Hoff: ignore -->\nFailed to rebase, please rebase manually using\n\n\
@@ -2483,7 +2513,7 @@ main = hspec $ do
               Project.sha                 = Sha "f35",
               Project.title               = "Add Leon test results",
               Project.author              = "rachael",
-              Project.approval            = Just (Approval "deckard" Project.Merge 1 Nothing),
+              Project.approval            = Just (Approval "deckard" Project.Merge 1 Nothing Normal),
               Project.integrationStatus   = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded),
               Project.integrationAttempts = [],
               Project.needsFeedback       = False
@@ -2495,7 +2525,7 @@ main = hspec $ do
               Project.sha                 = Sha "f37",
               Project.title               = "Add my test results",
               Project.author              = "rachael",
-              Project.approval            = Just (Approval "deckard" Project.Merge 0 Nothing),
+              Project.approval            = Just (Approval "deckard" Project.Merge 0 Nothing Normal),
               Project.integrationStatus   = Project.NotIntegrated,
               Project.integrationAttempts = [],
               Project.needsFeedback       = False
@@ -2515,7 +2545,7 @@ main = hspec $ do
           actions = snd $ runActionCustom results $ Logic.proceedUntilFixedPoint state
       actions `shouldBe`
         [ ATryForcePush (Branch "results/leon") (Sha "38d")
-        , ATryIntegrate "Merge #2: Add my test results\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #2: Add my test results\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "f37") [PullRequestId 1] False
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 38e, waiting for CI \x2026"
         ]
@@ -2554,7 +2584,7 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-        , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nAuto-deploy: false\n"
+        , ATryIntegrate "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "a39") [] False
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI \x2026"
         , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](https://status.example.com/b71) started."
@@ -2870,6 +2900,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #12: Twelfth PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 12,Branch "refs/pull/12/head",Sha "12a")
                         []
@@ -2903,6 +2934,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #12: Twelfth PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 12,Branch "refs/pull/12/head",Sha "12a")
                         []
@@ -2940,6 +2972,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #12: Twelfth PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 12,Branch "refs/pull/12/head",Sha "12a")
                         []
@@ -2993,6 +3026,7 @@ main = hspec $ do
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
           , ATryIntegrate "Merge #12: Twelfth PR\n\n\
                           \Approved-by: deckard\n\
+                          \Priority: Normal\n\
                           \Auto-deploy: false\n"
                           (PullRequestId 12,Branch "refs/pull/12/head",Sha "12a")
                           []
@@ -3004,6 +3038,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
           , ATryIntegrate "Merge #13: Thirteenth PR\n\n\
                           \Approved-by: deckard\n\
+                          \Priority: Normal\n\
                           \Auto-deploy: false\n"
                           (PullRequestId 13,Branch "refs/pull/13/head",Sha "13a")
                           [PullRequestId 12]
@@ -3052,6 +3087,7 @@ main = hspec $ do
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
           , ATryIntegrate "Merge #12: Twelfth PR\n\n\
                           \Approved-by: deckard\n\
+                          \Priority: Normal\n\
                           \Auto-deploy: false\n"
                           (PullRequestId 12,Branch "refs/pull/12/head",Sha "12a")
                           []
@@ -3097,6 +3133,7 @@ main = hspec $ do
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
           , ATryIntegrate "Merge #12: Twelfth PR\n\n\
                           \Approved-by: deckard\n\
+                          \Priority: Normal\n\
                           \Auto-deploy: false\n"
                           (PullRequestId 12,Branch "refs/pull/12/head",Sha "12a")
                           []
@@ -3141,6 +3178,7 @@ main = hspec $ do
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
           , ATryIntegrate "Merge #12: Twelfth PR\n\n\
                           \Approved-by: deckard\n\
+                          \Priority: Normal\n\
                           \Auto-deploy: false\n"
                           (PullRequestId 12,Branch "refs/pull/12/head",Sha "12a")
                           []
@@ -3183,6 +3221,7 @@ main = hspec $ do
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
           , ATryIntegrate "Merge #12: Twelfth PR\n\n\
                           \Approved-by: deckard\n\
+                          \Priority: Normal\n\
                           \Auto-deploy: false\n"
                           (PullRequestId 12,Branch "refs/pull/12/head",Sha "12a")
                           []
@@ -3228,6 +3267,7 @@ main = hspec $ do
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
           , ATryIntegrate "Merge #12: Twelfth PR\n\n\
                           \Approved-by: deckard\n\
+                          \Priority: Normal\n\
                           \Auto-deploy: false\n"
                           (PullRequestId 12,Branch "refs/pull/12/head",Sha "12a")
                           []
@@ -3270,6 +3310,7 @@ main = hspec $ do
               , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
               , ATryIntegrate "Merge #12: Twelfth PR\n\n\
                               \Approved-by: deckard\n\
+                              \Priority: Normal\n\
                               \Auto-deploy: false\n"
                               (PullRequestId 12,Branch "refs/pull/12/head",Sha "12a")
                               []
@@ -3325,7 +3366,7 @@ main = hspec $ do
           commonActions =
             [ AIsReviewer (Username "deckard")
             , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-            , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nAuto-deploy: false\n" (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
+            , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
             , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI \8230"
             , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](url) started."
             , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nThe [build failed :x:](url).\n\nIf this is the result of a flaky test, then tag me again with the `retry` command.  Otherwise, push a new commit and tag me again."
@@ -3369,7 +3410,7 @@ main = hspec $ do
           [ AIsReviewer (Username "deckard")
           , ACleanupTestBranch (PullRequestId 12)
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard (retried by @deckard), rebasing now."
-          , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nAuto-deploy: false\n"  (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
+          , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"  (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 00f, waiting for CI …"
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](url2) started."
           , ATryForcePush (Branch "tth") (Sha "00f")
@@ -3397,7 +3438,7 @@ main = hspec $ do
           [ AIsReviewer (Username "deckard")
           , ACleanupTestBranch (PullRequestId 12)
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard (retried by @deckard), rebasing now."
-          , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nAuto-deploy: false\n"  (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
+          , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"  (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 00f, waiting for CI …"
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](url2) started."
           , ATryForcePush (Branch "tth") (Sha "00f")
@@ -3429,7 +3470,7 @@ main = hspec $ do
             actions' =
               [ AIsReviewer (Username "deckard")
               , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-              , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nAuto-deploy: false\n" (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
+              , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
               , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI \8230"
               , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](url) started."
               , AIsReviewer (Username "deckard")
@@ -3478,6 +3519,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #19: Nineteenth PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 19, Branch "refs/pull/19/head", Sha "19a")
                         []
@@ -3492,6 +3534,7 @@ main = hspec $ do
                        "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #36: Thirty-sixth PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 36, Branch "refs/pull/36/head", Sha "36b")
                         []
@@ -3581,6 +3624,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -3592,6 +3636,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -3603,6 +3648,7 @@ main = hspec $ do
                         \waiting for rebase behind 2 pull requests."
         , ATryIntegrate "Merge #3: Third PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                         [PullRequestId 1, PullRequestId 2]
@@ -3612,6 +3658,7 @@ main = hspec $ do
         , ACleanupTestBranch (PullRequestId 1)
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         []
@@ -3619,6 +3666,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 5bc, waiting for CI …"
         , ATryIntegrate "Merge #3: Third PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                         [PullRequestId 2]
@@ -3656,6 +3704,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -3667,6 +3716,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -3679,6 +3729,7 @@ main = hspec $ do
                         \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #3: Third PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                         [PullRequestId 1]
@@ -3724,6 +3775,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -3735,6 +3787,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -3747,6 +3800,7 @@ main = hspec $ do
                         \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #3: Third PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                         [PullRequestId 1]
@@ -3759,6 +3813,7 @@ main = hspec $ do
         -- Since #1 failed, #2 takes over as the head of the new merge train
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         []
@@ -3766,6 +3821,7 @@ main = hspec $ do
         , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 5bc, waiting for CI …"
         , ATryIntegrate "Merge #3: Third PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                         [PullRequestId 2]
@@ -3799,6 +3855,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -3810,6 +3867,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -3852,6 +3910,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -3863,6 +3922,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -3877,6 +3937,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #3: Third PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                         [PullRequestId 1]
@@ -3890,6 +3951,7 @@ main = hspec $ do
                        \waiting for rebase behind 2 pull requests."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "c2d")
                         [PullRequestId 1, PullRequestId 3]
@@ -3927,6 +3989,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -3938,6 +4001,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -3976,6 +4040,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -3987,6 +4052,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -4023,6 +4089,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -4034,6 +4101,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -4046,6 +4114,7 @@ main = hspec $ do
         -- #2 is integrated again as its speculative base failed
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         []
@@ -4087,6 +4156,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -4098,6 +4168,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -4111,6 +4182,7 @@ main = hspec $ do
         -- #2 is integrated again as its speculative base failed
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         []
@@ -4151,6 +4223,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -4162,6 +4235,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -4199,6 +4273,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -4210,6 +4285,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -4250,6 +4326,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -4261,6 +4338,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -4272,6 +4350,7 @@ main = hspec $ do
                                           \Otherwise, push a new commit and tag me again."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         []
@@ -4307,6 +4386,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -4318,6 +4398,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -4329,6 +4410,7 @@ main = hspec $ do
                                           \Otherwise, push a new commit and tag me again."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         []
@@ -4364,6 +4446,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -4375,6 +4458,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -4384,6 +4468,7 @@ main = hspec $ do
         , ACleanupTestBranch (PullRequestId 1)
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         []
@@ -4452,6 +4537,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -4463,6 +4549,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -4475,6 +4562,7 @@ main = hspec $ do
                         \waiting for rebase behind 2 pull requests."
         , ATryIntegrate "Merge #3: Third PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                         [PullRequestId 1, PullRequestId 2]
@@ -4552,6 +4640,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #9: Ninth PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 9, Branch "refs/pull/9/head", Sha "ab9")
                         []
@@ -4563,6 +4652,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #8: Eighth PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 8, Branch "refs/pull/8/head", Sha "cd8")
                         [PullRequestId 9]
@@ -4575,6 +4665,7 @@ main = hspec $ do
                         \waiting for rebase behind 2 pull requests."
         , ATryIntegrate "Merge #7: Seventh PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 7, Branch "refs/pull/7/head", Sha "ef7")
                         [PullRequestId 9, PullRequestId 8]
@@ -4592,6 +4683,7 @@ main = hspec $ do
         -- Since #8 failed, #7 becomes the head of a new train and is rebased again
         , ATryIntegrate "Merge #7: Seventh PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 7, Branch "refs/pull/7/head", Sha "ef7")
                         []
@@ -4669,6 +4761,7 @@ main = hspec $ do
                         "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
         , ATryIntegrate "Merge #1: First PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
@@ -4680,6 +4773,7 @@ main = hspec $ do
                        \waiting for rebase behind one pull request."
         , ATryIntegrate "Merge #2: Second PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
@@ -4692,6 +4786,7 @@ main = hspec $ do
                         \waiting for rebase behind 2 pull requests."
         , ATryIntegrate "Merge #3: Third PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                         [PullRequestId 1, PullRequestId 2]
@@ -4703,6 +4798,7 @@ main = hspec $ do
                         \waiting for rebase behind 3 pull requests."
         , ATryIntegrate "Merge #4: Fourth PR\n\n\
                         \Approved-by: deckard\n\
+                        \Priority: Normal\n\
                         \Auto-deploy: false\n"
                         (PullRequestId 4, Branch "refs/pull/4/head", Sha "fe4")
                         [PullRequestId 1, PullRequestId 2, PullRequestId 3]
@@ -4765,7 +4861,7 @@ main = hspec $ do
           `shouldBe` [ AIsReviewer (Username "deckard")
                     , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
                     , ATryIntegrate
-                          { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+                          { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                           , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                           , mergeTrain = []
                           , alwaysAddMergeCommit = False
@@ -4774,7 +4870,7 @@ main = hspec $ do
                     , AIsReviewer (Username "deckard")
                     , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
                     , ATryIntegrate
-                          { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+                          { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                           , integrationCandidate = (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                           , mergeTrain = [PullRequestId 1]
                           , alwaysAddMergeCommit = False
@@ -4786,14 +4882,14 @@ main = hspec $ do
                     , ACleanupTestBranch (PullRequestId 1)
                     , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
                     , ATryIntegrate
-                          { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+                          { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                           , integrationCandidate = (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                           , mergeTrain = []
                           , alwaysAddMergeCommit = False
                           }
                     , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
                     , ATryIntegrate
-                          { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+                          { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                           , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                           , mergeTrain = [PullRequestId 2]
                           , alwaysAddMergeCommit = False
@@ -4802,7 +4898,7 @@ main = hspec $ do
                     , AIsReviewer (Username "deckard")
                     , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind 2 pull requests."
                     , ATryIntegrate
-                          { mergeMessage = "Merge #3: Third PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+                          { mergeMessage = "Merge #3: Third PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                           , integrationCandidate = (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                           , mergeTrain = [PullRequestId 2, PullRequestId 1]
                           , alwaysAddMergeCommit = False
@@ -4847,7 +4943,7 @@ main = hspec $ do
           `shouldBe` [ AIsReviewer (Username "deckard")
                     , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
                     , ATryIntegrate
-                          { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+                          { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                           , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                           , mergeTrain = []
                           , alwaysAddMergeCommit = False
@@ -4856,7 +4952,7 @@ main = hspec $ do
                     , AIsReviewer (Username "deckard")
                     , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
                     , ATryIntegrate
-                          { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+                          { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                           , integrationCandidate = (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                           , mergeTrain = [PullRequestId 1]
                           , alwaysAddMergeCommit = False
@@ -4903,7 +4999,7 @@ main = hspec $ do
           `shouldBe` [ AIsReviewer (Username "deckard")
                      , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
                      , ATryIntegrate
-                          { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+                          { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                           , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                           , mergeTrain = []
                           , alwaysAddMergeCommit = False
@@ -4912,7 +5008,7 @@ main = hspec $ do
                      , AIsReviewer (Username "deckard")
                      , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
                      , ATryIntegrate
-                          { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+                          { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                           , integrationCandidate = (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                           , mergeTrain = [PullRequestId 1]
                           , alwaysAddMergeCommit = False
@@ -4923,14 +5019,14 @@ main = hspec $ do
                      , ACleanupTestBranch (PullRequestId 1)
                      , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production by @deckard, waiting for rebase behind one pull request."
                      , ATryIntegrate
-                          { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nAuto-deploy: false\n"
+                          { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                           , integrationCandidate = (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                           , mergeTrain = []
                           , alwaysAddMergeCommit = False
                           }
                      , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
                      , ATryIntegrate
-                          { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
+                          { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                           , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                           , mergeTrain = [PullRequestId 2]
                           , alwaysAddMergeCommit = True
@@ -4944,3 +5040,296 @@ main = hspec $ do
                      , ALeaveComment (PullRequestId 1) "@deckard I tagged your PR with [v2](https://github.com/peter/rep/releases/tag/v2). It is scheduled for autodeploy!"
                      , ACleanupTestBranch (PullRequestId 1)
                      ]
+
+    it "handles a priority merge" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 1) (Branch "fst") masterBranch (Sha "ab1") "First PR"  (Username "tyrell")
+          $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
+          $ Project.insertPullRequest (PullRequestId 3) (Branch "trd") masterBranch (Sha "ef3") "Third PR"  (Username "rachael")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@someone Thanks for your review."
+          , CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab")
+          , CommentAdded (PullRequestId 3) "deckard" "@bot merge with priority"
+          , BuildStatusChanged (Sha "3cd") "default" (Project.BuildStarted "example.com/3cd")
+          , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded) -- PR#1, ignored
+          , BuildStatusChanged (Sha "3cd") "default" (Project.BuildSucceeded) -- PR#3
+          , PullRequestCommitChanged (PullRequestId 3) (Sha "3cd")
+          , PullRequestClosed (PullRequestId 3)
+          , BuildStatusChanged (Sha "1de") "default" (Project.BuildStarted "example.com/1de")
+          , BuildStatusChanged (Sha "1de") "default" (Project.BuildSucceeded) -- PR#1
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1de")
+          , PullRequestClosed (PullRequestId 1)
+          , BuildStatusChanged (Sha "2ef") "default" (Project.BuildStarted "example.com/2ef")
+          , BuildStatusChanged (Sha "2ef") "default" (Project.BuildSucceeded) -- PR#2
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "2ef")
+          , PullRequestClosed (PullRequestId 2)
+          ]
+        -- For this test, we assume all integrations and pushes succeed.
+        results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
+                                                     , Right (Sha "2bc")
+                                                     , Right (Sha "3cd")
+                                                     , Right (Sha "1de")
+                                                     , Right (Sha "2ef") ] }
+        run = runActionCustom results
+        actions = snd $ run $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 1)
+                        "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: First PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: Normal\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
+        , AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 2)
+                       "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, \
+                       \waiting for rebase behind one pull request."
+        , ATryIntegrate "Merge #2: Second PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: Normal\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
+                        [PullRequestId 1]
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2bc behind 1 other PR, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
+        , AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 3)
+                        "<!-- Hoff: ignore -->\nPull request approved for merge with high priority by @deckard, \
+                        \rebasing now."
+        , ATryIntegrate "Merge #3: Third PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: High\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
+        , ATryIntegrate "Merge #1: First PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: Normal\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                        [PullRequestId 3]
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nSpeculatively rebased as 1de behind 1 other PR, waiting for CI …"
+        , ATryIntegrate "Merge #2: Second PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: Normal\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
+                        [PullRequestId 3, PullRequestId 1]
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2ef behind 2 other PRs, waiting for CI …"
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3cd) started."
+        , ATryForcePush (Branch "trd") (Sha "3cd")
+        , ATryPromote (Sha "3cd")
+        , ACleanupTestBranch (PullRequestId 3)
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1de) started."
+        , ATryForcePush (Branch "fst") (Sha "1de")
+        , ATryPromote (Sha "1de")
+        , ACleanupTestBranch (PullRequestId 1)
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2ef) started."
+        , ATryForcePush (Branch "snd") (Sha "2ef")
+        , ATryPromote (Sha "2ef")
+        , ACleanupTestBranch (PullRequestId 2)
+        ]
+
+    it "handles a priority deploy" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 1) (Branch "fst") masterBranch (Sha "ab1") "First PR"  (Username "tyrell")
+          $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
+          $ Project.insertPullRequest (PullRequestId 3) (Branch "trd") masterBranch (Sha "ef3") "Third PR"  (Username "rachael")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@someone Thanks for your review."
+          , CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab")
+          , CommentAdded (PullRequestId 3) "deckard" "@bot merge and deploy to production with priority"
+          , BuildStatusChanged (Sha "3cd") "default" (Project.BuildStarted "example.com/3cd")
+          , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded) -- PR#1, ignored
+          , BuildStatusChanged (Sha "3cd") "default" (Project.BuildSucceeded) -- PR#3
+          , PullRequestCommitChanged (PullRequestId 3) (Sha "3cd")
+          , PullRequestClosed (PullRequestId 3)
+          , BuildStatusChanged (Sha "1de") "default" (Project.BuildStarted "example.com/1de")
+          , BuildStatusChanged (Sha "1de") "default" (Project.BuildSucceeded) -- PR#1
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1de")
+          , PullRequestClosed (PullRequestId 1)
+          , BuildStatusChanged (Sha "2ef") "default" (Project.BuildStarted "example.com/2ef")
+          , BuildStatusChanged (Sha "2ef") "default" (Project.BuildSucceeded) -- PR#2
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "2ef")
+          , PullRequestClosed (PullRequestId 2)
+          ]
+        -- For this test, we assume all integrations and pushes succeed.
+        results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
+                                                     , Right (Sha "2bc")
+                                                     , Right (Sha "3cd")
+                                                     , Right (Sha "1de")
+                                                     , Right (Sha "2ef") ]
+                                  , resultGetChangelog = [Just "changelog"] }
+        run = runActionCustom results
+        actions = snd $ run $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 1)
+                        "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: First PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: Normal\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
+        , AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 2)
+                       "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, \
+                       \waiting for rebase behind one pull request."
+        , ATryIntegrate "Merge #2: Second PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: Normal\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
+                        [PullRequestId 1]
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2bc behind 1 other PR, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
+        , AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 3)
+                        "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to production with high priority by @deckard, \
+                        \rebasing now."
+        , ATryIntegrate "Merge #3: Third PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: High\n\
+                        \Auto-deploy: true\n\
+                        \Deploy-Environment: production\n\
+                        \Deploy-Subprojects: all\n"
+                        (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
+                        []
+                        True
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
+        , ATryIntegrate "Merge #1: First PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: Normal\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                        [PullRequestId 3]
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nSpeculatively rebased as 1de behind 1 other PR, waiting for CI …"
+        , ATryIntegrate "Merge #2: Second PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: Normal\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
+                        [PullRequestId 3, PullRequestId 1]
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2ef behind 2 other PRs, waiting for CI …"
+        , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3cd) started."
+        , ATryForcePush (Branch "trd") (Sha "3cd")
+        , ATryPromoteWithTag (Sha "3cd") (TagName "v2") (TagMessage "v2 (autodeploy)\n\nchangelog")
+        , ALeaveComment (PullRequestId 3) "@deckard I tagged your PR with [v2](https://github.com/peter/rep/releases/tag/v2). It is scheduled for autodeploy!"
+        , ACleanupTestBranch (PullRequestId 3)
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1de) started."
+        , ATryForcePush (Branch "fst") (Sha "1de")
+        , ATryPromote (Sha "1de")
+        , ACleanupTestBranch (PullRequestId 1)
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2ef) started."
+        , ATryForcePush (Branch "snd") (Sha "2ef")
+        , ATryPromote (Sha "2ef")
+        , ACleanupTestBranch (PullRequestId 2)
+        ]
+
+    it "handles a priority retry" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 1) (Branch "fst") masterBranch (Sha "ab1") "First PR"  (Username "tyrell")
+          $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab")
+          , BuildStatusChanged (Sha "1ab") "default" (Project.BuildFailed (Just "example.com/1ab"))
+          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "2bc") "default" (Project.BuildStarted "example.com/2bc")
+          , CommentAdded (PullRequestId 1) "deckard" "@bot retry with priority"
+          , BuildStatusChanged (Sha "1cd") "default" (Project.BuildStarted "example.com/1cd")
+          , BuildStatusChanged (Sha "1cd") "default" (Project.BuildSucceeded) -- PR#2
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1cd")
+          , PullRequestClosed (PullRequestId 1)
+          , BuildStatusChanged (Sha "2de") "default" (Project.BuildStarted "example.com/2de")
+          , BuildStatusChanged (Sha "2de") "default" (Project.BuildSucceeded) -- PR#1
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "2de")
+          , PullRequestClosed (PullRequestId 2)
+          ]
+        -- For this test, we assume all integrations and pushes succeed.
+        results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
+                                                     , Right (Sha "2bc")
+                                                     , Right (Sha "1cd")
+                                                     , Right (Sha "2de") ] }
+        run = runActionCustom results
+        actions = snd $ run $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 1)
+                        "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: First PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: Normal\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nThe [build failed :x:](example.com/1ab).\n\nIf this is the result of a flaky test, then tag me again with the `retry` command.  Otherwise, push a new commit and tag me again."
+        , AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 2)
+                       "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #2: Second PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: Normal\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
+        , AIsReviewer "deckard"
+        , ACleanupTestBranch (PullRequestId 1)
+        , ALeaveComment (PullRequestId 1)
+                        "<!-- Hoff: ignore -->\nPull request approved for merge with high priority by @deckard (retried by @deckard), rebasing now."
+        , ATryIntegrate "Merge #1: First PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: High\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1cd, waiting for CI …"
+        , ATryIntegrate "Merge #2: Second PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: Normal\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
+                        [PullRequestId 1]
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2de behind 1 other PR, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1cd) started."
+        , ATryForcePush (Branch "fst") (Sha "1cd")
+        , ATryPromote (Sha "1cd")
+        , ACleanupTestBranch (PullRequestId 1)
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2de) started."
+        , ATryForcePush (Branch "snd") (Sha "2de")
+        , ATryPromote (Sha "2de")
+        , ACleanupTestBranch (PullRequestId 2)
+        ]

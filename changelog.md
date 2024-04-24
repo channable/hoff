@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.34.0
+
+Release 2024-04-25
+
+  - Adds the option to jump the merge train. This can be done using `with priority` at the end of the merge command.
+  - Adds the merge priority to the merge commit message as `Priority: <priority>`.
+
 ## 0.33.2
 
 Release 2024-03-29
