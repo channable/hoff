@@ -19,7 +19,7 @@ import Data.ByteString (ByteString)
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
 import Network.HTTP.Types (badRequest400, notFound404, noContent204, notImplemented501, serviceUnavailable503)
-import Web.Scotty (ActionM, ScottyM, body, get, header, jsonData, notFound, param, post, raw, scottyApp, setHeader, status, text)
+import Web.Scotty (ActionM, ScottyM, body, captureParam, get, header, jsonData, notFound, post, raw, scottyApp, setHeader, status, text)
 import Web.Scotty.Internal.Types (RoutePattern(Literal))
 
 import qualified Data.ByteString.Base16 as Base16
@@ -177,7 +177,7 @@ serveStyles = do
 
 serveWebInterfaceOwner :: (Owner -> IO [(ProjectInfo, ProjectState)]) -> ActionM ()
 serveWebInterfaceOwner getOwnerState = do
-  owner <- param "owner"
+  owner <- captureParam "owner"
   states <- liftIO $ getOwnerState owner
   setHeader "Content-Type" "text/html; charset=utf-8"
   let title = owner
@@ -185,8 +185,8 @@ serveWebInterfaceOwner getOwnerState = do
 
 serveWebInterfaceProject :: (ProjectInfo -> Maybe (IO ProjectState)) -> ActionM ()
 serveWebInterfaceProject getProjectState = do
-  owner <- param "owner"
-  repo  <- param "repo"
+  owner <- captureParam "owner"
+  repo  <- captureParam "repo"
   let info = ProjectInfo owner repo
   case getProjectState info of
     Nothing -> do
