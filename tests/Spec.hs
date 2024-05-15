@@ -5333,3 +5333,56 @@ main = hspec $ do
         , ATryPromote (Sha "2de")
         , ACleanupTestBranch (PullRequestId 2)
         ]
+
+    it "handles a priority merge with a failed PR" $ do
+      let
+        state
+          = Project.insertPullRequest (PullRequestId 1) (Branch "fst") masterBranch (Sha "ab1") "First PR"  (Username "tyrell")
+          $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
+          $ Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab")
+          , BuildStatusChanged (Sha "1ab") "default" (Project.BuildFailed (Just "example.com/1ab"))
+          , CommentAdded (PullRequestId 2) "deckard" "@bot merge with priority"
+          , BuildStatusChanged (Sha "2bc") "default" (Project.BuildStarted "example.com/2bc")
+          , BuildStatusChanged (Sha "2bc") "default" (Project.BuildSucceeded) -- PR#1
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "2bc")
+          , PullRequestClosed (PullRequestId 2)
+          ]
+        -- For this test, we assume all integrations and pushes succeed.
+        results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
+                                                     , Right (Sha "2bc")
+                                                     , Right (Sha "2de") ] }
+        run = runActionCustom results
+        actions = snd $ run $ handleEventsTest events state
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 1)
+                        "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate "Merge #1: First PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: Normal\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
+        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nThe [build failed :x:](example.com/1ab).\n\nIf this is the result of a flaky test, then tag me again with the `retry` command.  Otherwise, push a new commit and tag me again."
+        , AIsReviewer "deckard"
+        , ALeaveComment (PullRequestId 2)
+                       "<!-- Hoff: ignore -->\nPull request approved for merge with high priority by @deckard, rebasing now."
+        , ATryIntegrate "Merge #2: Second PR\n\n\
+                        \Approved-by: deckard\n\
+                        \Priority: High\n\
+                        \Auto-deploy: false\n"
+                        (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
+                        []
+                        False
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
+        , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
+        , ATryForcePush (Branch "snd") (Sha "2bc")
+        , ATryPromote (Sha "2bc")
+        , ACleanupTestBranch (PullRequestId 2)
+        ]

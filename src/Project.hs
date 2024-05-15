@@ -75,6 +75,7 @@ module Project
   filterPullRequestsBy,
   approvedAfter,
   isIntegrated,
+  isFailedIntegrated,
   isUnfailedIntegrated,
   subMapByOwner,
   supersedes,

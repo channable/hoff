@@ -725,19 +725,26 @@ doMerge projectConfig prId author state pr approvalType priority retriedBy = do
       Normal -> pure state''
       -- When we have a priority merge we put the new pull request at the front of the merge train.
       -- To do this we give the new PR the new order number.
-      -- After this we update all PRs that are in the current merge train to be not integration 
-      -- and are after the new PR in the train.
+      -- After this we update all PRs that are in the current merge train to be not integrated
+      -- and after the new PR in the train.
+      -- The current merge train is determined as all known PRs that are integrated and
+      -- either not failed or after a not failed PR.
       High -> do
         let train = Pr.filterPullRequestsBy Pr.isIntegratedOrSpeculativelyConflicted state''
             setNewOrder newOrder pullRequest = pullRequest{
               Pr.integrationStatus = NotIntegrated, 
               Pr.approval = (\x -> x{Pr.approvalOrder = newOrder}) <$> Pr.approval pullRequest
             }
-            updatePullRequest currState pid = 
+            updatePullRequest (currState, started) pid =
               let (order', nextState) = Pr.newApprovalOrder currState
                   nextState' = Pr.updatePullRequest pid (setNewOrder order') nextState
-              in nextState'
-        pure $ foldl' updatePullRequest state'' train
+              in
+                if started
+                  then (nextState', True)
+                  else case Pr.isFailedIntegrated . Pr.integrationStatus <$> Pr.lookupPullRequest pid currState of
+                    Just True -> (currState, False)
+                    _         -> (nextState', True)
+        pure $ fst $ foldl' updatePullRequest (state'', False) train
 
 -- | Someone issued a `merge*` command on a PR. Depending on what the current
 -- integration state of that PR is, we might reset its state and retry, if it
