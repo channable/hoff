@@ -22,6 +22,7 @@ import Network.HTTP.Types (badRequest400, notFound404, noContent204, notImplemen
 import Web.Scotty (ActionM, ScottyM, body, captureParam, get, header, jsonData, notFound, post, raw, scottyApp, setHeader, status, text)
 import Web.Scotty.Internal.Types (RoutePattern(Literal))
 
+import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Base16 as Base16
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as Text
@@ -47,13 +48,14 @@ router
   -> (Owner -> IO [(ProjectInfo, ProjectState)])
   -> ScottyM ()
 router infos ghSecret serveEnqueueEvent getProjectState getOwnerState = do
-  get  "/"             $ serveIndex infos
-  get  styleRoute      $ serveStyles
-  post "/hook/github"  $ withSignatureCheck ghSecret $ serveGithubWebhook serveEnqueueEvent
-  get  "/hook/github"  $ serveWebhookDocs
-  get  "/:owner"       $ serveWebInterfaceOwner getOwnerState
-  get  "/:owner/:repo" $ serveWebInterfaceProject getProjectState
-  notFound             $ serveNotFound
+  get  "/"                 $ serveIndex infos
+  get  styleRoute          $ serveStyles
+  post "/hook/github"      $ withSignatureCheck ghSecret $ serveGithubWebhook serveEnqueueEvent
+  get  "/hook/github"      $ serveWebhookDocs
+  get  "/:owner"           $ serveWebInterfaceOwner getOwnerState
+  get  "/:owner/:repo"     $ serveWebInterfaceProject getProjectState
+  get  "/api/:owner/:repo" $ serveAPIproject getProjectState
+  notFound                 $ serveNotFound
 
 styleRoute :: RoutePattern
 styleRoute = Literal $ LT.fromStrict WebInterface.stylesheetUrl
@@ -137,7 +139,7 @@ serveGithubWebhook serveEnqueueEvent = do
 
       -- Send a 204 (NoContent) to prevent GitHub interpreting it as an error.
       status noContent204
-      
+
     Nothing -> do
       status notImplemented501
       text "hook ignored, the event type is not supported"
@@ -197,6 +199,21 @@ serveWebInterfaceProject getProjectState = do
       setHeader "Content-Type" "text/html; charset=utf-8"
       let title = Text.concat [owner, "/", repo]
       raw $ WebInterface.renderPage title $ WebInterface.viewProject info state
+
+
+serveAPIproject :: (ProjectInfo -> Maybe (IO ProjectState)) -> ActionM ()
+serveAPIproject getProjectState = do
+  owner <- captureParam "owner"
+  repo  <- captureParam "repo"
+  let info = ProjectInfo owner repo
+  case getProjectState info of
+    Nothing -> do
+      status notFound404
+      text "not found"
+    Just getState -> do
+      state <- liftIO $ getState
+      setHeader "Content-Type" "application/json; charset=utf-8"
+      raw $ Aeson.encode state
 
 serveNotFound :: ActionM ()
 serveNotFound = do
