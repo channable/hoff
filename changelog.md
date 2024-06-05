@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.35.0
+
+Release 2024-06-05
+
+  - Adds an API endpoint to retrieve the status per project: /api/{owner}/{repo}. This endpoint
+    returns the status object verbatim.
+
 ## 0.34.0
 
 Release 2024-04-25
