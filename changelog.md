@@ -1,10 +1,16 @@
 # Changelog
 
-## 0.34.1
+## 0.35.1
 
 Release 2024-06-17
 
   - Fixes an issue with retying failed PRs after a priority merge.
+
+## 0.35.0
+
+Release 2024-06-05
+
+  - Adds APi endpoint to get project status
 
 ## 0.34.0
 
