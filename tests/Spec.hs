@@ -955,7 +955,7 @@ main = hspec $ do
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (_, actions) = runActionCustomConfig (testProjectConfig{Config.deployEnvironments = Just []}) results $ handleEventTest event state
 
-      actions `shouldBe` [ALeaveComment prId "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:22:\n      |\n    1 | @bot merge and deploy\n      |                      ^\n    No deployment environments have been configured.\n"]
+      actions `shouldBe` [ALeaveComment prId "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:22:\n      |\n    1 | @bot merge and deploy\n      |                      ^\n    No deployment environments have been configured.\n[Basic usage is explained here.](https://github.com/channable/hoff/blob/master/readme.md#using-hoff)"]
 
     it "allows the 'merge and deploy on Friday' command when there is only one deployment environment configured " $ do
       let
@@ -1012,7 +1012,7 @@ main = hspec $ do
         ]
 
     it "rejects merge and deploy without an environment specified if multiple environments are configured"
-      $ expectSimpleParseFailure  "@bot merge and deploy" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:22:\n      |\n    1 | @bot merge and deploy\n      |                      ^\n    Merge and deploy has been deprecated. Please use merge and deploy to <environment>\n    where <environment> is one of production, staging\n"
+      $ expectSimpleParseFailure  "@bot merge and deploy" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:22:\n      |\n    1 | @bot merge and deploy\n      |                      ^\n    Merge and deploy has been deprecated. Please use merge and deploy to <environment>\n    where <environment> is one of production, staging\n[Basic usage is explained here.](https://github.com/channable/hoff/blob/master/readme.md#using-hoff)"
 
     it "recognizes 'merge and deploy on Friday' commands as the proper ApprovedFor value" $ do
       let
@@ -1204,7 +1204,7 @@ main = hspec $ do
         (\pr -> Project.approval pr == Just (Approval (Username "deckard") Project.Merge 0 Nothing Normal))
 
     it "notifies when command not recognized"
-      $ expectSimpleParseFailure  "@bot mergre" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:6:\n      |\n    1 | @bot mergre\n      |      ^^^^^\n    unexpected \"mergr\"\n    expecting \"merge\", \"retry\", or white space\n"
+      $ expectSimpleParseFailure  "@bot mergre" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:6:\n      |\n    1 | @bot mergre\n      |      ^^^^^\n    unexpected \"mergr\"\n    expecting \"merge\", \"retry\", or white space\n[Basic usage is explained here.](https://github.com/channable/hoff/blob/master/readme.md#using-hoff)"
 
     it "allow 'merge' on Friday for exempted users" $ do
       let
@@ -1534,7 +1534,7 @@ main = hspec $ do
     -- Previous versions of Hoff would still match the @merge and deploy@ part
     -- and deploy to the default environment instead
     it "rejects 'merge and deploy to prohno' with an error message"
-      $ expectSimpleParseFailure  "@bot merge and deploy to prohno" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:26:\n      |\n    1 | @bot merge and deploy to prohno\n      |                          ^^^^^^\n    unexpected \"prohno\"\n    expecting \"production\", \"staging\", or white space\n"
+      $ expectSimpleParseFailure  "@bot merge and deploy to prohno" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:26:\n      |\n    1 | @bot merge and deploy to prohno\n      |                          ^^^^^^\n    unexpected \"prohno\"\n    expecting \"production\", \"staging\", or white space\n[Basic usage is explained here.](https://github.com/channable/hoff/blob/master/readme.md#using-hoff)"
 
     it "allows merge commands followed by a period at the end of a sentence" $ do
       let
@@ -1563,7 +1563,7 @@ main = hspec $ do
     -- commands are added take freeform strings as their arguments (e.g. tag
     -- messages).
     it "rejects merge commands when it is followed by another sentence before a line break"
-      $ expectSimpleParseFailure  "@bot merge and deploy to staging. Done!" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:35:\n      |\n    1 | @bot merge and deploy to staging. Done!\n      |                                   ^\n    Merge commands may not be followed by anything other than a punctuation character ('.', ',', '!', '?', ':', ';').\n"
+      $ expectSimpleParseFailure  "@bot merge and deploy to staging. Done!" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:35:\n      |\n    1 | @bot merge and deploy to staging. Done!\n      |                                   ^\n    Merge commands may not be followed by anything other than a punctuation character ('.', ',', '!', '?', ':', ';').\n[Basic usage is explained here.](https://github.com/channable/hoff/blob/master/readme.md#using-hoff)"
 
     -- This is already implicitly checked in 'expectSimpleParseFailure', you can
     -- never be too sure

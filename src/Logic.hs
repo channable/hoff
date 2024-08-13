@@ -689,9 +689,15 @@ handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId a
           -- the oldschool four space markdown code blocks instead of fenced
           -- code blocks since it's less ambiguous.
           let monospaceMessage = Text.unlines . map ("    " <>) . Text.lines $ message
-              -- NOTE: This comment is added to prevent feedback loops, see
-              --       'shouldIgnoreComment'
-              fullComment = hoffIgnoreComment <> "Unknown or invalid command found:\n\n" <> monospaceMessage
+              usageLink = "https://github.com/channable/hoff/blob/master/readme.md#using-hoff"
+              usageInstructions = "[Basic usage is explained here.](" <> usageLink <> ")"
+              fullComment =
+                -- NOTE: This comment is added to prevent feedback loops, see
+                --       'shouldIgnoreComment'
+                hoffIgnoreComment
+                  <> "Unknown or invalid command found:\n\n"
+                  <> monospaceMessage
+                  <> usageInstructions
           () <- leaveComment prId fullComment
           pure state
         -- Cases where the parse was successful
@@ -732,7 +738,7 @@ doMerge projectConfig prId author state pr approvalType priority retriedBy = do
       High -> do
         let train = Pr.filterPullRequestsBy Pr.isIntegratedOrSpeculativelyConflicted state''
             setNewOrder newOrder pullRequest = pullRequest{
-              Pr.integrationStatus = NotIntegrated, 
+              Pr.integrationStatus = NotIntegrated,
               Pr.approval = (\x -> x{Pr.approvalOrder = newOrder}) <$> Pr.approval pullRequest
             }
             updatePullRequest (currState, started) pid =
