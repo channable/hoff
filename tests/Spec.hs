@@ -18,7 +18,8 @@
 import Data.Aeson (decode, encode, eitherDecode)
 import Data.ByteString.Lazy (readFile)
 import Data.Either (isRight)
-import Data.Foldable (foldlM)
+import Data.Foldable (foldlM, for_)
+import Data.Function ((&))
 import Data.IntSet (IntSet)
 import Data.List (group)
 import Data.Maybe (fromJust, isNothing)
@@ -767,7 +768,8 @@ main = hspec $ do
 
     it "handles merge command in body of pull request" $ do
       let
-        event = PullRequestOpened (PullRequestId 1) (Branch "p") masterBranch (Sha "e0f") "title" "deckard" (Just "@bot merge")
+        prId = PullRequestId 1
+        event = PullRequestOpened prId (Branch "p") masterBranch (Sha "e0f") "title" "deckard" (Just "@bot merge")
         -- For this test, we assume all integrations and pushes succeed.
         results = defaultResults
           { resultIntegrate = [Right (Sha "b71")] }
@@ -776,10 +778,10 @@ main = hspec $ do
 
       actions `shouldBe`
         [ AIsReviewer "deckard"
-        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , AAddReaction (OnPullRequest prId) GithubApi.PlusOne
         , ATryIntegrate "Merge #1: title\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
-                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "e0f") [] False
-        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
+                        (prId, Branch "refs/pull/1/head", Sha "e0f") [] False
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
         ]
       classifiedPullRequestIds state' `shouldBe` ClassifiedPullRequestIds
         { building = [PullRequestId 1]
@@ -790,10 +792,11 @@ main = hspec $ do
 
     it "does not handle merge command in body of reopened pull request" $ do
       let
+        prId = PullRequestId 1
         events =
-          [ PullRequestOpened (PullRequestId 1) (Branch "p") masterBranch (Sha "e0f") "title" "deckard" (Just "@bot merge")
-          , PullRequestClosed (PullRequestId 1)
-          , PullRequestOpened (PullRequestId 1) (Branch "p") masterBranch (Sha "e0f") "title" "deckard" Nothing
+          [ PullRequestOpened prId (Branch "p") masterBranch (Sha "e0f") "title" "deckard" (Just "@bot merge")
+          , PullRequestClosed prId
+          , PullRequestOpened prId (Branch "p") masterBranch (Sha "e0f") "title" "deckard" Nothing
           ]
         -- For this test, we assume all integrations and pushes succeed.
         results = defaultResults
@@ -803,11 +806,11 @@ main = hspec $ do
 
       actions `shouldBe`
         [ AIsReviewer "deckard"
-        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , AAddReaction (OnPullRequest prId) GithubApi.PlusOne
         , ATryIntegrate "Merge #1: title\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
-                        (PullRequestId 1, Branch "refs/pull/1/head", Sha "e0f") [] False
-        , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
-        , ALeaveComment (PullRequestId 1) "Abandoning this pull request because it was closed."
+                        (prId, Branch "refs/pull/1/head", Sha "e0f") [] False
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
+        , ALeaveComment prId "Abandoning this pull request because it was closed."
         , ACleanupTestBranch (PullRequestId 1)
         ]
       classifiedPullRequestIds state' `shouldBe` ClassifiedPullRequestIds
@@ -933,6 +936,59 @@ main = hspec $ do
 
       fromJust (Project.lookupPullRequest prId state') `shouldSatisfy`
         (\pr -> (Project.approval pr >>= Project.approvalSource) == Just (OnPullRequest prId))
+
+    it "adds a reaction to a 'merge' command in the common case" $ do
+      let
+        prId = PullRequestId 1
+        commentId = CommentId 42
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" (Just commentId) "@bot merge"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
+        (_state', actions) = runActionCustom results $ handleEventTest event state
+
+      actions `shouldContain` [AAddReaction (OnIssueComment commentId) GithubApi.PlusOne]
+
+    it "adds a reaction to a 'retry' command in the common case" $ do
+      let
+        prId = PullRequestId 1
+        mergeCommentId = CommentId 42
+        retryCommentId = CommentId 72
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "1b1") "tyrell"
+
+        events =
+          [ CommentAdded prId "deckard" (Just mergeCommentId) "@bot merge"
+          , BuildStatusChanged (Sha "1b3") "default" (Project.BuildFailed (Just "url"))
+          , CommentAdded prId "deckard" (Just retryCommentId) "@bot retry"
+          ]
+
+        results = defaultResults { resultIntegrate = [Right (Sha "1b3"), Right (Sha "00f")] }
+        (_state', actions) = runActionCustom results $ handleEventsTest events state
+
+      actions `shouldContain` [AAddReaction (OnIssueComment retryCommentId) GithubApi.PlusOne]
+
+    it "falls back to an ordinary comment if there are other PRs ahead in the queue" $ do
+      let
+        (prId1, prId2) = (PullRequestId 1, PullRequestId 2)
+        (mergeCommentId1, mergeCommentId2) = (CommentId 111, CommentId 222)
+        state =
+          Project.emptyProjectState
+            & Project.insertPullRequest (PullRequestId 1) (Branch "one") masterBranch (Sha "111") "First PR" (Username "person")
+            & Project.insertPullRequest (PullRequestId 2) (Branch "two") masterBranch (Sha "222") "Second PR" (Username "robot")
+        events =
+          [ CommentAdded prId1 "deckard" (Just mergeCommentId1) "@bot merge"
+          , CommentAdded prId2 "deckard" (Just mergeCommentId2) "@bot merge"
+          ]
+        results = defaultResults { resultIntegrate = [Right (Sha "11f"), Right (Sha "22f")] }
+        (_state', actions) = runActionCustom results $ handleEventsTest events state
+
+      actions `shouldContain` [ALeaveComment prId2 "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."]
+
+      -- We check that we don't add /any/ reaction, not just that we don't add :+1:.
+      let allPossibleReactions = [minBound .. maxBound]
+      for_ allPossibleReactions $ \reaction ->
+        actions `shouldNotContain` [AAddReaction (OnIssueComment mergeCommentId2) reaction]
 
     it "recognizes 'merge and deploy' commands as the proper ApprovedFor value" $ do
       let

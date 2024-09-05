@@ -1158,79 +1158,116 @@ proceedUntilFixedPoint state = do
     then return state
     else proceedUntilFixedPoint newState
 
--- Describe the status of the pull request.
-describeStatus :: BaseBranch -> PullRequestId -> PullRequest -> ProjectState -> Text
-describeStatus (BaseBranch projectBaseBranchName) prId pr state = case Pr.classifyPullRequest pr of
-  PrStatusAwaitingApproval -> "Pull request awaiting approval."
+-- | Feedback on a successfully parsed command.
+data Feedback
+  = -- | Leave a comment.
+    CommentFeedback Text
+  | -- | Leave only a reaction.
+    ReactionFeedback ReactableId GithubApi.ReactionContent
+
+-- | Determine what kind of feedback to leave based on the status of a PR.
+feedbackOnStatus :: BaseBranch -> PullRequestId -> PullRequest -> ProjectState -> Feedback
+feedbackOnStatus (BaseBranch projectBaseBranchName) prId pr state = case Pr.classifyPullRequest pr of
+  PrStatusAwaitingApproval -> CommentFeedback "Pull request awaiting approval."
   PrStatusApproved ->
     let
-      Approval (Username approvedBy) _source approvalType _position retriedBy priority = fromJust $ Pr.approval pr
+      Approval (Username approvedBy) source approvalType _position retriedBy priority = fromJust $ Pr.approval pr
 
       approvalCommand = Pr.displayMergeCommand (Approve approvalType)
       retriedByMsg = case retriedBy of
         Just user -> format " (retried by @{})" [user]
         Nothing -> mempty
-      queuePositionMsg = case Pr.getQueuePosition prId state of
+      queuePosition = Pr.getQueuePosition prId state
+      queuePositionMsg = case queuePosition of
         0 -> "rebasing now"
         1 -> "waiting for rebase behind one pull request"
         n -> format "waiting for rebase behind {} pull requests" [n]
       priorityMsg = case priority of
         Normal -> mempty
         High -> " with high priority"
-    in format "Pull request approved for {}{} by @{}{}, {}." [approvalCommand, priorityMsg, approvedBy, retriedByMsg, queuePositionMsg]
+     in
+      case (queuePosition, source) of
+        (0, Just reactable) -> ReactionFeedback reactable GithubApi.PlusOne
+        _ ->
+          CommentFeedback $
+            format
+              "Pull request approved for {}{} by @{}{}, {}."
+              [approvalCommand, priorityMsg, approvedBy, retriedByMsg, queuePositionMsg]
   PrStatusOutdated ->
     let BaseBranch baseBranchName = Pr.baseBranch pr
-    in format "Push to {} detected, rebasing again." [baseBranchName]
-  PrStatusBuildPending -> let Sha sha = fromJust $ Pr.integrationSha pr
-                              train   = takeWhile (/= prId) $ Pr.unfailedIntegratedPullRequests state
-                              len     = length train
-                              prs     = if len == 1 then "PR" else "PRs"
-                          in case train of
-                             []    -> Text.concat ["Rebased as ", sha, ", waiting for CI …"]
-                             (_:_) -> Text.concat [ "Speculatively rebased as ", sha
-                                                  , " behind ", Text.pack $ show len
-                                                  , " other ", prs
-                                                  , ", waiting for CI …"
-                                                  ]
-  PrStatusBuildStarted url -> Text.concat ["[CI job :yellow_circle:](", url, ") started."]
-  PrStatusAwaitingPromotion -> "The PR is waiting to be pushed to the target branch"
-  PrStatusIntegrated -> "The build succeeded."
+     in CommentFeedback $ format "Push to {} detected, rebasing again." [baseBranchName]
+  PrStatusBuildPending ->
+    let Sha sha = fromJust $ Pr.integrationSha pr
+        train = takeWhile (/= prId) $ Pr.unfailedIntegratedPullRequests state
+        len = length train
+        prs = if len == 1 then "PR" else "PRs"
+     in CommentFeedback $ case train of
+          [] -> Text.concat ["Rebased as ", sha, ", waiting for CI …"]
+          (_ : _) ->
+            Text.concat
+              [ "Speculatively rebased as "
+              , sha
+              , " behind "
+              , Text.pack $ show len
+              , " other "
+              , prs
+              , ", waiting for CI …"
+              ]
+  PrStatusBuildStarted url -> CommentFeedback $ Text.concat ["[CI job :yellow_circle:](", url, ") started."]
+  PrStatusAwaitingPromotion -> CommentFeedback "The PR is waiting to be pushed to the target branch"
+  PrStatusIntegrated -> CommentFeedback "The build succeeded."
   PrStatusIncorrectBaseBranch ->
     let BaseBranch baseBranchName = Pr.baseBranch pr
-    in format "Merge rejected: the base branch of this pull request must be set to {}. It is currently set to {}."
-              [projectBaseBranchName, baseBranchName]
-  PrStatusWrongFixups -> "Pull request cannot be integrated as it contains fixup commits that do not belong to any other commits."
-  PrStatusEmptyRebase -> "Empty rebase. \
-                         \ Have the changes already been merged into the target branch? \
-                         \ Aborting."
+     in CommentFeedback $
+          format
+            "Merge rejected: the base branch of this pull request must be set to {}. It is currently set to {}."
+            [projectBaseBranchName, baseBranchName]
+  PrStatusWrongFixups ->
+    CommentFeedback "Pull request cannot be integrated as it contains fixup commits that do not belong to any other commits."
+  PrStatusEmptyRebase ->
+    CommentFeedback
+      "Empty rebase. \
+      \ Have the changes already been merged into the target branch? \
+      \ Aborting."
   PrStatusFailedConflict ->
     let
       BaseBranch targetBranchName = Pr.baseBranch pr
       Branch prBranchName = Pr.branch pr
-    in Text.concat
-      [ "Failed to rebase, please rebase manually using\n\n"
-      , "    git fetch && git rebase --interactive --autosquash origin/"
-      , targetBranchName
-      , " "
-      , prBranchName
-      ]
+     in
+      CommentFeedback $
+        Text.concat
+          [ "Failed to rebase, please rebase manually using\n\n"
+          , "    git fetch && git rebase --interactive --autosquash origin/"
+          , targetBranchName
+          , " "
+          , prBranchName
+          ]
   -- The following is not actually shown to the user
   -- as it is never set with needsFeedback=True,
   -- but here in case we decide to show it.
-  PrStatusSpeculativeConflict -> "Failed to speculatively rebase. \
-                                 \ I will retry rebasing automatically when the queue clears."
-  PrStatusFailedBuild url -> case Pr.unfailedIntegratedPullRequestsBefore pr state of
-    -- On Fridays the retry command is also `retry on friday`. We currently
-    -- don't have that information here. Is that worth including?
-    [] -> format "The {}.\n\n\
-                 \If this is the result of a flaky test, \
-                 \then tag me again with the `retry` command.  \
-                 \Otherwise, push a new commit and tag me again."
-                 [markdownLink "build failed :x:" url]
-    trainBefore -> format "Speculative {}. \
-                          \ I will automatically retry after getting build results for {}."
-                          [ markdownLink "build failed :x:" url
-                          , prettyPullRequestIds trainBefore ]
+  PrStatusSpeculativeConflict ->
+    CommentFeedback
+      "Failed to speculatively rebase. \
+      \ I will retry rebasing automatically when the queue clears."
+  PrStatusFailedBuild url ->
+    CommentFeedback $
+      case Pr.unfailedIntegratedPullRequestsBefore pr state of
+        -- On Fridays the retry command is also `retry on friday`. We currently
+        -- don't have that information here. Is that worth including?
+        [] ->
+          format
+            "The {}.\n\n\
+            \If this is the result of a flaky test, \
+            \then tag me again with the `retry` command.  \
+            \Otherwise, push a new commit and tag me again."
+            [markdownLink "build failed :x:" url]
+        trainBefore ->
+          format
+            "Speculative {}. \
+            \ I will automatically retry after getting build results for {}."
+            [ markdownLink "build failed :x:" url
+            , prettyPullRequestIds trainBefore
+            ]
 
 -- Leave a comment with the feedback from 'describeStatus' and set the
 -- 'needsFeedback' flag to 'False'.
@@ -1241,11 +1278,15 @@ leaveFeedback
   -> Eff es ProjectState
 leaveFeedback (prId, pr) state = do
   projectBaseBranch <- getBaseBranch
-  let message = describeStatus projectBaseBranch prId pr state
-  -- Hoff shouldn't reply to any of its own feedback messages. This can happen
-  -- if external automation causes the bot to issue a merge command to itself.
-  -- In that case the bot may tag itself when the merge gets approved.
-  () <- leaveComment prId $ hoffIgnoreComment <> message
+  case feedbackOnStatus projectBaseBranch prId pr state of
+    CommentFeedback message ->
+      -- Hoff shouldn't reply to any of its own feedback messages. This can happen
+      -- if external automation causes the bot to issue a merge command to itself.
+      -- In that case the bot may tag itself when the merge gets approved.
+      leaveComment prId $ hoffIgnoreComment <> message
+    ReactionFeedback reactable reaction ->
+      addReaction reactable reaction
+
   pure $ Pr.setNeedsFeedback prId False state
 
 -- Run 'leaveFeedback' on all pull requests that need feedback.
