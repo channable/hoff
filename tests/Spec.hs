@@ -15,12 +15,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
-import Data.Aeson (decode, encode)
+import Data.Aeson (decode, encode, eitherDecode)
 import Data.ByteString.Lazy (readFile)
+import Data.Either (isRight)
 import Data.Foldable (foldlM)
 import Data.IntSet (IntSet)
 import Data.List (group)
-import Data.Maybe (fromJust, isJust, isNothing)
+import Data.Maybe (fromJust, isNothing)
 import Data.Text (Text, pack)
 import Effectful (Eff, (:>), runPureEff)
 import Effectful.Dispatch.Dynamic (interpret)
@@ -2611,10 +2612,9 @@ main = hspec $ do
 
     it "parses a PullRequestPayload correctly" $ do
       examplePayload <- readFile "tests/data/pull-request-payload.json"
-      let maybePayload :: Maybe PullRequestPayload
-          maybePayload = decode examplePayload
-      maybePayload `shouldSatisfy` isJust
-      let payload       = fromJust maybePayload
+      let result = eitherDecode @PullRequestPayload examplePayload
+      result `shouldSatisfy` isRight
+      let Right payload       = result
       payload.action     `shouldBe` Github.Opened
       payload.owner      `shouldBe` "baxterthehacker"
       payload.repository `shouldBe` "public-repo"
@@ -2629,10 +2629,9 @@ main = hspec $ do
 
     it "parses a CommentPayload from a created issue_comment correctly" $ do
       examplePayload <- readFile "tests/data/issue-comment-created-payload.json"
-      let maybePayload :: Maybe CommentPayload
-          maybePayload = decode examplePayload
-      maybePayload `shouldSatisfy` isJust
-      let payload       = fromJust maybePayload
+      let result = eitherDecode @CommentPayload examplePayload
+      result `shouldSatisfy` isRight
+      let Right payload       = result
       payload.action        `shouldBe` Left Github.CommentCreated
       payload.owner         `shouldBe` "baxterthehacker"
       payload.repository    `shouldBe` "public-repo"
@@ -2642,10 +2641,9 @@ main = hspec $ do
 
     it "parses a CommentPayload from an edited issue_comment correctly" $ do
       examplePayload <- readFile "tests/data/issue-comment-edited-payload.json"
-      let maybePayload :: Maybe CommentPayload
-          maybePayload = decode examplePayload
-      maybePayload `shouldSatisfy` isJust
-      let payload       = fromJust maybePayload
+      let result = eitherDecode @CommentPayload examplePayload
+      result `shouldSatisfy` isRight
+      let Right payload       = result
       payload.action        `shouldBe` Left Github.CommentEdited
       payload.owner         `shouldBe` "crtschin"
       payload.repository    `shouldBe` "test"
@@ -2655,10 +2653,9 @@ main = hspec $ do
 
     it "parses a CommentPayload from a submitted pull_request_review correctly" $ do
       examplePayload <- readFile "tests/data/pull-request-review-submitted-payload.json"
-      let maybePayload :: Maybe CommentPayload
-          maybePayload = decode examplePayload
-      maybePayload `shouldSatisfy` isJust
-      let payload       = fromJust maybePayload
+      let result = eitherDecode @CommentPayload examplePayload
+      result `shouldSatisfy` isRight
+      let Right payload       = result
       payload.action        `shouldBe` Right Github.ReviewSubmitted
       payload.owner         `shouldBe` "crtschin"
       payload.repository    `shouldBe` "test"
@@ -2668,10 +2665,9 @@ main = hspec $ do
 
     it "parses a CommentPayload from a edited pull_request_review correctly" $ do
       examplePayload <- readFile "tests/data/pull-request-review-edited-payload.json"
-      let maybePayload :: Maybe CommentPayload
-          maybePayload = decode examplePayload
-      maybePayload `shouldSatisfy` isJust
-      let payload       = fromJust maybePayload
+      let result = eitherDecode @CommentPayload examplePayload
+      result `shouldSatisfy` isRight
+      let Right payload       = result
       payload.action        `shouldBe` Right Github.ReviewEdited
       payload.owner         `shouldBe` "crtschin"
       payload.repository    `shouldBe` "test"
@@ -2681,10 +2677,9 @@ main = hspec $ do
 
     it "parses a CommitStatusPayload correctly" $ do
       examplePayload <- readFile "tests/data/status-payload.json"
-      let maybePayload :: Maybe CommitStatusPayload
-          maybePayload = decode examplePayload
-      maybePayload `shouldSatisfy` isJust
-      let payload       = fromJust maybePayload
+      let result = eitherDecode @CommitStatusPayload examplePayload
+      result `shouldSatisfy` isRight
+      let Right payload       = result
       payload.owner      `shouldBe` "baxterthehacker"
       payload.repository `shouldBe` "public-repo"
       payload.status     `shouldBe` Github.Success
@@ -2693,10 +2688,9 @@ main = hspec $ do
 
     it "parses a PushPayload correctly" $ do
       examplePayload <- readFile "tests/data/push-payload.json"
-      let maybePayload :: Maybe PushPayload
-          maybePayload = decode examplePayload
-      maybePayload `shouldSatisfy` isJust
-      let payload       = fromJust maybePayload
+      let result = eitherDecode @PushPayload examplePayload
+      result `shouldSatisfy` isRight
+      let Right payload       = result
       payload.owner      `shouldBe` "Codertocat"
       payload.repository `shouldBe` "Hello-World"
       payload.branch     `shouldBe` BaseBranch "refs/heads/master"
