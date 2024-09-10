@@ -111,7 +111,7 @@ import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 
-import Types (PullRequestId (..), Username)
+import Types (PullRequestId (..), Username, ReactableId)
 import Data.Time (UTCTime)
 
 -- For any integrated sha, we either wait for the first check, or for
@@ -202,6 +202,7 @@ data MergeCommand
 --   command, i.e. either just "merge" or "merge and deploy".
 data Approval = Approval
   { approver    :: Username
+  , approvalSource :: Maybe ReactableId
   , approvedFor :: ApprovedFor
   , approvalOrder :: Int
   , approvalRetriedBy :: Maybe Username

@@ -56,10 +56,15 @@ data ReactableId
   | OnPullRequest PullRequestId
   -- Ideally we would also be able to react to PR reviews, but (as of 9-5-2024) there
   -- doesn't seem to be a REST endpoint for that, despite it being possible through the UI.
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq, Ord, Generic)
 
 instance Buildable ReactableId where
   build (OnIssueComment (CommentId commentId)) =
     "issue comment " <> build commentId
   build (OnPullRequest (PullRequestId prId)) =
     "pull request " <> build prId
+
+instance FromJSON ReactableId
+
+instance ToJSON ReactableId where
+  toEncoding = Aeson.genericToEncoding Aeson.defaultOptions

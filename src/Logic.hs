@@ -79,7 +79,7 @@ import Project (Approval (..), ApprovedFor (..), MergeCommand (..), BuildStatus 
                 MergeWindow(..), Priority (..), ProjectState, PullRequest, PullRequestStatus (..),
                 summarize, supersedes)
 import Time (TimeOperation)
-import Types (Body (..), PullRequestId (..), Username (..), CommentId, ReactableId)
+import Types (Body (..), PullRequestId (..), Username (..), CommentId, ReactableId (..))
 
 import qualified Configuration as Config
 import qualified Git
@@ -393,8 +393,8 @@ handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow timeo
   PullRequestCommitChanged pr sha -> handlePullRequestCommitChanged pr sha
   PullRequestClosed pr            -> handlePullRequestClosedByUser pr
   PullRequestEdited pr title baseBranch -> handlePullRequestEdited pr title baseBranch
-  CommentAdded pr author _commentId body
-    -> handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow pr author body
+  CommentAdded pr author commentId body
+    -> handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow pr author (OnIssueComment <$> commentId) body
   BuildStatusChanged sha context status   -> handleBuildStatusChanged sha context status
   PushPerformed branch sha        -> handleTargetChanged branch sha
   Synchronize                     -> synchronizeState
@@ -417,7 +417,8 @@ handlePullRequestOpenedByUser
 handlePullRequestOpenedByUser triggerConfig mergeWindowExemption featureFreezeWindow pr branch baseBranch sha title author body state = do
   state' <- handlePullRequestOpened pr branch baseBranch sha title author state
   case body of
-    Just (Body b) -> handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow pr author b state'
+    Just (Body b) ->
+      handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow pr author (Just $ OnPullRequest pr) b state'
     Nothing -> pure state'
 
 handlePullRequestOpened
@@ -611,10 +612,11 @@ handleCommentAdded
   -> Maybe FeatureFreezeWindow
   -> PullRequestId
   -> Username
+  -> Maybe ReactableId
   -> Text
   -> ProjectState
   -> Eff es ProjectState
-handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId author body state
+handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId author source body state
   -- Parser error messages contain an excerpt from the original's comment. To
   -- avoid feedback loops, Hoff will insert a special comment into its own
   -- comments with parser error messages that can be checked for here.
@@ -712,8 +714,8 @@ handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId a
         Success (command, mergeWindow, priority)
           -- Author is a reviewer
           | isAllowed -> verifyMergeWindow command mergeWindow $ case command of
-            Approve approval -> handleMergeRequested projectConfig prId author state pr approval priority Nothing
-            Retry -> handleMergeRetry projectConfig prId author priority state pr
+            Approve approval -> handleMergeRequested projectConfig prId author source state pr approval priority Nothing
+            Retry -> handleMergeRetry projectConfig prId author source priority state pr
           -- Author is not a reviewer, so we ignore
           | otherwise -> pure state
     -- If the pull request is not in the state, ignore the comment.
@@ -723,15 +725,16 @@ doMerge
   :: ProjectConfiguration
   -> PullRequestId
   -> Username
+  -> Maybe ReactableId
   -> ProjectState
   -> PullRequest
   -> ApprovedFor
   -> Priority
   -> Maybe Username
   -> Eff es ProjectState
-doMerge projectConfig prId author state pr approvalType priority retriedBy = do
+doMerge projectConfig prId author source state pr approvalType priority retriedBy = do
   let (order, state') = Pr.newApprovalOrder state
-  state'' <- approvePullRequest prId (Approval author approvalType order retriedBy priority) state'
+  state'' <- approvePullRequest prId (Approval author source approvalType order retriedBy priority) state'
   -- Check whether the integration branch is valid, if not, mark the integration as invalid.
   if Pr.baseBranch pr /= BaseBranch (Config.branch projectConfig)
     then pure $ Pr.setIntegrationStatus prId IncorrectBaseBranch state''
@@ -768,18 +771,19 @@ handleMergeRequested
   => ProjectConfiguration
   -> PullRequestId
   -> Username
+  -> Maybe ReactableId
   -> ProjectState
   -> PullRequest
   -> ApprovedFor
   -> Priority
   -> Maybe Username
   -> Eff es ProjectState
-handleMergeRequested projectConfig prId author state pr approvedFor priority retriedBy
+handleMergeRequested projectConfig prId author source state pr approvedFor priority retriedBy
   = case Pr.integrationStatus pr of
-      NotIntegrated -> doMerge projectConfig prId author state pr approvedFor priority retriedBy
+      NotIntegrated -> doMerge projectConfig prId author source state pr approvedFor priority retriedBy
       Integrated _ checks | not (Pr.isFinalStatus (summarize checks)) -> do
         state' <- clearPullRequest prId pr state
-        doMerge projectConfig prId author state' pr approvedFor priority retriedBy
+        doMerge projectConfig prId author source state' pr approvedFor priority retriedBy
       Conflicted _ _ ->
         leaveComment prId "Conflict encountered while integrating, refusing..." >> pure state
       IncorrectBaseBranch -> do
@@ -796,11 +800,12 @@ handleMergeRetry
   => ProjectConfiguration
   -> PullRequestId
   -> Username
+  -> Maybe ReactableId
   -> Priority
   -> ProjectState
   -> PullRequest
   -> Eff es ProjectState
-handleMergeRetry projectConfig prId author priority state pr
+handleMergeRetry projectConfig prId author source priority state pr
   -- Only approved PRs with failed builds can be retried
   | Just approval <- Pr.approval pr,
     Integrated _ buildStatus <- Pr.integrationStatus pr,
@@ -808,7 +813,7 @@ handleMergeRetry projectConfig prId author priority state pr
       state' <- clearPullRequest prId pr state
       -- The PR is still approved by its original approver. The person who
       -- triggered the retry is tracked separately.
-      doMerge projectConfig prId (Pr.approver approval) state' pr (Pr.approvedFor approval) priority (Just author)
+      doMerge projectConfig prId (Pr.approver approval) source state' pr (Pr.approvedFor approval) priority (Just author)
   | otherwise = do
       () <- leaveComment prId "Only approved PRs with failed builds can be retried.."
       pure state
@@ -1011,7 +1016,7 @@ tryIntegratePullRequest pr state =
     PullRequestId prNumber = pr
     pullRequest  = fromJust $ Pr.lookupPullRequest pr state
     title = Pr.title pullRequest
-    Approval (Username approvedBy) approvalType _prOrder _retriedBy priority = fromJust $ Pr.approval pullRequest
+    Approval (Username approvedBy) _source approvalType _prOrder _retriedBy priority = fromJust $ Pr.approval pullRequest
     candidateSha = Pr.sha pullRequest
     candidateRef = getPullRequestRef pr
     candidate = (pr, candidateRef, candidateSha)
@@ -1159,7 +1164,7 @@ describeStatus (BaseBranch projectBaseBranchName) prId pr state = case Pr.classi
   PrStatusAwaitingApproval -> "Pull request awaiting approval."
   PrStatusApproved ->
     let
-      Approval (Username approvedBy) approvalType _position retriedBy priority = fromJust $ Pr.approval pr
+      Approval (Username approvedBy) _source approvalType _position retriedBy priority = fromJust $ Pr.approval pr
 
       approvalCommand = Pr.displayMergeCommand (Approve approvalType)
       retriedByMsg = case retriedBy of
