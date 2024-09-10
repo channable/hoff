@@ -14,6 +14,7 @@ module Types
   Body (..),
   PullRequestId (..),
   CommentId (..),
+  ReactableId (..),
   Username (..),
 )
 where
@@ -21,7 +22,7 @@ where
 import Data.Aeson (FromJSON, ToJSON)
 import Data.String (IsString)
 import Data.Text (Text)
-import Data.Text.Buildable (Buildable)
+import Data.Text.Buildable (Buildable(..))
 import GHC.Generics (Generic)
 
 import qualified Data.Aeson as Aeson
@@ -48,3 +49,17 @@ instance ToJSON Body where toEncoding = Aeson.genericToEncoding Aeson.defaultOpt
 instance ToJSON PullRequestId where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON Username where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON CommentId where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
+
+-- The numeric ID of something on GitHub we can react to.
+data ReactableId
+  = OnIssueComment CommentId
+  | OnPullRequest PullRequestId
+  -- Ideally we would also be able to react to PR reviews, but (as of 9-5-2024) there
+  -- doesn't seem to be a REST endpoint for that, despite it being possible through the UI.
+  deriving (Show, Eq, Ord)
+
+instance Buildable ReactableId where
+  build (OnIssueComment (CommentId commentId)) =
+    "issue comment " <> build commentId
+  build (OnPullRequest (PullRequestId prId)) =
+    "pull request " <> build prId

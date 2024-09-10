@@ -79,7 +79,7 @@ import Project (Approval (..), ApprovedFor (..), MergeCommand (..), BuildStatus 
                 MergeWindow(..), Priority (..), ProjectState, PullRequest, PullRequestStatus (..),
                 summarize, supersedes)
 import Time (TimeOperation)
-import Types (Body (..), PullRequestId (..), Username (..), CommentId)
+import Types (Body (..), PullRequestId (..), Username (..), CommentId, ReactableId)
 
 import qualified Configuration as Config
 import qualified Git
@@ -101,6 +101,7 @@ data Action :: Effect where
   TryPromoteWithTag :: Sha -> TagName -> TagMessage -> Action m PushWithTagResult
   CleanupTestBranch :: PullRequestId -> Action m ()
   LeaveComment :: PullRequestId -> Text -> Action m ()
+  AddReaction :: ReactableId -> GithubApi.ReactionContent -> Action m ()
   IsReviewer :: Username -> Action m Bool
   GetPullRequest :: PullRequestId -> Action m (Maybe GithubApi.PullRequest)
   GetOpenPullRequests :: Action m (Maybe IntSet)
@@ -165,6 +166,10 @@ cleanupTestBranch pullRequestId = send $ CleanupTestBranch pullRequestId
 -- | Leave a comment on the given pull request.
 leaveComment :: Action :> es => PullRequestId -> Text -> Eff es ()
 leaveComment pr body = send $ LeaveComment pr body
+
+-- | Add a reaction to the given reactable (e.g. comment, pull request).
+addReaction :: Action :> es => ReactableId -> GithubApi.ReactionContent -> Eff es ()
+addReaction reactable reaction = send $ AddReaction reactable reaction
 
 -- | Check if this user is allowed to issue merge commands.
 isReviewer :: Action :> es => Username -> Eff es Bool
@@ -252,6 +257,9 @@ runAction config =
 
     LeaveComment pr body -> do
       GithubApi.leaveComment pr body
+
+    AddReaction reactable reaction -> do
+      GithubApi.addReaction reactable reaction
 
     IsReviewer username -> do
       GithubApi.hasPushAccess username

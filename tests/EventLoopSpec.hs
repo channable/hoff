@@ -232,6 +232,7 @@ testTimeouts = Config.Timeouts 600 600
 fakeRunGithub :: Eff (GithubApi.GithubOperation : es) a -> Eff es a
 fakeRunGithub = interpret $ \_ -> \case
   GithubApi.LeaveComment _pr _body -> pure ()
+  GithubApi.AddReaction _reactable _reaction -> pure ()
   GithubApi.HasPushAccess username -> pure $ username `elem` ["rachael", "deckard"]
   -- Pretend that these two GitHub API calls always fail in these tests.
   GithubApi.GetPullRequest _pr -> pure Nothing

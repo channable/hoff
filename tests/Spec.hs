@@ -46,7 +46,7 @@ import Logic (Action, Action (..), Event (..), IntegrationFailure (..), Retrieve
 import Project (Approval (..), DeployEnvironment (..), DeploySubprojects (..),
                 Priority (..), ProjectState (ProjectState), PullRequest (PullRequest))
 import Time (TimeOperation)
-import Types (PullRequestId (..), Username (..), CommentId (..))
+import Types (PullRequestId (..), Username (..), CommentId (..), ReactableId)
 import ParserSpec (parserSpec)
 import ProjectSpec (projectSpec)
 
@@ -125,6 +125,7 @@ data ActionFlat
   | ATryPromote Sha
   | ATryPromoteWithTag Sha TagName TagMessage
   | ALeaveComment PullRequestId Text
+  | AAddReaction ReactableId GithubApi.ReactionContent
   | AIsReviewer Username
   | ACleanupTestBranch PullRequestId
   | AGetPullRequest PullRequestId
@@ -267,6 +268,9 @@ runActionResults =
         pure ()
       LeaveComment pr body  -> do
         Writer.tell [ALeaveComment pr body]
+        pure ()
+      AddReaction reactable reaction -> do
+        Writer.tell [AAddReaction reactable reaction]
         pure ()
       IsReviewer username -> do
         Writer.tell [AIsReviewer username]

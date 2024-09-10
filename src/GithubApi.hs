@@ -17,10 +17,12 @@ module GithubApi
 (
   GithubOperation (..),
   PullRequest (..),
+  ReactionContent(..),
   getOpenPullRequests,
   getPullRequest,
   hasPushAccess,
   leaveComment,
+  addReaction,
   runGithub,
   runGithubReadOnly,
 )
@@ -32,13 +34,16 @@ import Effectful (Dispatch (Dynamic), DispatchOf, Eff, Effect, IOE, (:>))
 import Effectful.Dispatch.Dynamic (interpret, send, interpose)
 import Data.IntSet (IntSet)
 import Data.Text (Text)
+import GitHub.Data.Reactions (ReactionContent(..))
 
 import qualified Data.IntSet as IntSet
 import qualified Data.Vector as Vector
+import qualified GitHub.Data.Id as Github3
 import qualified GitHub.Data.Name as Github3
 import qualified GitHub.Data.Options as Github3
 import qualified GitHub.Endpoints.Issues.Comments as Github3
 import qualified GitHub.Endpoints.PullRequests as Github3
+import qualified GitHub.Endpoints.Reactions as Github3
 import qualified GitHub.Endpoints.Repos.Collaborators as Github3
 import qualified GitHub.Request as Github3
 import qualified Network.HTTP.Client as Http
@@ -48,7 +53,7 @@ import Format (format)
 import Git (BaseBranch (..), Branch (..), Sha (..))
 import MonadLoggerEffect (MonadLoggerEffect)
 import Project (ProjectInfo)
-import Types (PullRequestId (..), Username (..))
+import Types (PullRequestId (..), Username (..), CommentId (..), ReactableId (..))
 
 import qualified Project
 
@@ -64,6 +69,7 @@ data PullRequest = PullRequest
 
 data GithubOperation :: Effect where
   LeaveComment :: PullRequestId -> Text -> GithubOperation m ()
+  AddReaction :: ReactableId -> ReactionContent -> GithubOperation m ()
   HasPushAccess :: Username -> GithubOperation m Bool
   GetPullRequest :: PullRequestId -> GithubOperation m (Maybe PullRequest)
   GetOpenPullRequests :: GithubOperation m (Maybe IntSet)
@@ -72,6 +78,9 @@ type instance DispatchOf GithubOperation = 'Dynamic
 
 leaveComment :: GithubOperation :> es => PullRequestId -> Text -> Eff es ()
 leaveComment pr remoteBranch = send $ LeaveComment pr remoteBranch
+
+addReaction :: GithubOperation :> es => ReactableId -> ReactionContent -> Eff es ()
+addReaction id' reaction = send $ AddReaction id' reaction
 
 hasPushAccess :: GithubOperation :> es => Username -> Eff es Bool
 hasPushAccess username = send $ HasPushAccess username
@@ -118,6 +127,26 @@ runGithub auth projectInfo =
         Left err -> logWarnN $ format "Failed to comment: {}" [show err]
         Right _ -> logInfoN $ format "Posted comment on {}#{}: {}"
                                      (Project.repository projectInfo, pr, body)
+
+    AddReaction reactableId reaction -> do
+      let
+        createReactionR project owner =
+          case reactableId of
+            OnIssueComment (CommentId commentId) -> Github3.createCommentReactionR project owner (Github3.Id commentId)
+            OnPullRequest (PullRequestId prId) -> Github3.createIssueReactionR project owner (Github3.Id prId)
+
+      result <- liftIO $ Github3.github auth $ createReactionR
+        (Github3.N $ Project.owner projectInfo)
+        (Github3.N $ Project.repository projectInfo)
+        reaction
+
+      case result of
+        Left err -> logWarnN $ format "Failed to add reaction: {}" [show err]
+        Right _ ->
+          logInfoN $
+            format
+              "Added reaction in {} on {}: {}"
+              (Project.repository projectInfo, reactableId, show reaction)
 
     HasPushAccess (Username username) -> do
       result <- liftIO $ Github3.github auth $ Github3.collaboratorPermissionOnR
@@ -196,3 +225,5 @@ runGithubReadOnly auth projectInfo = runGithub auth projectInfo . augmentedGithu
       -- These operations have side effects, we fake them.
       LeaveComment pr body ->
         logInfoN $ format "Would have posted comment on {}: {}" (show pr, body)
+      AddReaction reactableId reaction ->
+        logInfoN $ format "Would have added reaction on {}: {}" (reactableId, show reaction)
