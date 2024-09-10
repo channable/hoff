@@ -13,6 +13,7 @@ module Types
 (
   Body (..),
   PullRequestId (..),
+  CommentId (..),
   Username (..),
 )
 where
@@ -34,10 +35,16 @@ newtype PullRequestId = PullRequestId Int deriving (Eq, Ord, Show, Generic)
 -- The body of a pull request
 newtype Body = Body Text deriving (Eq, Show, Generic, IsString, Buildable)
 
+-- The numeric ID of an issue comment. (In GitHub's model, a PR is a special kind of issue.)
+newtype CommentId = CommentId Int
+  deriving (Eq, Ord, Show, Generic)
+
 instance FromJSON Body
 instance FromJSON PullRequestId
 instance FromJSON Username
+instance FromJSON CommentId
 
 instance ToJSON Body where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON PullRequestId where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON Username where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
+instance ToJSON CommentId where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions

@@ -71,7 +71,7 @@ eventFromCommentPayload payload =
   let number = PullRequestId payload.number
       author = payload.author -- TODO: Wrapper type
       body   = payload.body
-      commentAdded = Logic.CommentAdded number author body
+      commentAdded = Logic.CommentAdded number author payload.id body
   in case payload.action of
     Left Github.CommentCreated -> Just commentAdded
     Right Github.ReviewSubmitted -> Just commentAdded

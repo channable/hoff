@@ -79,7 +79,7 @@ import Project (Approval (..), ApprovedFor (..), MergeCommand (..), BuildStatus 
                 MergeWindow(..), Priority (..), ProjectState, PullRequest, PullRequestStatus (..),
                 summarize, supersedes)
 import Time (TimeOperation)
-import Types (Body (..), PullRequestId (..), Username (..))
+import Types (Body (..), PullRequestId (..), Username (..), CommentId)
 
 import qualified Configuration as Config
 import qualified Git
@@ -312,7 +312,7 @@ data Event
   | PullRequestCommitChanged PullRequestId Sha -- ^ PR, new sha.
   | PullRequestClosed PullRequestId            -- ^ PR.
   | PullRequestEdited PullRequestId Text BaseBranch -- ^ PR, new title, new base branch.
-  | CommentAdded PullRequestId Username Text   -- ^ PR, author and body.
+  | CommentAdded PullRequestId Username (Maybe CommentId) Text   -- ^ PR, author, comment ID, and body.
   | PushPerformed BaseBranch Sha               -- ^ branch, sha
   -- CI events
   | BuildStatusChanged Sha Context BuildStatus
@@ -385,7 +385,7 @@ handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow timeo
   PullRequestCommitChanged pr sha -> handlePullRequestCommitChanged pr sha
   PullRequestClosed pr            -> handlePullRequestClosedByUser pr
   PullRequestEdited pr title baseBranch -> handlePullRequestEdited pr title baseBranch
-  CommentAdded pr author body
+  CommentAdded pr author _commentId body
     -> handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow pr author body
   BuildStatusChanged sha context status   -> handleBuildStatusChanged sha context status
   PushPerformed branch sha        -> handleTargetChanged branch sha

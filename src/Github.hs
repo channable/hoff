@@ -37,7 +37,7 @@ import GHC.Natural (Natural)
 
 import Git (Sha (..), Branch (..), BaseBranch (..), Context)
 import Project (ProjectInfo (..))
-import Types (Body, Username)
+import Types (Body, Username, CommentId (..))
 import Data.Maybe (fromMaybe)
 
 data PullRequestAction
@@ -82,11 +82,15 @@ data PullRequestPayload = PullRequestPayload {
 
 data CommentPayload = CommentPayload {
   action     :: Either CommentAction ReviewAction, -- Corresponds to "action".
-  owner      :: Text,     -- Corresponds to "repository.owner.login".
-  repository :: Text,     -- Corresponds to "repository.name".
-  number     :: Int,      -- Corresponds to "issue.number" or "pull_request.number".
-  author     :: Username, -- Corresponds to "sender.login".
-  body       :: Text      -- Corresponds to "comment.body" or "review.body".
+  owner      :: Text,            -- Corresponds to "repository.owner.login".
+  repository :: Text,            -- Corresponds to "repository.name".
+  number     :: Int,             -- Corresponds to "issue.number" or "pull_request.number".
+  author     :: Username,        -- Corresponds to "sender.login".
+  id         :: Maybe CommentId, -- Corresponds to "comment.id".
+                                 -- Can be absent if we actually received a review,
+                                 -- because those have separate IDs from ordinary issue
+                                 -- comments.
+  body       :: Text             -- Corresponds to "comment.body" or "review.body".
 } deriving (Eq, Show)
 
 data CommitStatusPayload = CommitStatusPayload {
@@ -169,6 +173,10 @@ instance FromJSON CommentPayload where
       <*> (getNested v ["issue", "number"]
         <|> getNested v ["pull_request", "number"])
       <*> getNested v ["sender", "login"]
+      <*> (getNested v ["comment", "id"]
+        -- If we couldn't get a comment ID, we likely got a review, which does have an ID,
+        -- but we can't treat that as a comment ID for API requests.
+        <|> pure Nothing)
       <*> (getNested v ["comment", "body"]
         <|> fromMaybe "" <$> getNested v ["review", "body"])
   parseJSON nonObject = typeMismatch "(issue_comment | pull_request_review) payload" nonObject

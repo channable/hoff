@@ -46,7 +46,7 @@ import Logic (Action, Action (..), Event (..), IntegrationFailure (..), Retrieve
 import Project (Approval (..), DeployEnvironment (..), DeploySubprojects (..),
                 Priority (..), ProjectState (ProjectState), PullRequest (PullRequest))
 import Time (TimeOperation)
-import Types (PullRequestId (..), Username (..))
+import Types (PullRequestId (..), Username (..), CommentId (..))
 import ParserSpec (parserSpec)
 import ProjectSpec (projectSpec)
 
@@ -379,9 +379,10 @@ expectSimpleParseFailure commentMsg errorMsg =
       -- error message contains an excerpt from @commentMsg@ and Hoff doesn't
       -- ignore this, then it would result in a feedback loop. See
       -- <https://github.com/channable/hoff/issues/223>.
-      event = [CommentAdded prId "deckard" commentMsg, CommentAdded prId "bot" errorMsg]
+      event = [CommentAdded prId "deckard" Nothing commentMsg, CommentAdded prId "bot" Nothing errorMsg]
       (_, actions) = runActionCustom defaultResults $ handleEventsTest event state
    in actions `shouldBe` [ALeaveComment prId errorMsg]
+
 
 
 main :: IO ()
@@ -492,7 +493,7 @@ main = hspec $ do
     it "sets approval after a stamp from a reviewer" $ do
       let state  = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "6412ef5") "toby"
           -- Note: "deckard" is marked as reviewer in the test config.
-          event  = CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          event  = CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           state' = fst $ runAction $ handleEventTest event state
           pr     = fromJust $ Project.lookupPullRequest (PullRequestId 1) state'
       Project.approval pr `shouldBe` Just (Approval "deckard" Project.Merge 0 Nothing Normal)
@@ -501,7 +502,7 @@ main = hspec $ do
       let state  = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "6412ef5") "toby"
           -- Note: the comment is a valid approval command, but "rachael" is not
           -- marked as reviewer in the test config.
-          event  = CommentAdded (PullRequestId 1) "rachael" "@bot merge"
+          event  = CommentAdded (PullRequestId 1) "rachael" Nothing "@bot merge"
           state' = fst $ runAction $ handleEventTest event state
           pr     = fromJust $ Project.lookupPullRequest (PullRequestId 1) state'
       Project.approval pr `shouldBe` Nothing
@@ -510,12 +511,12 @@ main = hspec $ do
       let state  = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "6412ef5") "patrick"
           -- Note: "deckard" is marked as reviewer in the test config, but the
           -- prefix is "@bot ", so none of the comments below should trigger approval.
-          event1 = CommentAdded (PullRequestId 1) "deckard" "@hoffbot merge"
-          event2 = CommentAdded (PullRequestId 1) "deckard" "LGTM :shipit:"
-          event3 = CommentAdded (PullRequestId 1) "deckard" "!merge"
+          event1 = CommentAdded (PullRequestId 1) "deckard" Nothing "@hoffbot merge"
+          event2 = CommentAdded (PullRequestId 1) "deckard" Nothing "LGTM :shipit:"
+          event3 = CommentAdded (PullRequestId 1) "deckard" Nothing "!merge"
           -- In these cases, the prefix is correct, but the command is wrong.
-          event4 = CommentAdded (PullRequestId 1) "deckard" "@botmerge"
-          event5 = CommentAdded (PullRequestId 1) "deckard" "@bot, merge"
+          event4 = CommentAdded (PullRequestId 1) "deckard" Nothing "@botmerge"
+          event5 = CommentAdded (PullRequestId 1) "deckard" Nothing "@bot, merge"
           state' = fst $ runAction $ handleEventsTest [event1, event2, event3, event4, event5] state
           pr     = fromJust $ Project.lookupPullRequest (PullRequestId 1) state'
       Project.approval pr `shouldBe` Nothing
@@ -544,8 +545,8 @@ main = hspec $ do
     it "only checks if a comment author is a reviewer for comment commands" $ do
       let
         state = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "a38") "tyrell"
-        event0 = CommentAdded (PullRequestId 1) "deckard" "I don't get it, Tyrell"
-        event1 = CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+        event0 = CommentAdded (PullRequestId 1) "deckard" Nothing "I don't get it, Tyrell"
+        event1 = CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
         actions0 = snd $ runAction $ handleEventTest event0 state
         actions1 = snd $ runAction $ handleEventTest event1 state
       actions0 `shouldBe` []
@@ -568,9 +569,9 @@ main = hspec $ do
           $ Project.emptyProjectState
         -- Approve pull request in order of ascending id, mark the last PR for deployment.
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge and deploy to staging"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge and deploy to staging"
           ]
         -- For this test, we assume all integrations and pushes succeed.
         results = defaultResults { resultIntegrate = [ Right (Sha "b71")
@@ -616,9 +617,9 @@ main = hspec $ do
           $ Project.emptyProjectState
         -- Approve pull request in order of ascending id, mark the last PR for deployment.
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           ]
         -- For this test, we assume all integrations and pushes succeed.
         results = defaultResults { resultIntegrate = [Right (Sha "b71"), Right (Sha "b72"), Right (Sha "b73")] }
@@ -688,9 +689,9 @@ main = hspec $ do
       -- Approve pull requests, but not in order of ascending id.
       let
         eventsPermuted =
-          [ CommentAdded (PullRequestId 2) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
           ]
         actionsPermuted = snd $ run $ handleEventsTest eventsPermuted state
       actionsPermuted `shouldBe`
@@ -721,8 +722,8 @@ main = hspec $ do
           $ Project.emptyProjectState
         -- Approve both pull requests, then close the first.
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , PullRequestClosed (PullRequestId 1)
           ]
         -- For this test, we assume all integrations and pushes succeed.
@@ -815,7 +816,7 @@ main = hspec $ do
       let
         -- We comment on PR #1, but the project is empty, so this comment should
         -- be dropped on the floor.
-        event = CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+        event = CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
         (state, actions) = runAction $ handleEventTest event Project.emptyProjectState
       -- We expect no changes to the state, and in particular, no side effects.
       state `shouldBe` Project.emptyProjectState
@@ -906,7 +907,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and deploy to staging"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and deploy to staging"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -927,7 +928,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and deploy to production"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and deploy to production"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -951,7 +952,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and deploy"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and deploy"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (_, actions) = runActionCustomConfig (testProjectConfig{Config.deployEnvironments = Just []}) results $ handleEventTest event state
@@ -963,7 +964,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and deploy on Friday"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and deploy on Friday"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
         (_, actions) = runActionCustomConfig (testProjectConfig{Config.deployEnvironments = Just ["production"]}) results $ handleEventTest event state
@@ -981,7 +982,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and deploy"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and deploy"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (_, actions) = runActionCustomConfig (testProjectConfig{Config.deployEnvironments = Just ["production"]}) results $ handleEventTest event state
@@ -999,7 +1000,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and deploy to production"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and deploy to production"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (_, actions) = runActionCustomConfig (testProjectConfig{Config.deployEnvironments = Just ["production"]}) results $ handleEventTest event state
@@ -1020,7 +1021,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and deploy to staging on Friday"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and deploy to staging on Friday"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0))}
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1041,7 +1042,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and deploy aaa to production"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and deploy aaa to production"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1062,7 +1063,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and deploy aaa, bbb to production"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and deploy aaa, bbb to production"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1083,7 +1084,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and tag"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and tag"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1104,7 +1105,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and  tag"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and  tag"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1125,7 +1126,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge  and tag"
+        event = CommentAdded prId "deckard" Nothing "@bot merge  and tag"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1146,7 +1147,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and tag on friday"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and tag on friday"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1167,7 +1168,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge"
+        event = CommentAdded prId "deckard" Nothing "@bot merge"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1188,7 +1189,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge on Friday"
+        event = CommentAdded prId "deckard" Nothing "@bot merge on Friday"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1212,7 +1213,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "bot" "@bot merge"
+        event = CommentAdded prId "bot" Nothing "@bot merge"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
         (_, actions) = runActionCustom results $ handleEventTest event state
@@ -1230,7 +1231,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and tag"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and tag"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
         (_, actions) = runActionCustom results $ handleEventTest event state
@@ -1245,7 +1246,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and deploy to staging"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and deploy to staging"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
         (_, actions) = runActionCustom results $ handleEventTest event state
@@ -1260,7 +1261,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge"
+        event = CommentAdded prId "deckard" Nothing "@bot merge"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
         (_, actions) = runActionCustom results $ handleEventTest event state
@@ -1275,7 +1276,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge as hotfix"
+        event = CommentAdded prId "deckard" Nothing "@bot merge as hotfix"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (_, actions) = runActionCustom results $ handleEventTest event state
@@ -1290,7 +1291,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and deploy to production as hotfix"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and deploy to production as hotfix"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (_, actions) = runActionCustom results $ handleEventTest event state
@@ -1305,7 +1306,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge as hotfix"
+        event = CommentAdded prId "deckard" Nothing "@bot merge as hotfix"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
         (state', actions) = runActionCustom results $ handleEventTestFF event state
@@ -1331,7 +1332,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge"
+        event = CommentAdded prId "deckard" Nothing "@bot merge"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
         (_, actions) = runActionCustom results $ handleEventTestFF event state
@@ -1347,7 +1348,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge as hotfix"
+        event = CommentAdded prId "deckard" Nothing "@bot merge as hotfix"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 3 5) (T.secondsToDiffTime 0)) }
         (_, actions) = runActionCustom results $ handleEventTestFF event state
@@ -1363,7 +1364,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge"
+        event = CommentAdded prId "deckard" Nothing "@bot merge"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 3 4) (T.secondsToDiffTime 0)) }
         (state', actions) = runActionCustom results $ handleEventTestFF event state
@@ -1389,7 +1390,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge and deploy to production as hotfix"
+        event = CommentAdded prId "deckard" Nothing "@bot merge and deploy to production as hotfix"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
         (state', actions) = runActionCustom results $ handleEventTestFF event state
@@ -1415,7 +1416,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge"
+        event = CommentAdded prId "deckard" Nothing "@bot merge"
 
         results = defaultResults
                 { resultIntegrate = [Left (IntegrationFailure (BaseBranch "master") EmptyRebase)]
@@ -1440,7 +1441,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") (BaseBranch "m") (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "@bot merge"
+        event = CommentAdded prId "deckard" Nothing "@bot merge"
 
         (state', actions) = runAction $ handleEventTest event state
 
@@ -1458,9 +1459,9 @@ main = hspec $ do
         state = singlePullRequestState prId (Branch "p") (BaseBranch "m") (Sha "abc1234") "tyrell"
 
         events =
-          [ CommentAdded prId "deckard" "@bot merge"
+          [ CommentAdded prId "deckard" Nothing "@bot merge"
           , PullRequestEdited prId "Untitled" masterBranch
-          , CommentAdded prId "deckard" "@bot merge"]
+          , CommentAdded prId "deckard" Nothing "@bot merge"]
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventsTest events state
@@ -1484,7 +1485,7 @@ main = hspec $ do
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
         events =
-          [ CommentAdded prId "deckard" "@bot merge"
+          [ CommentAdded prId "deckard" Nothing "@bot merge"
           , PullRequestEdited prId "Untitled" (BaseBranch "m")
           ]
 
@@ -1511,7 +1512,7 @@ main = hspec $ do
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
         events =
-          [ CommentAdded prId "deckard" "@bot merge"
+          [ CommentAdded prId "deckard" Nothing "@bot merge"
           , PullRequestCommitChanged prId (Sha "Untitled")
           ]
 
@@ -1542,7 +1543,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "Let's do this, @bot merge and deploy to staging."
+        event = CommentAdded prId "deckard" Nothing "Let's do this, @bot merge and deploy to staging."
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1571,7 +1572,8 @@ main = hspec $ do
     it "ignores comments containing a special 'Hoff: ignore' HTML comment" $
       let prId = PullRequestId 1
           state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
-          event = [CommentAdded prId "bot"  "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:24:\n      |\n    1 | @bot merge and deploy!\n      |                        ^\n    Merge commands may not be followed by anything other than a punctuation character ('.', ',', '!', '?', ':', ';').\n"]
+          errorMessage =   "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:24:\n      |\n    1 | @bot merge and deploy!\n      |                        ^\n    Merge commands may not be followed by anything other than a punctuation character ('.', ',', '!', '?', ':', ';').\n"
+          event = [CommentAdded prId "bot" Nothing errorMessage]
           (_, actions) = runActionCustom defaultResults $ handleEventsTest event state
        in actions `shouldBe` []
 
@@ -1586,13 +1588,13 @@ main = hspec $ do
           approvalMessage =  "<!-- Hoff: ignore -->\nPull request approved for merge by @bot, rebasing now."
           event =
             -- This merge approval is posted by the bot iself
-            [ CommentAdded prId "bot" "@bot merge"
+            [ CommentAdded prId "bot" Nothing "@bot merge"
               -- The feedback message then tags the bot, but the special ignore
               -- comment will cause it to ignore the message
-            , CommentAdded prId "bot" approvalMessage
-            , CommentAdded prId "bot" "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+            , CommentAdded prId "bot" Nothing approvalMessage
+            , CommentAdded prId "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
             , BuildStatusChanged (Sha "def2345") "default" (Project.BuildStarted "example.com/1b2")
-            , CommentAdded prId "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+            , CommentAdded prId "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
             , BuildStatusChanged (Sha "def2345") "default" Project.BuildSucceeded
             , PullRequestCommitChanged (PullRequestId 1) (Sha "def2345")
             ]
@@ -1616,7 +1618,7 @@ main = hspec $ do
         prId = PullRequestId 1
         state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
 
-        event = CommentAdded prId "deckard" "Hi @bo. @bot merge and deploy to staging"
+        event = CommentAdded prId "deckard" Nothing "Hi @bo. @bot merge and deploy to staging"
 
         results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
         (state', actions) = runActionCustom results $ handleEventTest event state
@@ -1640,7 +1642,7 @@ main = hspec $ do
             Project.emptyProjectState
         results = defaultResults {resultIntegrate = [Right (Sha "1b2"), Right (Sha "1b3")]}
         events =
-          [ CommentAdded (PullRequestId 12) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
           , PushPerformed (BaseBranch "refs/heads/master") (Sha "1c1")
           , BuildStatusChanged (Sha "1b3") "default" (Project.BuildStarted "example.com/1b2")
@@ -1679,9 +1681,9 @@ main = hspec $ do
               (Branch "snd") masterBranch (Sha "ab2") "... Of the ..." (Username "dewey")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildFailed (Just "example.com/1b2"))
           , PushPerformed (BaseBranch "refs/heads/master") (Sha "1c1")
@@ -1742,11 +1744,11 @@ main = hspec $ do
               (Branch "trd") masterBranch (Sha "ab3") "... Performance" (Username "louie")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "3b2") "default" (Project.BuildStarted "example.com/3b2")
           , PushPerformed (BaseBranch "refs/heads/master") (Sha "1c1")
           ]
@@ -1826,11 +1828,11 @@ main = hspec $ do
               (Branch "trd") masterBranch (Sha "ab3") "... Performance" (Username "louie")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "3b2") "default" (Project.BuildStarted "example.com/3b2")
           , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
           , PullRequestCommitChanged (PullRequestId 1) (Sha "1b2")
@@ -1888,11 +1890,11 @@ main = hspec $ do
               (Branch "trd") masterBranch (Sha "ab3") "... Performance" (Username "louie")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "3b2") "default" (Project.BuildStarted "example.com/3b2")
           , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
           , PullRequestCommitChanged (PullRequestId 1) (Sha "1b2")
@@ -1949,9 +1951,9 @@ main = hspec $ do
               (Branch "snd") masterBranch (Sha "ab2") "... Of the ..." (Username "dewey")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
           , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
           , PullRequestCommitChanged (PullRequestId 1) (Sha "1b2")
@@ -2004,7 +2006,7 @@ main = hspec $ do
           results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
 
           event =
-            [ CommentAdded prId "deckard" "@bot merge"
+            [ CommentAdded prId "deckard" Nothing "@bot merge"
             , BuildStatusChanged (Sha "def2345") "default" (Project.BuildStarted "example.com/1b2")
             , BuildStatusChanged (Sha "def2345") "default" Project.BuildSucceeded
             , ClockTick (Time.addTime testTime 100)
@@ -2025,7 +2027,7 @@ main = hspec $ do
           results = defaultResults { resultIntegrate = [Right (Sha "def2345")] }
 
           event =
-            [ CommentAdded prId "deckard" "@bot merge"
+            [ CommentAdded prId "deckard" Nothing "@bot merge"
             , BuildStatusChanged (Sha "def2345") "default" (Project.BuildStarted "example.com/1b2")
             , BuildStatusChanged (Sha "def2345") "default" Project.BuildSucceeded
             , ClockTick (Time.addTime testTime 700)
@@ -2051,10 +2053,10 @@ main = hspec $ do
               (Branch "snd") masterBranch (Sha "ab2") "... Of the ..." (Username "dewey")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
           , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
           , BuildStatusChanged (Sha "2b2") "default" Project.BuildSucceeded
           , PullRequestCommitChanged (PullRequestId 1) (Sha "1b2")
@@ -2103,7 +2105,7 @@ main = hspec $ do
               (Branch "fst") masterBranch (Sha "ab1") "Improvements..." (Username "huey")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
           , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
           , PushPerformed (BaseBranch "refs/heads/master") (Sha "1c1")
@@ -2150,7 +2152,7 @@ main = hspec $ do
               (Branch "fst") masterBranch (Sha "ab1") "Improvements..." (Username "huey")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
           , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
           , PullRequestCommitChanged (PullRequestId 1) (Sha "1b2")
@@ -2199,9 +2201,9 @@ main = hspec $ do
               (Branch "snd") masterBranch (Sha "ab2") "... Of the ..." (Username "dewey")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "2b2") "default" (Project.BuildStarted "example.com/2b2")
           , BuildStatusChanged (Sha "2b2") "default" Project.BuildSucceeded
           , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
@@ -2254,7 +2256,7 @@ main = hspec $ do
               (Branch "fst") masterBranch (Sha "ab1") "Improvements..." (Username "huey")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
           , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
           , PullRequestClosed (PullRequestId 1)
@@ -2474,7 +2476,7 @@ main = hspec $ do
               (Username "tyrell")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "b71") "default" Project.BuildPending
           , BuildStatusChanged (Sha "b71") "default" Project.BuildSucceeded
           ]
@@ -2563,18 +2565,18 @@ main = hspec $ do
               (Username "tyrell")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "b71") "default" Project.BuildPending
           , BuildStatusChanged (Sha "b71") "default" (Project.BuildStarted "https://status.example.com/b71")
           , BuildStatusChanged (Sha "b71") "default" $ Project.BuildFailed $ Just $ pack "https://example.com/build-status"
             -- User summons bot again because CI failed for an external reason.
-          , CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           -- GitHub notifies Hoff of new comments sent by Hoff:
-          , CommentAdded (PullRequestId 1) "bot"
+          , CommentAdded (PullRequestId 1) "bot" Nothing
               "The [build failed :x:](https://example.com/build-status).\n\n\
               \If this is the result of a flaky test, then tag me again with the `retry` command.  \
               \Otherwise, push a new commit and tag me again."
-          , CommentAdded (PullRequestId 1) "bot"
+          , CommentAdded (PullRequestId 1) "bot" Nothing
               "The [build failed :x:](https://example.com/build-status).\n\n\
               \If this is the result of a flaky test, then tag me again with the `retry` command.  \
               \Otherwise, push a new commit and tag me again."
@@ -2772,18 +2774,23 @@ main = hspec $ do
           , repository = "owl"
           , number     = 1
           , author     = "deckard"
+          , id         = case action of
+                           -- If we receive a "real" comment, we have an ID.
+                           Left _ -> Just $ CommentId 42
+                           -- If we receive a review, we don't have an ID we can use.
+                           Right _ -> Nothing
           , body       = "Must be expensive."
           }
 
     it "converts a comment created event" $ do
       let payload = testCommentPayload $ Left Github.CommentCreated
           Just event = convertGithubEvent $ Github.Comment payload
-      event `shouldBe` (CommentAdded (PullRequestId 1) "deckard" "Must be expensive.")
+      event `shouldBe` (CommentAdded (PullRequestId 1) "deckard" (Just $ CommentId 42) "Must be expensive.")
 
     it "converts a review submitted event" $ do
       let payload = testCommentPayload $ Right Github.ReviewSubmitted
           Just event = convertGithubEvent $ Github.Comment payload
-      event `shouldBe` (CommentAdded (PullRequestId 1) "deckard" "Must be expensive.")
+      event `shouldBe` (CommentAdded (PullRequestId 1) "deckard" Nothing "Must be expensive.")
 
     it "ignores a comment edited event" $ do
       let payload = testCommentPayload $ Left Github.CommentEdited
@@ -2881,9 +2888,9 @@ main = hspec $ do
           $ Project.emptyProjectState
         results = defaultResults {resultIntegrate = [Right (Sha "1b2")]}
         events =
-          [ CommentAdded (PullRequestId 12) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
-          , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+          [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
+          , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/alt1/1b2")
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/alt2/1b2")
@@ -2911,11 +2918,11 @@ main = hspec $ do
           $ Project.emptyProjectState
         results = defaultResults {resultIntegrate = [Right (Sha "1b2")]}
         events =
-          [ CommentAdded (PullRequestId 12) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
-          , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+          [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
+          , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
-          , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+          , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildFailed (Just "example.com/1b2"))
           , BuildStatusChanged (Sha "1b2") "default" Project.BuildPending -- ignored
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2") -- ignored
@@ -2949,11 +2956,11 @@ main = hspec $ do
           $ Project.emptyProjectState
         results = defaultResults {resultIntegrate = [Right (Sha "1b2")]}
         events =
-          [ CommentAdded (PullRequestId 12) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
-          , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+          [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
+          , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
-          , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
+          , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
           , BuildStatusChanged (Sha "1b2") "default" Project.BuildSucceeded
           , PullRequestCommitChanged (PullRequestId 12) (Sha "1b2")
           , BuildStatusChanged (Sha "1b2") "default" Project.BuildPending -- ignored
@@ -2999,15 +3006,15 @@ main = hspec $ do
             $ projectState
           results = defaultResults {resultIntegrate = [Right (Sha "1b2"), Right (Sha "1b3")]}
           events =
-            [ CommentAdded (PullRequestId 12) "deckard" "@bot merge"
-            , CommentAdded (PullRequestId 13) "deckard" "@bot merge"
-            , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
-            , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
-            , CommentAdded (PullRequestId 13) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
-            , CommentAdded (PullRequestId 13) "bot" "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+            [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot merge"
+            , CommentAdded (PullRequestId 13) "deckard" Nothing "@bot merge"
+            , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
+            , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+            , CommentAdded (PullRequestId 13) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
+            , CommentAdded (PullRequestId 13) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
             , BuildStatusChanged (Sha "1b2") "first" (Project.BuildStarted "example.com/1b2")
             , BuildStatusChanged (Sha "1b2") "required" (Project.BuildStarted "example.com/required/1b2")
-            , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
+            , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
             , BuildStatusChanged (Sha "1b2") "first" (Project.BuildFailed Nothing)
             , BuildStatusChanged (Sha "1b2") "required" Project.BuildSucceeded
             , PullRequestCommitChanged (PullRequestId 12) (Sha "1b2")
@@ -3065,12 +3072,12 @@ main = hspec $ do
             $ projectState
           results = defaultResults {resultIntegrate = [Right (Sha "1b2")]}
           events =
-            [ CommentAdded (PullRequestId 12) "deckard" "@bot merge"
-            , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
-            , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+            [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot merge"
+            , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
+            , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
             , BuildStatusChanged (Sha "1b2") "first" (Project.BuildStarted "example.com/1b2")
             , BuildStatusChanged (Sha "1b2") "required" (Project.BuildStarted "example.com/required/1b2")
-            , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
+            , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
             , BuildStatusChanged (Sha "1b2") "first" (Project.BuildFailed Nothing)
             , BuildStatusChanged (Sha "1b2") "required" Project.BuildSucceeded
             , PullRequestCommitChanged (PullRequestId 12) (Sha "1b2")
@@ -3111,12 +3118,12 @@ main = hspec $ do
             $ projectState
           results = defaultResults {resultIntegrate = [Right (Sha "1b2")]}
           events =
-            [ CommentAdded (PullRequestId 12) "deckard" "@bot merge"
-            , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
-            , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+            [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot merge"
+            , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
+            , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
             , BuildStatusChanged (Sha "1b2") "first" (Project.BuildStarted "example.com/1b2")
             , BuildStatusChanged (Sha "1b2") "required" (Project.BuildStarted "example.com/required/1b2")
-            , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
+            , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
             , BuildStatusChanged (Sha "1b2") "first" Project.BuildSucceeded
             , PullRequestCommitChanged (PullRequestId 12) (Sha "1b2")
             , BuildStatusChanged (Sha "1b2") "required" (Project.BuildFailed Nothing)
@@ -3157,12 +3164,12 @@ main = hspec $ do
             $ projectState
           results = defaultResults {resultIntegrate = [Right (Sha "1b2")]}
           events =
-            [ CommentAdded (PullRequestId 12) "deckard" "@bot merge"
-            , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
-            , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+            [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot merge"
+            , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
+            , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
             , BuildStatusChanged (Sha "1b2") "first" (Project.BuildStarted "example.com/1b2")
             , BuildStatusChanged (Sha "1b2") "required" (Project.BuildStarted "example.com/required/1b2")
-            , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
+            , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
             , BuildStatusChanged (Sha "1b2") "first" Project.BuildSucceeded
             , PullRequestCommitChanged (PullRequestId 12) (Sha "1b2")
             ]
@@ -3199,12 +3206,12 @@ main = hspec $ do
             $ projectState
           results = defaultResults {resultIntegrate = [Right (Sha "1b2")]}
           events =
-            [ CommentAdded (PullRequestId 12) "deckard" "@bot merge"
-            , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
-            , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+            [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot merge"
+            , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
+            , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
             , BuildStatusChanged (Sha "1b2") "first" (Project.BuildStarted "example.com/1b2")
             , BuildStatusChanged (Sha "1b2") "required" (Project.BuildStarted "example.com/required/1b2")
-            , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
+            , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
             , BuildStatusChanged (Sha "1b2") "first" Project.BuildSucceeded
             , BuildStatusChanged (Sha "1b2") "required" Project.BuildSucceeded
             , PullRequestCommitChanged (PullRequestId 12) (Sha "1b2")
@@ -3245,12 +3252,12 @@ main = hspec $ do
             $ projectState
           results = defaultResults {resultIntegrate = [Right (Sha "1b2")]}
           events =
-            [ CommentAdded (PullRequestId 12) "deckard" "@bot merge"
-            , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
-            , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+            [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot merge"
+            , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
+            , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
             , BuildStatusChanged (Sha "1b2") "required" (Project.BuildStarted "example.com/required/1b2")
             , BuildStatusChanged (Sha "1b2") "mandatory" (Project.BuildStarted "example.com/mandatory/1b2")
-            , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
+            , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
             , BuildStatusChanged (Sha "1b2") "required" Project.BuildSucceeded
             , BuildStatusChanged (Sha "1b2") "mandatory" Project.BuildSucceeded
             , PullRequestCommitChanged (PullRequestId 12) (Sha "1b2")
@@ -3291,12 +3298,12 @@ main = hspec $ do
             $ projectState
           results = defaultResults {resultIntegrate = [Right (Sha "1b2")]}
           events =
-            [ CommentAdded (PullRequestId 12) "deckard" "@bot merge"
-            , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
-            , CommentAdded (PullRequestId 12) "bot" "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
+            [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot merge"
+            , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
+            , CommentAdded (PullRequestId 12) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
             , BuildStatusChanged (Sha "1b2") "required" (Project.BuildStarted "example.com/required/1b2")
             , BuildStatusChanged (Sha "1b2") "mandatory" (Project.BuildStarted "example.com/mandatory/1b2")
-            , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
+            , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
             ]
           commonAssertions actions finalState = do
             actions `shouldBe`
@@ -3351,7 +3358,7 @@ main = hspec $ do
           -- These are the events and action from a typical PR with a failed
           -- build that has not yet been retried
           commonEvents =
-            [ CommentAdded (PullRequestId 12) "deckard" "@bot merge"
+            [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot merge"
             , BuildStatusChanged (Sha "1b2") "default" Project.BuildPending
             , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "url")
             , BuildStatusChanged (Sha "1b2") "default" (Project.BuildFailed (Just "url"))
@@ -3395,7 +3402,7 @@ main = hspec $ do
 
       it "allows merges with failed builds using the 'retry' command" $ do
         runRetryTest
-          [ CommentAdded (PullRequestId 12) "deckard" "@bot retry"
+          [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot retry"
           , BuildStatusChanged (Sha "00f") "default" Project.BuildPending
           , BuildStatusChanged (Sha "00f") "default" (Project.BuildStarted "url2")
           , BuildStatusChanged (Sha "00f") "default" Project.BuildSucceeded
@@ -3415,7 +3422,7 @@ main = hspec $ do
 
       it "rejects a plain 'retry' command on Fridays" $ do
         runRetryTest
-          [ CommentAdded (PullRequestId 12) "deckard" "@bot retry" ]
+          [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot retry" ]
           [ AIsReviewer (Username "deckard")
           , ALeaveComment (PullRequestId 12) "Your merge request has been denied, because merging on Fridays is not recommended. To override this behaviour use the command `retry on Friday`."
           ]
@@ -3423,7 +3430,7 @@ main = hspec $ do
 
       it "allows retrying merges with 'retry on friday' on Fridays" $ do
         runRetryTest
-          [ CommentAdded (PullRequestId 12) "deckard" "@bot retry on friday"
+          [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot retry on friday"
           , BuildStatusChanged (Sha "00f") "default" Project.BuildPending
           , BuildStatusChanged (Sha "00f") "default" (Project.BuildStarted "url2")
           , BuildStatusChanged (Sha "00f") "default" Project.BuildSucceeded
@@ -3443,7 +3450,7 @@ main = hspec $ do
 
       it "rejects 'retry on friday' commands when it's not Friday" $ do
         runRetryTest
-          [ CommentAdded (PullRequestId 12) "deckard" "@bot retry on friday" ]
+          [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot retry on friday" ]
           [ AIsReviewer (Username "deckard")
           , ALeaveComment (PullRequestId 12) "Your merge request has been denied because it is not Friday. Run 'retry' instead."
           ]
@@ -3453,13 +3460,13 @@ main = hspec $ do
 
       it "doesn't allow retrying pending PR" $ do
         let events' =
-              [ CommentAdded (PullRequestId 12) "deckard" "@bot merge"
+              [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot merge"
               , BuildStatusChanged (Sha "1b2") "default" Project.BuildPending
               , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "url")
               -- The above is the same as 'commonEvents', except that the build
               -- hasn't finished yet. Requesting a retry here should result in
               -- an error message.
-              , CommentAdded (PullRequestId 12) "deckard" "@bot retry"
+              , CommentAdded (PullRequestId 12) "deckard" Nothing "@bot retry"
               ]
             actions' =
               [ AIsReviewer (Username "deckard")
@@ -3475,7 +3482,7 @@ main = hspec $ do
         actions `shouldBe` actions'
 
       it "doesn't allow retrying unapproved PRs" $ do
-        let events' = [ CommentAdded (PullRequestId 12) "deckard" "@bot retry"]
+        let events' = [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot retry"]
             actions' =
               [ AIsReviewer (Username "deckard")
               , ALeaveComment (PullRequestId 12) "Only approved PRs with failed builds can be retried.."
@@ -3495,11 +3502,11 @@ main = hspec $ do
               (Branch "snd") masterBranch (Sha "36b") "Thirty-sixth PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 19) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 19) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "a19") "default" (Project.BuildFailed Nothing)
-          , CommentAdded (PullRequestId 36) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 36) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "b36") "default" (Project.BuildFailed Nothing)
-          , CommentAdded (PullRequestId 36) "deckard" "@bot merge on Friday"
+          , CommentAdded (PullRequestId 36) "deckard" Nothing "@bot merge on Friday"
           , PullRequestClosed (PullRequestId 19)
           , PullRequestClosed (PullRequestId 36)
           ]
@@ -3563,11 +3570,11 @@ main = hspec $ do
               (Branch "trd") masterBranch (Sha "ab3") "... Performance" (Username "louie")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "ab1") "default" (Project.BuildStarted "url")
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "ab2") "default" (Project.BuildStarted "url")
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "ab3") "default" (Project.BuildStarted "url")
 
           , BuildStatusChanged (Sha "ab1") "default" Project.BuildSucceeded
@@ -3600,9 +3607,9 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 3) (Branch "trd") masterBranch (Sha "ef3") "Third PR"  (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
           , PullRequestCommitChanged (PullRequestId 1) (Sha "4ba")
           ]
         -- For this test, we assume all integrations and pushes succeed.
@@ -3682,9 +3689,9 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 3) (Branch "trd") masterBranch (Sha "ef3") "Third PR"  (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded)
           , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
           ]
@@ -3752,9 +3759,9 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 3) (Branch "trd") masterBranch (Sha "ef3") "Third PR"  (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildFailed (Just "ci.example.com/1ab"))
           ]
         results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
@@ -3836,8 +3843,8 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           ]
         results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
                                                      , Left (IntegrationFailure (BaseBranch "testing/1") WrongFixups)
@@ -3887,11 +3894,11 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 3) (Branch "trd") masterBranch (Sha "ef3") "Third PR"  (Username "tyrell")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
           , PullRequestCommitChanged (PullRequestId 2) (Sha "c2d")
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           ]
         results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
                                                      , Left (IntegrationFailure (BaseBranch "testing/1") WrongFixups)
@@ -3966,8 +3973,8 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded)
           , BuildStatusChanged (Sha "2cd") "default" (Project.BuildSucceeded)
           , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
@@ -4016,8 +4023,8 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           -- Build of #2 finishes before build of #1
           , BuildStatusChanged (Sha "2cd") "default" (Project.BuildSucceeded)
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded)
@@ -4067,8 +4074,8 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildFailed Nothing)
           , BuildStatusChanged (Sha "2cd") "default" (Project.BuildFailed Nothing)
           , BuildStatusChanged (Sha "22e") "default" (Project.BuildFailed Nothing)
@@ -4133,8 +4140,8 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           -- Build of #2 finishes before build of #1
           , BuildStatusChanged (Sha "2cd") "default" (Project.BuildFailed Nothing)
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildFailed Nothing)
@@ -4201,8 +4208,8 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1ab") "default" Project.BuildSucceeded
           , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
           , BuildStatusChanged (Sha "2cd") "default" (Project.BuildFailed Nothing)
@@ -4251,8 +4258,8 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "2cd") "default" (Project.BuildFailed Nothing)
           , BuildStatusChanged (Sha "1ab") "default" Project.BuildSucceeded
           , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
@@ -4302,8 +4309,8 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildFailed Nothing)
           , BuildStatusChanged (Sha "2cd") "default" (Project.BuildFailed Nothing)
           , BuildStatusChanged (Sha "22e") "default" Project.BuildSucceeded
@@ -4362,8 +4369,8 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "2cd") "default" Project.BuildSucceeded
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildFailed Nothing)
           , BuildStatusChanged (Sha "22e") "default" Project.BuildSucceeded
@@ -4422,8 +4429,8 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "2cd") "default" Project.BuildSucceeded
           , PullRequestClosed (PullRequestId 1)
           , BuildStatusChanged (Sha "22e") "default" Project.BuildSucceeded
@@ -4489,31 +4496,31 @@ main = hspec $ do
           $ Project.emptyProjectState
         events =
           [ BuildStatusChanged (Sha "ab1") "default" (Project.BuildSucceeded) -- PR#1 sha, ignored
-          , CommentAdded (PullRequestId 1) "deckard" "@someone Thanks for your review."
-          , CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
-          , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge behind 1 PR."
+          , CommentAdded (PullRequestId 1) "deckard" Nothing "@someone Thanks for your review."
+          , CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
+          , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge behind 1 PR."
           , BuildStatusChanged (Sha "ef3") "default" (Project.BuildSucceeded) -- PR#3 sha, ignored
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildPending) -- same status, ignored
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab")
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab") -- dup!
-          , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 3) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge behind 2 PRs."
+          , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 3) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge behind 2 PRs."
           , BuildStatusChanged (Sha "cd2") "default" (Project.BuildSucceeded) -- PR#2 sha, ignored
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded) -- PR#1
           , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
           , PullRequestClosed (PullRequestId 1)
-          , CommentAdded (PullRequestId 2) "bot" "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
+          , CommentAdded (PullRequestId 2) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildStarted "example.com/2bc")
-          , CommentAdded (PullRequestId 2) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
+          , CommentAdded (PullRequestId 2) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
           , BuildStatusChanged (Sha "36a") "default" (Project.BuildSucceeded) -- arbitrary sha, ignored
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildSucceeded) -- PR#2
           , PullRequestCommitChanged (PullRequestId 2) (Sha "2bc")
           , PullRequestClosed (PullRequestId 2)
-          , CommentAdded (PullRequestId 3) "bot" "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
+          , CommentAdded (PullRequestId 3) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildStarted "example.com/3cd")
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildSucceeded) -- PR#3
           , PullRequestCommitChanged (PullRequestId 3) (Sha "3cd")
@@ -4591,31 +4598,31 @@ main = hspec $ do
           $ Project.emptyProjectState
         events =
           [ BuildStatusChanged (Sha "ab9") "default" (Project.BuildSucceeded) -- PR#9 sha, ignored
-          , CommentAdded (PullRequestId 9) "deckard" "@someone Thanks for your review."
-          , CommentAdded (PullRequestId 9) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 9) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
-          , CommentAdded (PullRequestId 9) "bot" "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
-          , CommentAdded (PullRequestId 8) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 8) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge behind 1 PR."
+          , CommentAdded (PullRequestId 9) "deckard" Nothing "@someone Thanks for your review."
+          , CommentAdded (PullRequestId 9) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 9) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
+          , CommentAdded (PullRequestId 9) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
+          , CommentAdded (PullRequestId 8) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 8) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge behind 1 PR."
           , BuildStatusChanged (Sha "ef7") "default" (Project.BuildSucceeded) -- PR#7 sha, ignored
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildPending) -- same status, ignored
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab")
-          , CommentAdded (PullRequestId 9) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
-          , CommentAdded (PullRequestId 7) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 7) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge behind 2 PRs."
+          , CommentAdded (PullRequestId 9) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
+          , CommentAdded (PullRequestId 7) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 7) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge behind 2 PRs."
           , BuildStatusChanged (Sha "cd8") "default" (Project.BuildSucceeded) -- PR#8 sha, ignored
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded) -- PR#9
           , PullRequestCommitChanged (PullRequestId 9) (Sha "1ab")
           , PullRequestClosed (PullRequestId 9)
-          , CommentAdded (PullRequestId 8) "bot" "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
+          , CommentAdded (PullRequestId 8) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildStarted "example.com/2bc")
-          , CommentAdded (PullRequestId 8) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
+          , CommentAdded (PullRequestId 8) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildSucceeded) -- testing build passed on PR#7
           , BuildStatusChanged (Sha "36a") "default" (Project.BuildSucceeded) -- arbitrary sha, ignored
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildFailed (Just "example.com/2bc")) -- PR#8
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildFailed (Just "example.com/2bc")) -- dup!
-          , CommentAdded (PullRequestId 8) "bot" "<!-- Hoff: ignore -->\nThe [build failed :x:](example.com/2bc)"
-          , CommentAdded (PullRequestId 7) "bot" "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
+          , CommentAdded (PullRequestId 8) "bot" Nothing "<!-- Hoff: ignore -->\nThe [build failed :x:](example.com/2bc)"
+          , CommentAdded (PullRequestId 7) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
           , BuildStatusChanged (Sha "3ef") "default" (Project.BuildStarted "example.com/3ef")
           , BuildStatusChanged (Sha "3ef") "default" (Project.BuildSucceeded) -- testing build passed on PR#7
           , PullRequestCommitChanged (PullRequestId 7) (Sha "3ef")
@@ -4706,33 +4713,33 @@ main = hspec $ do
           $ Project.emptyProjectState
         events =
           [ BuildStatusChanged (Sha "ab1") "default" (Project.BuildSucceeded) -- PR#1 sha, ignored
-          , CommentAdded (PullRequestId 1) "deckard" "@someone Thanks for your review."
-          , CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
-          , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge behind 1 PR."
+          , CommentAdded (PullRequestId 1) "deckard" Nothing "@someone Thanks for your review."
+          , CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge, rebasing now."
+          , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge behind 1 PR."
           , BuildStatusChanged (Sha "ef3") "default" (Project.BuildSucceeded) -- PR#3 sha, ignored
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildPending) -- same status, ignored
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab")
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab") -- dup!
-          , CommentAdded (PullRequestId 1) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 3) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge behind 2 PRs."
-          , CommentAdded (PullRequestId 4) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 4) "bot" "<!-- Hoff: ignore -->\nPull request approved for merge behind 3 PRs."
+          , CommentAdded (PullRequestId 1) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 3) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge behind 2 PRs."
+          , CommentAdded (PullRequestId 4) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 4) "bot" Nothing "<!-- Hoff: ignore -->\nPull request approved for merge behind 3 PRs."
           , BuildStatusChanged (Sha "cd2") "default" (Project.BuildSucceeded) -- PR#2 sha, ignored
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded) -- PR#1
           , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
           , PullRequestClosed (PullRequestId 1)
-          , CommentAdded (PullRequestId 2) "bot" "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
+          , CommentAdded (PullRequestId 2) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildStarted "example.com/2bc")
-          , CommentAdded (PullRequestId 2) "bot" "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
+          , CommentAdded (PullRequestId 2) "bot" Nothing "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
           , BuildStatusChanged (Sha "36a") "default" (Project.BuildSucceeded) -- arbitrary sha, ignored
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildSucceeded) -- PR#2
           , PullRequestCommitChanged (PullRequestId 2) (Sha "2bc")
           , PullRequestClosed (PullRequestId 2)
-          , CommentAdded (PullRequestId 3) "bot" "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
+          , CommentAdded (PullRequestId 3) "bot" Nothing "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildStarted "example.com/3cd")
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildSucceeded) -- PR#3
           , PullRequestCommitChanged (PullRequestId 3) (Sha "3cd")
@@ -4829,12 +4836,12 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 3) (Branch "trd") masterBranch (Sha "ef3") "Third PR"  (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildStarted "example.com/2bc")
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildSucceeded) -- PR#2
-          , CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildStarted "example.com/3cd")
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildSucceeded) -- PR#2 second
           , PullRequestCommitChanged (PullRequestId 2) (Sha "3cd")
@@ -4917,15 +4924,15 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildStarted "example.com/2bc")
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildSucceeded) -- PR#2
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab")
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded) -- PR#1
           , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
           , PullRequestCommitChanged (PullRequestId 2) (Sha "2bc")
-          , CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           ]
         -- For this test, we assume all integrations and pushes succeed.
         results = defaultResults { resultIntegrate = [ Right (Sha "1ab")
@@ -4971,9 +4978,9 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 1) "deckard" "@bot merge and deploy to production"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge and deploy to production"
           , BuildStatusChanged (Sha "2bc") "default" Project.BuildSucceeded -- PR#2 ignored, due to remerge
           , BuildStatusChanged (Sha "1ab") "default" Project.BuildSucceeded -- PR#1 ignored, due to remerge
           , BuildStatusChanged (Sha "3cd") "default" Project.BuildSucceeded -- PR#2
@@ -5043,11 +5050,11 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 3) (Branch "trd") masterBranch (Sha "ef3") "Third PR"  (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@someone Thanks for your review."
-          , CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@someone Thanks for your review."
+          , CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab")
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge with priority"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge with priority"
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildStarted "example.com/3cd")
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded) -- PR#1, ignored
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildSucceeded) -- PR#3
@@ -5145,11 +5152,11 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 3) (Branch "trd") masterBranch (Sha "ef3") "Third PR"  (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@someone Thanks for your review."
-          , CommentAdded (PullRequestId 1) "deckard" "@bot merge"
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@someone Thanks for your review."
+          , CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab")
-          , CommentAdded (PullRequestId 3) "deckard" "@bot merge and deploy to production with priority"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge and deploy to production with priority"
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildStarted "example.com/3cd")
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildSucceeded) -- PR#1, ignored
           , BuildStatusChanged (Sha "3cd") "default" (Project.BuildSucceeded) -- PR#3
@@ -5250,12 +5257,12 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab")
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildFailed (Just "example.com/1ab"))
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildStarted "example.com/2bc")
-          , CommentAdded (PullRequestId 1) "deckard" "@bot retry with priority"
+          , CommentAdded (PullRequestId 1) "deckard" Nothing "@bot retry with priority"
           , BuildStatusChanged (Sha "1cd") "default" (Project.BuildStarted "example.com/1cd")
           , BuildStatusChanged (Sha "1cd") "default" (Project.BuildSucceeded) -- PR#2
           , PullRequestCommitChanged (PullRequestId 1) (Sha "1cd")
@@ -5335,10 +5342,10 @@ main = hspec $ do
           $ Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael")
           $ Project.emptyProjectState
         events =
-          [ CommentAdded (PullRequestId 1) "deckard" "@bot merge"
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildStarted "example.com/1ab")
           , BuildStatusChanged (Sha "1ab") "default" (Project.BuildFailed (Just "example.com/1ab"))
-          , CommentAdded (PullRequestId 2) "deckard" "@bot merge with priority"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge with priority"
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildStarted "example.com/2bc")
           , BuildStatusChanged (Sha "2bc") "default" (Project.BuildSucceeded) -- PR#1
           , PullRequestCommitChanged (PullRequestId 2) (Sha "2bc")
