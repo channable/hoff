@@ -1202,18 +1202,12 @@ feedbackOnStatus (BaseBranch projectBaseBranchName) prId pr state = case Pr.clas
         len = length train
         prs = if len == 1 then "PR" else "PRs"
      in CommentFeedback $ case train of
-          [] -> Text.concat ["Rebased as ", sha, ", waiting for CI …"]
+          [] -> format "Rebased as {}, waiting for CI …" [sha]
           (_ : _) ->
-            Text.concat
-              [ "Speculatively rebased as "
-              , sha
-              , " behind "
-              , Text.pack $ show len
-              , " other "
-              , prs
-              , ", waiting for CI …"
-              ]
-  PrStatusBuildStarted url -> CommentFeedback $ Text.concat ["[CI job :yellow_circle:](", url, ") started."]
+            format
+              "Speculatively rebased as {} behind {} other {}, waiting for CI …"
+              [sha, Text.pack $ show len, prs]
+  PrStatusBuildStarted url -> CommentFeedback $ format "[CI job :yellow_circle:]({}) started." [url]
   PrStatusAwaitingPromotion -> CommentFeedback "The PR is waiting to be pushed to the target branch"
   PrStatusIntegrated -> CommentFeedback "The build succeeded."
   PrStatusIncorrectBaseBranch ->
@@ -1235,13 +1229,10 @@ feedbackOnStatus (BaseBranch projectBaseBranchName) prId pr state = case Pr.clas
       Branch prBranchName = Pr.branch pr
      in
       CommentFeedback $
-        Text.concat
-          [ "Failed to rebase, please rebase manually using\n\n"
-          , "    git fetch && git rebase --interactive --autosquash origin/"
-          , targetBranchName
-          , " "
-          , prBranchName
-          ]
+        format
+          "Failed to rebase, please rebase manually using\n\n\
+          \    git fetch && git rebase --interactive --autosquash origin/{} {}"
+          [targetBranchName, prBranchName]
   -- The following is not actually shown to the user
   -- as it is never set with needsFeedback=True,
   -- but here in case we decide to show it.
