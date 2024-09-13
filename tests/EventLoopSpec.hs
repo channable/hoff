@@ -62,7 +62,7 @@ masterBranch = BaseBranch "master"
 -- Invokes Git with the given arguments, returns its stdout. Crashes if invoking
 -- Git failed. Discards all logging.
 callGit :: [String] -> IO Text
-callGit args = fmap (either undefined id) $ runEff $ fakeRunLogger $ Git.callGit userConfig args
+callGit args = fmap (either (error . show) id) $ runEff $ fakeRunLogger $ Git.callGit userConfig args
 
 -- | Populates the repository with the following history:
 --
@@ -84,7 +84,7 @@ populateRepository dir doClone =
   let writeFile fname msg  = Prelude.writeFile (dir </> fname) (msg ++ "\n")
       appendFile fname msg = Prelude.appendFile (dir </> fname) (msg ++ "\n")
       git args             = callGit $ ["-C", dir] ++ args
-      gitInit              = void $ git ["init"]
+      gitInit              = void $ git ["init", "--initial-branch", "master"]
       gitConfig key value  = void $ git ["config", key, value]
       gitAdd file          = void $ git ["add", file]
       gitBranch name sha   = void $ git ["checkout", "-b", name, refSpec sha]
