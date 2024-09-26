@@ -97,9 +97,25 @@ so you will be able to see the full list right away.
 
 [Comment]s and [build status]es are only sent in though a webhook.
 While running without a public IP address,
-GitHub will have no way of notifying your Hoff instance.
-You can use some of the scripts in the `tools/` folder
-to simulate those:
+webhooks will have to be forwarded to your local instance somehow.
+You can use the official [`gh webhook forward`] tool for this, by running
+
+    $ gh webhook forward --repo=REPO --events='*' --url="http://localhost:1979/hook/github" --secret="SECRET"
+
+where `REPO` is the repo you're testing with (in the `OWNER/NAME` format), and
+`SECRET` should be the value of `secret` in your `config.json`.
+
+> [!TIP]
+> If you have `jq` installed, you can avoid manually copying the webhook secret
+> around by passing `--secret=$(jq -r '.secret' config.json)`.
+
+> [!NOTE]
+> If your testing repo doesn't have CI that marks commits' build status, you
+> will still need to manually trigger a build status change for the speculative
+> rebase commit that Hoff produces, as described below.
+
+Alternatively, to manually trigger webhooks for a local Hoff instance,
+you can use some of the scripts in the `tools/` folder to simulate them:
 
     $ ./tools/comment deckard 31337 @hoffbot merge
 
@@ -107,6 +123,7 @@ to simulate those:
 
 [Comment]: https://docs.github.com/en/developers/webhooks-and-events/webhooks/webhook-events-and-payloads#issue_comment
 [build status]: https://docs.github.com/en/developers/webhooks-and-events/webhooks/webhook-events-and-payloads#status
+[`gh webhook forward`]: https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/using-the-github-cli-to-forward-webhooks-for-testing
 
 The tests of Hoff are extensive, you may be able to get by just by running them
 when making changes to the code.  To run a specific test, use `--match` giving
