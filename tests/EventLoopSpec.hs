@@ -232,6 +232,7 @@ testTimeouts = Config.Timeouts 600 600
 fakeRunGithub :: Eff (GithubApi.GithubOperation : es) a -> Eff es a
 fakeRunGithub = interpret $ \_ -> \case
   GithubApi.LeaveComment _pr _body -> pure ()
+  GithubApi.AddReaction _reactable _reaction -> pure ()
   GithubApi.HasPushAccess username -> pure $ username `elem` ["rachael", "deckard"]
   -- Pretend that these two GitHub API calls always fail in these tests.
   GithubApi.GetPullRequest _pr -> pure Nothing
@@ -433,7 +434,7 @@ eventLoopSpec = parallel $ do
         void $ runLoop Project.emptyProjectState
           [
             Logic.PullRequestOpened pr4 branch baseBranch c4 "Add Leon test results" "deckard" Nothing,
-            Logic.CommentAdded pr4 "rachael" "@bot merge",
+            Logic.CommentAdded pr4 "rachael" Nothing "@bot merge",
             Logic.BuildStatusChanged c4 "default" BuildSucceeded,
             Logic.PullRequestCommitChanged (PullRequestId 4) c4
           ]
@@ -495,7 +496,7 @@ eventLoopSpec = parallel $ do
         void $ runLoop Project.emptyProjectState
           [
             Logic.PullRequestOpened pr4 branch baseBranch c4 "Add Leon test results" "deckard" Nothing,
-            Logic.CommentAdded pr4 "rachael" "@bot merge",
+            Logic.CommentAdded pr4 "rachael" Nothing "@bot merge",
             Logic.BuildStatusChanged c4 "default" (BuildFailed Nothing)
           ]
       -- the build failed, so master's history is unchanged
@@ -523,7 +524,7 @@ eventLoopSpec = parallel $ do
         state <- runLoop Project.emptyProjectState
           [
             Logic.PullRequestOpened pr4 branch baseBranch c4 "Deploy tests!" "deckard" Nothing,
-            Logic.CommentAdded pr4 "rachael" "@bot merge and tag",
+            Logic.CommentAdded pr4 "rachael" Nothing "@bot merge and tag",
             Logic.BuildStatusChanged c4 "default" BuildSucceeded
           ]
 
@@ -583,7 +584,7 @@ eventLoopSpec = parallel $ do
         -- commit. A new tag `v2` should appear.
         state <- runLoop Project.emptyProjectState
           [ Logic.PullRequestOpened pr4 branch baseBranch c4 "Deploy tests!" "deckard" Nothing
-          , Logic.CommentAdded pr4 "rachael" "@bot merge and deploy to staging"
+          , Logic.CommentAdded pr4 "rachael" Nothing "@bot merge and deploy to staging"
           ]
 
         -- Extract the sha of the rebased commit from the project state.
@@ -642,7 +643,7 @@ eventLoopSpec = parallel $ do
         state <- runLoop Project.emptyProjectState
           [
             Logic.PullRequestOpened pr6 branch baseBranch c6 "Add Leon test results" "deckard" Nothing,
-            Logic.CommentAdded pr6 "rachael" "@bot merge"
+            Logic.CommentAdded pr6 "rachael" Nothing "@bot merge"
           ]
 
         -- Extract the sha of the rebased commit from the project state.
@@ -683,7 +684,7 @@ eventLoopSpec = parallel $ do
         state <- runLoop Project.emptyProjectState
           [
             Logic.PullRequestOpened pr6 branch baseBranch c6 "Deploy it now!" "deckard" Nothing,
-            Logic.CommentAdded pr6 "rachael" "@bot merge and tag"
+            Logic.CommentAdded pr6 "rachael" Nothing "@bot merge and tag"
           ]
 
         let [rebasedSha] = integrationShas state
@@ -742,7 +743,7 @@ eventLoopSpec = parallel $ do
         state <- runLoop Project.emptyProjectState
           [
             Logic.PullRequestOpened pr6 branch baseBranch c6 "Deploy it now!" "deckard" Nothing,
-            Logic.CommentAdded pr6 "rachael" "@bot merge and deploy to staging"
+            Logic.CommentAdded pr6 "rachael" Nothing "@bot merge and deploy to staging"
           ]
 
         let [rebasedSha] = integrationShas state
@@ -803,8 +804,8 @@ eventLoopSpec = parallel $ do
             Logic.PullRequestOpened pr6 br6 baseBranch c6 "Add Rachael test results" "deckard" Nothing,
             -- Note that although c4 has a lower pull request number, c6 should
             -- still be integrated first because it was approved earlier.
-            Logic.CommentAdded pr6 "rachael" "@bot merge",
-            Logic.CommentAdded pr4 "rachael" "@bot merge"
+            Logic.CommentAdded pr6 "rachael" Nothing "@bot merge",
+            Logic.CommentAdded pr4 "rachael" Nothing "@bot merge"
           ]
 
         -- Extract the sha of the rebased commit from the project state.
@@ -847,8 +848,8 @@ eventLoopSpec = parallel $ do
           [
             Logic.PullRequestOpened pr4 br4 baseBranch c4 "Add Leon test results" "deckard" Nothing,
             Logic.PullRequestOpened pr6 br6 baseBranch c6 "Add Rachael test results" "deckard" Nothing,
-            Logic.CommentAdded pr6 "rachael" "@bot merge and tag",
-            Logic.CommentAdded pr4 "rachael" "@bot merge and tag"
+            Logic.CommentAdded pr6 "rachael" Nothing "@bot merge and tag",
+            Logic.CommentAdded pr4 "rachael" Nothing "@bot merge and tag"
           ]
 
         let [rebasedSha,_] = integrationShas state
@@ -930,8 +931,8 @@ eventLoopSpec = parallel $ do
           [
             Logic.PullRequestOpened pr3 br3 baseBranch c3' "Add Leon test results" "deckard" Nothing,
             Logic.PullRequestOpened pr4 br4 baseBranch c4 "Add Rachael test results" "deckard" Nothing,
-            Logic.CommentAdded pr3 "rachael" "@bot merge",
-            Logic.CommentAdded pr4 "rachael" "@bot merge"
+            Logic.CommentAdded pr3 "rachael" Nothing "@bot merge",
+            Logic.CommentAdded pr4 "rachael" Nothing "@bot merge"
           ]
 
         -- The first pull request should be marked as conflicted. Note: this
@@ -971,7 +972,7 @@ eventLoopSpec = parallel $ do
         state <- runLoop Project.emptyProjectState
           [
             Logic.PullRequestOpened pr6 branch baseBranch c6 "Add test results" "deckard" Nothing,
-            Logic.CommentAdded pr6 "rachael" "@bot merge"
+            Logic.CommentAdded pr6 "rachael" Nothing "@bot merge"
           ]
 
         -- At this point, c6 has been rebased and pushed to the "integration"
@@ -1026,7 +1027,7 @@ eventLoopSpec = parallel $ do
         state <- runLoop Project.emptyProjectState
           [
             Logic.PullRequestOpened pr6 branch baseBranch c6 "Add test results" "deckard" Nothing,
-            Logic.CommentAdded pr6 "rachael" "@bot merge and tag"
+            Logic.CommentAdded pr6 "rachael" Nothing "@bot merge and tag"
           ]
 
         -- At this point, c6 has been rebased and pushed to the "integration"
@@ -1099,7 +1100,7 @@ eventLoopSpec = parallel $ do
         state <- runLoop Project.emptyProjectState
           [
             Logic.PullRequestOpened pr6 branch baseBranch c6 "Add test results" "deckard" Nothing,
-            Logic.CommentAdded pr6 "rachael" "@bot merge and tag"
+            Logic.CommentAdded pr6 "rachael" Nothing "@bot merge and tag"
           ]
 
         -- At this point, c6 has been rebased and pushed to the "integration" branch for building.
@@ -1176,7 +1177,7 @@ eventLoopSpec = parallel $ do
         state <- runLoop Project.emptyProjectState
           [
             Logic.PullRequestOpened pr8 branch baseBranch c7f "Add test results" "deckard" Nothing,
-            Logic.CommentAdded pr8 "rachael" "@bot merge"
+            Logic.CommentAdded pr8 "rachael" Nothing "@bot merge"
           ]
 
         -- Extract the sha of the rebased commit from the project state, and
@@ -1214,7 +1215,7 @@ eventLoopSpec = parallel $ do
         state <- runLoop Project.emptyProjectState
           [
             Logic.PullRequestOpened pr8 branch baseBranch c7f "Add test results" "deckard" Nothing,
-            Logic.CommentAdded pr8 "rachael" "@bot merge"
+            Logic.CommentAdded pr8 "rachael" Nothing "@bot merge"
           ]
 
         git ["fetch", "origin", "ahead"] -- The ref for commit c4.
@@ -1268,7 +1269,7 @@ eventLoopSpec = parallel $ do
         state <- runLoop Project.emptyProjectState
           [
             Logic.PullRequestOpened pr8 branch baseBranch c7f "Add test results" "deckard" Nothing,
-            Logic.CommentAdded pr8 "rachael" "@bot merge"
+            Logic.CommentAdded pr8 "rachael" Nothing "@bot merge"
           ]
 
         -- Extract the sha of the rebased commit from the project state, and
@@ -1306,7 +1307,7 @@ eventLoopSpec = parallel $ do
           [
             Logic.PullRequestOpened pr6 branch6 baseBranch c6 "Add Leon test results" "deckard" Nothing,
             Logic.PullRequestOpened pr8 branch8 baseBranch c7f "Update Leon data" "deckard" Nothing,
-            Logic.CommentAdded pr8 "rachael" "@bot merge"
+            Logic.CommentAdded pr8 "rachael" Nothing "@bot merge"
           ]
 
         Project.unfailedIntegratedPullRequests state `shouldBe` [pr8]
@@ -1319,7 +1320,7 @@ eventLoopSpec = parallel $ do
           [
             Logic.BuildStatusChanged rebasedSha "default" BuildSucceeded,
             Logic.PullRequestCommitChanged (PullRequestId 8) rebasedSha,
-            Logic.CommentAdded pr6 "rachael" "@bot merge"
+            Logic.CommentAdded pr6 "rachael" Nothing "@bot merge"
           ]
 
         Project.unfailedIntegratedPullRequests state' `shouldBe` []
