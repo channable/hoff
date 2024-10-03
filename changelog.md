@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.36.0
+
+Release 2024-10-03
+
+  - Adds a link to the readme when reporting parse errors. ([#269](https://github.com/channable/hoff/pull/269))
+  - In simple cases, successful commands will now trigger a :+1: reaction instead of a comment. ([#272](https://github.com/channable/hoff/pull/272))
+
 ## 0.35.1
 
 Release 2024-06-17
