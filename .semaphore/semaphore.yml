@@ -5,7 +5,7 @@ name: "Hoff"
 agent:
   machine:
     type: "f1-standard-2"
-    os_image: "ubuntu2004"
+    os_image: "ubuntu2204"
 
 # If we push a new build to some branch that isn't master, and another build is
 # already running, we cancel it.
