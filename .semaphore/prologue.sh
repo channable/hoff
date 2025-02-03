@@ -24,7 +24,7 @@ set -evo pipefail
 
 # Install Nix. We install in single-user mode (--no-daemon) because the Nix
 # process can access the running SSH agent to fetch private Git repositories.
-curl -o install-nix https://releases.nixos.org/nix/nix-2.11.1/install
+curl -o install-nix https://releases.nixos.org/nix/nix-2.24.10/install
 sha256sum --check .semaphore/install-nix.sha256
 
 sudo rm -rf \
