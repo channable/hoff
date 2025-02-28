@@ -46,7 +46,8 @@ data ProjectConfiguration = ProjectConfiguration
     stateFile          :: FilePath,                  -- The file where project state is stored.
     checks             :: Maybe ChecksConfiguration, -- Optional configuration related to checks for the project.
     deployEnvironments :: Maybe [Text],              -- The environments which the `deploy to <environment>` command should be enabled for
-    deploySubprojects  :: Maybe [Text]               -- The subprojects which the `deploy` command should be enabled for
+    deploySubprojects  :: Maybe [Text],              -- The subprojects which the `deploy` command should be enabled for
+    safeForFriday      :: Maybe Bool                 -- Whether it's safe to deploy this project on Friday without an "on Friday" check. default False
   }
   deriving (Generic)
 
