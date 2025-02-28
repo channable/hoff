@@ -63,7 +63,7 @@ import qualified Data.Text.Lazy.Builder.Int as B
 import qualified Data.Text.Read as Text
 import Data.Time (UTCTime, DayOfWeek (Friday), dayOfWeek, utctDay)
 
-import Configuration (ProjectConfiguration (owner, repository), TriggerConfiguration, MergeWindowExemptionConfiguration, FeatureFreezeWindow, Timeouts)
+import Configuration (ProjectConfiguration (owner, repository, safeForFriday), TriggerConfiguration, MergeWindowExemptionConfiguration, FeatureFreezeWindow, Timeouts)
 import Effectful (Dispatch (Dynamic), DispatchOf, Eff, Effect, (:>))
 import Effectful.Dispatch.Dynamic (interpret, send)
 import Format (format)
@@ -679,7 +679,7 @@ handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId a
                                           \we are in a feature-freeze period. Run '" <>
                                           Pr.displayMergeCommand command <> " as hotfix' instead.")
                 pure state
-            | day == Friday = do
+            | day == Friday && safeForFriday projectConfig /= Just True  = do
                 () <- leaveComment prId ("Your merge request has been denied, because \
                                           \merging on Fridays is not recommended. \
                                           \To override this behaviour use the command `"
