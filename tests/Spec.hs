@@ -82,7 +82,8 @@ testProjectConfig = Config.ProjectConfiguration {
   Config.stateFile = "/var/lib/hoff/state/peter/rep.json",
   Config.checks = Just (Config.ChecksConfiguration mempty),
   Config.deployEnvironments = Just ["staging", "production"],
-  Config.deploySubprojects = Just ["aaa", "bbb"]
+  Config.deploySubprojects = Just ["aaa", "bbb"],
+  Config.safeForFriday = Nothing
 }
 
 testmergeWindowExemptionConfig :: Config.MergeWindowExemptionConfiguration
