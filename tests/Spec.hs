@@ -309,7 +309,10 @@ runActionEff config eff = runRetrieveInfo config $ fakeRunTime $ runActionResult
 -- operations. Results are consumed one by one.
 
 runActionCustom :: Results -> Eff ActionResults a -> (a, [ActionFlat])
-runActionCustom results action = runPureEff $ Writer.runWriter $ State.evalState results $ runActionEff testProjectConfig action
+runActionCustom results = runActionCustom' results testProjectConfig
+
+runActionCustom' :: Results -> Config.ProjectConfiguration -> Eff ActionResults a -> (a, [ActionFlat])
+runActionCustom' results projConf action = runPureEff $ Writer.runWriter $ State.evalState results $ runActionEff projConf action
 
 runActionCustomResults :: Results -> Eff ActionResults a -> (a, Results, [ActionFlat])
 runActionCustomResults results action =
@@ -1330,6 +1333,28 @@ main = hspec $ do
         , ALeaveComment prId "Your merge request has been denied, because merging on Fridays is not recommended. To override this behaviour use the command `merge and tag on Friday`."
         ]
 
+    it "allows 'merge and tag' command on Friday when deploying the project on Friday is marked as safe" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" Nothing "@bot merge and tag"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
+        (_, actions) = runActionCustom' results (testProjectConfig {Config.safeForFriday = Just True}) $ handleEventTest event state
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and tag by @deckard, rebasing now."
+        , ATryIntegrate
+          { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
+          , integrationCandidate = (prId, Branch "refs/pull/1/head", Sha "abc1234")
+          , mergeTrain = []
+          , alwaysAddMergeCommit = True
+          }
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
+        ]
+
     it "doesn't allow 'merge and deploy' command on Friday" $ do
       let
         prId = PullRequestId 1
@@ -1345,6 +1370,28 @@ main = hspec $ do
         , ALeaveComment prId "Your merge request has been denied, because merging on Fridays is not recommended. To override this behaviour use the command `merge and deploy to staging on Friday`."
         ]
 
+    it "allows 'merge and deploy' command on Friday when deploying on Friday is marked as safe" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" Nothing "@bot merge and deploy to staging"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
+        (_, actions) = runActionCustom' results (testProjectConfig {Config.safeForFriday = Just True}) $ handleEventTest event state
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, rebasing now."
+        , ATryIntegrate
+          { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
+          , integrationCandidate = (prId, Branch "refs/pull/1/head", Sha "abc1234")
+          , mergeTrain = []
+          , alwaysAddMergeCommit = True
+          }
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
+        ]
+
     it "doesn't allow 'merge' command on Friday" $ do
       let
         prId = PullRequestId 1
@@ -1358,6 +1405,28 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "Your merge request has been denied, because merging on Fridays is not recommended. To override this behaviour use the command `merge on Friday`."
+        ]
+
+    it "allows 'merge' command on Friday when deploying the project on Friday is marked as safe" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" Nothing "@bot merge"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
+        (_, actions) = runActionCustom' results (testProjectConfig { Config.safeForFriday = Just True }) $ handleEventTest event state
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate
+          { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
+          , integrationCandidate = (prId, Branch "refs/pull/1/head", Sha "abc1234")
+          , mergeTrain = []
+          , alwaysAddMergeCommit = False
+          }
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
         ]
 
     it "refuses 'merge as hotfix' when no feature freeze is configured" $ do
