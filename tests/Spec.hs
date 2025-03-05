@@ -22,7 +22,7 @@ import Data.Foldable (foldlM, for_)
 import Data.Function ((&))
 import Data.IntSet (IntSet)
 import Data.List (group)
-import Data.Maybe (fromJust, isNothing, isJust)
+import Data.Maybe (fromJust, isNothing)
 import Data.Text (Text, pack)
 import Effectful (Eff, (:>), runPureEff)
 import Effectful.Dispatch.Dynamic (interpret)
@@ -2900,7 +2900,7 @@ main = hspec $ do
       -- is correctly parsed into a Just Bool when it's present in the JSON file.
       Right cfg <- Config.loadConfiguration "package/example-config.json"
       let project = Config.projects cfg !! 1
-      Config.safeForFriday project `shouldSatisfy` isJust
+      Config.safeForFriday project `shouldBe` Just True
 
   describe "EventLoop.convertGithubEvent" $ do
 
