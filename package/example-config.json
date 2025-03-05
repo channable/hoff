@@ -17,6 +17,26 @@
       "staging",
       "production"
     ]
+  },
+  {
+    "owner": "your-github-username-or-organization",
+    "repository": "your-repo",
+    "branch": "master",
+    "testBranch": "testing",
+    "checkout": "/var/lib/hoff/checkouts/your-username/your-repo",
+    "stateFile": "/var/lib/hoff/state/your-username/your-repo.json",
+    "checks": {
+      "mandatory": []
+    },
+    "deployEnvironments": [
+      "staging",
+      "production"
+    ],
+    "deploySubprojects": [
+      "staging",
+      "production"
+    ],
+    "safeForFriday": true
   }],
   "secret": "run 'head --bytes 32 /dev/urandom | base64' and paste output here",
   "accessToken": "paste a personal access token for a bot user here",

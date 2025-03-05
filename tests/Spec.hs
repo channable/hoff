@@ -22,7 +22,7 @@ import Data.Foldable (foldlM, for_)
 import Data.Function ((&))
 import Data.IntSet (IntSet)
 import Data.List (group)
-import Data.Maybe (fromJust, isNothing)
+import Data.Maybe (fromJust, isNothing, isJust)
 import Data.Text (Text, pack)
 import Effectful (Eff, (:>), runPureEff)
 import Effectful.Dispatch.Dynamic (interpret)
@@ -2887,6 +2887,20 @@ main = hspec $ do
 
       mergeWindowExemption `shouldBe` ["hoffbot"]
       Config.commentPrefix trigger `shouldBe` "@hoffbot"
+
+    it "correctly assumes a missing 'safeForFriday' field to be Nothing" $ do
+      -- This test makes sure the new project configuration field, `safeForFriday`
+      -- is correctly parsed into Nothing when it's absent from the JSON file.
+      Right cfg <- Config.loadConfiguration "package/example-config.json"
+      let project = head $ Config.projects cfg
+      Config.safeForFriday project `shouldBe` Nothing
+
+    it "correctly parses the 'safeForFriday' flag into a Just Bool when it's present" $ do
+      -- This test makes sure the new project configuration field, `safeForFriday`
+      -- is correctly parsed into a Just Bool when it's present in the JSON file.
+      Right cfg <- Config.loadConfiguration "package/example-config.json"
+      let project = Config.projects cfg !! 1
+      Config.safeForFriday project `shouldSatisfy` isJust
 
   describe "EventLoop.convertGithubEvent" $ do
 
