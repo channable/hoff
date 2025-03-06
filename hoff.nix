@@ -16,7 +16,7 @@ pkgs, mkDerivation
 , wai-middleware-prometheus, warp, warp-tls }:
 mkDerivation {
   pname = "hoff";
-  version = "0.36.0"; # please keep consistent with hoff.cabal
+  version = "0.37.0"; # please keep consistent with hoff.cabal
 
   src = let
     # We do not want to include all files, because that leads to a lot of things
