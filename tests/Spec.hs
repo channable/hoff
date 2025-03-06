@@ -82,7 +82,8 @@ testProjectConfig = Config.ProjectConfiguration {
   Config.stateFile = "/var/lib/hoff/state/peter/rep.json",
   Config.checks = Just (Config.ChecksConfiguration mempty),
   Config.deployEnvironments = Just ["staging", "production"],
-  Config.deploySubprojects = Just ["aaa", "bbb"]
+  Config.deploySubprojects = Just ["aaa", "bbb"],
+  Config.safeForFriday = Nothing
 }
 
 testmergeWindowExemptionConfig :: Config.MergeWindowExemptionConfiguration
@@ -308,7 +309,10 @@ runActionEff config eff = runRetrieveInfo config $ fakeRunTime $ runActionResult
 -- operations. Results are consumed one by one.
 
 runActionCustom :: Results -> Eff ActionResults a -> (a, [ActionFlat])
-runActionCustom results action = runPureEff $ Writer.runWriter $ State.evalState results $ runActionEff testProjectConfig action
+runActionCustom results = runActionCustom' results testProjectConfig
+
+runActionCustom' :: Results -> Config.ProjectConfiguration -> Eff ActionResults a -> (a, [ActionFlat])
+runActionCustom' results projConf action = runPureEff $ Writer.runWriter $ State.evalState results $ runActionEff projConf action
 
 runActionCustomResults :: Results -> Eff ActionResults a -> (a, Results, [ActionFlat])
 runActionCustomResults results action =
@@ -1329,6 +1333,28 @@ main = hspec $ do
         , ALeaveComment prId "Your merge request has been denied, because merging on Fridays is not recommended. To override this behaviour use the command `merge and tag on Friday`."
         ]
 
+    it "allows 'merge and tag' command on Friday when deploying the project on Friday is marked as safe" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" Nothing "@bot merge and tag"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
+        (_, actions) = runActionCustom' results (testProjectConfig {Config.safeForFriday = Just True}) $ handleEventTest event state
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and tag by @deckard, rebasing now."
+        , ATryIntegrate
+          { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
+          , integrationCandidate = (prId, Branch "refs/pull/1/head", Sha "abc1234")
+          , mergeTrain = []
+          , alwaysAddMergeCommit = True
+          }
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
+        ]
+
     it "doesn't allow 'merge and deploy' command on Friday" $ do
       let
         prId = PullRequestId 1
@@ -1344,6 +1370,28 @@ main = hspec $ do
         , ALeaveComment prId "Your merge request has been denied, because merging on Fridays is not recommended. To override this behaviour use the command `merge and deploy to staging on Friday`."
         ]
 
+    it "allows 'merge and deploy' command on Friday when deploying on Friday is marked as safe" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" Nothing "@bot merge and deploy to staging"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
+        (_, actions) = runActionCustom' results (testProjectConfig {Config.safeForFriday = Just True}) $ handleEventTest event state
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, rebasing now."
+        , ATryIntegrate
+          { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
+          , integrationCandidate = (prId, Branch "refs/pull/1/head", Sha "abc1234")
+          , mergeTrain = []
+          , alwaysAddMergeCommit = True
+          }
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
+        ]
+
     it "doesn't allow 'merge' command on Friday" $ do
       let
         prId = PullRequestId 1
@@ -1357,6 +1405,28 @@ main = hspec $ do
       actions `shouldBe`
         [ AIsReviewer "deckard"
         , ALeaveComment prId "Your merge request has been denied, because merging on Fridays is not recommended. To override this behaviour use the command `merge on Friday`."
+        ]
+
+    it "allows 'merge' command on Friday when deploying the project on Friday is marked as safe" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" Nothing "@bot merge"
+
+        results = defaultResults { resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0)) }
+        (_, actions) = runActionCustom' results (testProjectConfig { Config.safeForFriday = Just True }) $ handleEventTest event state
+
+      actions `shouldBe`
+        [ AIsReviewer "deckard"
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+        , ATryIntegrate
+          { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
+          , integrationCandidate = (prId, Branch "refs/pull/1/head", Sha "abc1234")
+          , mergeTrain = []
+          , alwaysAddMergeCommit = False
+          }
+        , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
         ]
 
     it "refuses 'merge as hotfix' when no feature freeze is configured" $ do
@@ -2818,6 +2888,20 @@ main = hspec $ do
       mergeWindowExemption `shouldBe` ["hoffbot"]
       Config.commentPrefix trigger `shouldBe` "@hoffbot"
 
+    it "correctly assumes a missing 'safeForFriday' field to be Nothing" $ do
+      -- This test makes sure the new project configuration field, `safeForFriday`
+      -- is correctly parsed into Nothing when it's absent from the JSON file.
+      Right cfg <- Config.loadConfiguration "package/example-config.json"
+      let project = head $ Config.projects cfg
+      Config.safeForFriday project `shouldBe` Nothing
+
+    it "correctly parses the 'safeForFriday' flag into a Just Bool when it's present" $ do
+      -- This test makes sure the new project configuration field, `safeForFriday`
+      -- is correctly parsed into a Just Bool when it's present in the JSON file.
+      Right cfg <- Config.loadConfiguration "package/example-config.json"
+      let project = Config.projects cfg !! 1
+      Config.safeForFriday project `shouldBe` Just True
+
   describe "EventLoop.convertGithubEvent" $ do
 
     let testPullRequestPayload action = Github.PullRequestPayload
@@ -3463,12 +3547,12 @@ main = hspec $ do
 
           commonResults = defaultResults {resultIntegrate = [Right (Sha "1b2")]}
 
-          runRetryTest :: HasCallStack => [Event] -> [ActionFlat] -> (Results -> Results) -> Expectation
-          runRetryTest extraEvents extraActions modifyResults = do
+          runRetryTest :: HasCallStack => [Event] -> [ActionFlat] -> (Results -> Results) -> Config.ProjectConfiguration -> Expectation
+          runRetryTest extraEvents extraActions modifyResults projConf = do
             let events' = commonEvents ++ extraEvents
                 actions' = commonActions ++ extraActions
                 results' = modifyResults commonResults
-                (_finalState, actions) = runActionCustom results' $ handleEventsTest events' state
+                (_finalState, actions) = runActionCustom' results' projConf $ handleEventsTest events' state
 
             actions `shouldBe` actions'
 
@@ -3507,6 +3591,7 @@ main = hspec $ do
           , ACleanupTestBranch (PullRequestId 12)
           ]
           (withIntegratedCommits ["00f"])
+          testProjectConfig
 
       it "rejects a plain 'retry' command on Fridays" $ do
         runRetryTest
@@ -3515,6 +3600,7 @@ main = hspec $ do
           , ALeaveComment (PullRequestId 12) "Your merge request has been denied, because merging on Fridays is not recommended. To override this behaviour use the command `retry on Friday`."
           ]
           (withRetryOnFriday . withIntegratedCommits ["00f"])
+          testProjectConfig
 
       it "allows retrying merges with 'retry on friday' on Fridays" $ do
         runRetryTest
@@ -3535,6 +3621,7 @@ main = hspec $ do
           , ACleanupTestBranch (PullRequestId 12)
           ]
           (withRetryOnFriday . withIntegratedCommits ["00f"])
+          testProjectConfig
 
       it "rejects 'retry on friday' commands when it's not Friday" $ do
         runRetryTest
@@ -3545,6 +3632,28 @@ main = hspec $ do
           -- This shouldn't be allowed on other days, just like @merge on
           -- friday@ isn't allowed on other weekdays
           (withIntegratedCommits ["00f"])
+          testProjectConfig
+      
+      it "allows retrying merges with 'retry' on Fridays on Friday-safe projects" $ do
+        runRetryTest
+          [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot retry"
+          , BuildStatusChanged (Sha "00f") "default" Project.BuildPending
+          , BuildStatusChanged (Sha "00f") "default" (Project.BuildStarted "url2")
+          , BuildStatusChanged (Sha "00f") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 12) (Sha "00f")
+          ]
+          [ AIsReviewer (Username "deckard")
+          , ACleanupTestBranch (PullRequestId 12)
+          , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard (retried by @deckard), rebasing now."
+          , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"  (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
+          , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 00f, waiting for CI …"
+          , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](url2) started."
+          , ATryForcePush (Branch "tth") (Sha "00f")
+          , ATryPromote (Sha "00f")
+          , ACleanupTestBranch (PullRequestId 12)
+          ]
+          (withRetryOnFriday . withIntegratedCommits ["00f"])
+          (testProjectConfig { Config.safeForFriday = Just True })
 
       it "doesn't allow retrying pending PR" $ do
         let events' =

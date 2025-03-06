@@ -16,7 +16,8 @@
     "deploySubprojects": [
       "staging",
       "production"
-    ]
+    ],
+    "safeForFriday": true
   }],
   "secret": "REPLACE with output of 'head --bytes 32 /dev/urandom | base64'",
   "accessToken": "REPLACE with a new personal access token from https://github.com/settings/tokens",
