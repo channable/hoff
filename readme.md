@@ -34,8 +34,12 @@ following commands:
 
 * `@hoffbot merge`: rebase then merge;
 * `@hoffbot merge and tag`: rebase, merge then tag.
-* `@hoffbot merge and deploy`: rebase, merge, tag then deploy to the default environment;
-* `@hoffbot merge and deploy to <env>`: rebase, merge, tag then deploy to the specified environment;
+* `@hoffbot merge and deploy <subprojects> to <env>`: rebase, merge and tag, then set the specified
+  labels on the merge commit message. `<subprojects>` is optional, comma-separate list, that should
+  be subset of the configured subprojects of the project. It corresponds to the `Deploy-Subprojects`
+  field on the merge commit.`to <env>` is optional if there is only a single deployment environment
+  configured for the project, and required otherwise. It corresponds to the `Deploy-Environment`
+  field on the merge commit.
 * `@hoffbot retry`: retry the last operation with the same parameters after the
   CI build has failed. Equivalent to closing and reopening the PR and then
   tagging the bot again with the same command.
@@ -46,6 +50,8 @@ when configured to automatically do so, deletes the PR branch.
 
 Hoff does not actually do the deploying.  It just adds a special marker to the
 tag message indicating to the CI job that the tag should be deployed.
+
+Subprojects and environments can be configured per project (see `package/example-config.json`)
 
 On Fridays, by default, Hoff refuses to do the above actions.  To force merges
 on Fridays, simply add `on friday` at the end of your commands, like so:
