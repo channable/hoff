@@ -264,7 +264,7 @@ as opposed to rollups that include multiple PRs in a single test build.
 **Complex scenario.**
 Here is a more complex scenario involving builds arriving in the unexpected order
 and a failure of a build of the first PR in a merge train.
-This is similar two the two previous scenarios,
+This is similar to the two previous scenarios,
 the only difference being that PR#1 alone causes the build to fail.
 
 ![A merge train being restarted.](doc/merge-train-restart.svg)
