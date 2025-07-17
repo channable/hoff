@@ -46,7 +46,6 @@ module Git
   runGit,
   runGitReadOnly,
   tag,
-  tag',
   toBaseBranch,
   toRemoteBranch,
   tryIntegrate,
@@ -283,9 +282,6 @@ shortlog refStart refEnd = send $ ShortLog refStart refEnd
 
 tag :: GitOperation :> es => Sha -> TagName -> TagMessage -> Eff es TagResult
 tag sha name message = send $ Tag sha name message
-
-tag' :: GitOperation :> es => Sha -> TagName -> Eff es TagResult
-tag' sha t@(TagName name) = tag sha t (TagMessage name)
 
 deleteTag :: GitOperation :> es => TagName -> Eff es ()
 deleteTag t = send $ DeleteTag t

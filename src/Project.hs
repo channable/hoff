@@ -51,7 +51,6 @@ module Project
   promotionSha,
   promotionTime,
   awaitingPromotion,
-  lookupIntegrationSha,
   integrationShas,
   loadProjectState,
   lookupPullRequest,
@@ -66,11 +65,9 @@ module Project
   setIntegrationStatus,
   setNeedsFeedback,
   updatePullRequest,
-  updatePullRequestM,
   updatePullRequests,
   addPromotedPullRequest,
   filterRecentlyPromoted,
-  getOwners,
   wasIntegrationAttemptFor,
   filterPullRequestsBy,
   approvedAfter,
@@ -84,13 +81,12 @@ module Project
   MergeWindow(..))
 where
 
-import Control.Monad ((<=<))
 import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 import Data.ByteString (readFile)
 import Data.ByteString.Lazy (writeFile)
 import Data.Foldable (asum)
 import Data.IntMap.Strict (IntMap)
-import Data.List (intersect, nub, sortBy)
+import Data.List (intersect, sortBy)
 import Data.Maybe (isJust, maybeToList)
 import Data.Map.Strict (Map)
 import Data.Text (Text)
@@ -376,16 +372,6 @@ updatePullRequest (PullRequestId n) f state = state {
   pullRequests = IntMap.adjust f n $ pullRequests state
 }
 
-updatePullRequestM
-  :: Monad m => PullRequestId -> (PullRequest -> m PullRequest) -> ProjectState -> m ProjectState
-updatePullRequestM (PullRequestId n) f state = do
-  pullRequests' <- IntMap.traverseWithKey go (pullRequests state)
-  pure state { pullRequests = pullRequests' }
- where
-  go key
-    | key == n  = f
-    | otherwise = pure
-
 updatePullRequests :: (PullRequest -> PullRequest) -> ProjectState -> ProjectState
 updatePullRequests f state = state {
   pullRequests = IntMap.map f $ pullRequests state
@@ -576,9 +562,6 @@ candidatePullRequests state =
   in
     approved `intersect` unintegrated
 
-getOwners :: [ProjectInfo] -> [Owner]
-getOwners = nub . map owner
-
 -- | A string representation of a merge command, without the optional @ on
 -- friday@ merge window suffix.
 displayMergeCommand :: MergeCommand -> Text
@@ -610,9 +593,6 @@ needsTag MergeAndTag        = True
 integrationSha :: PullRequest -> Maybe Sha
 integrationSha PullRequest{integrationStatus = Integrated s _} = Just s
 integrationSha _                                               = Nothing
-
-lookupIntegrationSha :: PullRequestId -> ProjectState -> Maybe Sha
-lookupIntegrationSha pid = integrationSha <=< lookupPullRequest pid
 
 integrationShas :: PullRequest -> [Sha]
 integrationShas pr = maybeToList (integrationSha pr) ++ integrationAttempts pr
