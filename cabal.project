@@ -1,0 +1,7 @@
+packages: hoff.cabal
+
+-- Weeder reads the IDE info files to find the weeds
+program-options
+  ghc-options: -fwrite-ide-info
+
+tests: true

@@ -1,0 +1,9 @@
+# This is a list of regular expressions of symbols that are considered as alive.
+# PLEASE make sure to add a comment as to why you consider something to be a
+# root. If temporary, please make sure the code gets weeded eventually.
+roots = [
+    "^Main.main$",
+    "^Paths_.*",
+]
+# This configures whether or not Weeder should consider all instances of type classes as roots.
+type-class-roots = true

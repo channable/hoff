@@ -17,6 +17,7 @@ let
       pkgs.haskellPackages.haskell-language-server
       pkgs.haskellPackages.implicit-hie
       pkgs.haskellPackages.stylish-haskell
+      pkgs.haskellPackages.weeder
     ];
 
     withHoogle = true;
