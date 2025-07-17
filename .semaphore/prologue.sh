@@ -27,6 +27,10 @@ set -evo pipefail
 curl -o install-nix https://releases.nixos.org/nix/nix-2.24.10/install
 sha256sum --check .semaphore/install-nix.sha256
 
+sudo systemctl stop docker.socket
+sudo systemctl stop docker.service
+sudo umount /var/lib/docker
+
 sudo rm -rf \
     /home/semaphore/.rbenv \
     /home/semaphore/.kerl \
@@ -36,7 +40,8 @@ sudo rm -rf \
     /opt/google \
     /opt/firefox-esr \
     /opt/firefox-esr-prev \
-    /usr/local/golang
+    /usr/local/golang \
+    /var/lib/docker
 
 # Hotfix for Semaphore issue preventing installing Nix
 unset LD_LIBRARY_PATH
