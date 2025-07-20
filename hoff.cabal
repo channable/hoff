@@ -1,151 +1,165 @@
-name:                hoff
+cabal-version:      3.8
+name:               hoff
+
 -- please keep version consistent with hoff.nix
-version:             0.37.1
-category:            Development
-synopsis:            A gatekeeper for your commits
-
-copyright:           Copyright 2016 Ruud van Asseldonk
-license:             Apache-2.0
-license-file:        license
-
-author:              Ruud van Asseldonk
-maintainer:          dev@veniogames.com
-
-build-type:          Simple
-extra-source-files:  readme.md
-cabal-version:       >=1.10
+version:            0.37.1
+category:           Development
+synopsis:           A gatekeeper for your commits
+copyright:          Copyright 2016 Ruud van Asseldonk
+license:            Apache-2.0
+license-file:       license
+author:             Ruud van Asseldonk
+maintainer:         dev@veniogames.com
+build-type:         Simple
+extra-source-files: readme.md
 
 library
-  default-language: Haskell2010
-  ghc-options:     -Wall -Werror -Wincomplete-uni-patterns -Wincomplete-record-updates -fno-ignore-asserts
-  hs-source-dirs:  src
-  exposed-modules: ClockTickLoop
-                 , Configuration
-                 , EventLoop
-                 , Format
-                 , Git
-                 , Github
-                 , GithubApi
-                 , Logic
-                 , Project
-                 , Server
-                 , Metrics.Server
-                 , Metrics.Metrics
-                 , MonadLoggerEffect
-                 , Parser
-                 , Time
-                 , Types
-                 , WebInterface
+  default-language: GHC2021
+  ghc-options:
+    -Wall -Werror -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -fno-ignore-asserts
 
-  build-depends: aeson
-               , aeson-pretty
-               , base
-               , base16-bytestring
-               , blaze-html
-               , blaze-markup
-               , bytestring
-               , containers
-               , cryptonite
-               , directory
-               , effectful
-               , extra
-               , file-embed
-               , filepath
-               , github
-               , http-client
-               , http-types
-               , megaparsec
-               , memory
-               , monad-logger
-               , process
-               , process-extras
-               , prometheus-client
-               , prometheus-metrics-ghc
-               , scotty
-               , stm
-               , text
-               , text-format
-               , time
-               , vector
-               , wai
-               , wai-middleware-prometheus
-               , warp
-               , warp-tls
-  other-modules: Paths_hoff
-  autogen-modules: Paths_hoff
+  hs-source-dirs:   src
+  exposed-modules:
+    ClockTickLoop
+    Configuration
+    EventLoop
+    Format
+    Git
+    Github
+    GithubApi
+    Logic
+    Metrics.Metrics
+    Metrics.Server
+    MonadLoggerEffect
+    Parser
+    Project
+    Server
+    Time
+    Types
+    WebInterface
+
+  build-depends:
+    , aeson
+    , aeson-pretty
+    , base
+    , base16-bytestring
+    , blaze-html
+    , blaze-markup
+    , bytestring
+    , containers
+    , cryptonite
+    , directory
+    , effectful
+    , extra
+    , file-embed
+    , filepath
+    , github
+    , http-client
+    , http-types
+    , megaparsec
+    , memory
+    , monad-logger
+    , process
+    , process-extras
+    , prometheus-client
+    , prometheus-metrics-ghc
+    , scotty
+    , stm
+    , text
+    , text-format
+    , time
+    , vector
+    , wai
+    , wai-middleware-prometheus
+    , warp
+    , warp-tls
+
+  other-modules:    Paths_hoff
+  autogen-modules:  Paths_hoff
 
 executable hoff
-  default-language: Haskell2010
+  default-language: GHC2021
   main-is:          Main.hs
   hs-source-dirs:   app
-  ghc-options:      -Wall -Werror -Wincomplete-uni-patterns -Wincomplete-record-updates
+  ghc-options:
+    -Wall -Werror -Wincomplete-uni-patterns -Wincomplete-record-updates
 
-  build-depends: async
-               , base
-               , containers
-               , directory
-               , effectful
-               , github
-               , hoff
-               , monad-logger
-               , optparse-applicative
-               , text
-  other-modules: Paths_hoff
-  autogen-modules: Paths_hoff
+  build-depends:
+    , async
+    , base
+    , containers
+    , directory
+    , effectful
+    , github
+    , hoff
+    , monad-logger
+    , optparse-applicative
+    , text
+
+  other-modules:    Paths_hoff
+  autogen-modules:  Paths_hoff
 
 test-suite spec
-  default-language: Haskell2010
-  type:           exitcode-stdio-1.0
-  main-is:        Spec.hs
-  other-modules:  ParserSpec, ProjectSpec
-  hs-source-dirs: tests
-  ghc-options:    -Wall -Werror
+  default-language: GHC2021
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  other-modules:
+    ParserSpec
+    ProjectSpec
 
-  build-depends: aeson
-               , base
-               , bytestring
-               , containers
-               -- TODO: Use the new function that really deletes directories,
-               -- instead of rolling my own.
-               , directory
-               , effectful
-               , filepath
-               , generic-arbitrary
-               , hoff
-               , hspec
-               , hspec-core
-               , QuickCheck
-               , quickcheck-instances
-               , text
-               , time
-               , uuid
+  hs-source-dirs:   tests
+  ghc-options:      -Wall -Werror
+  build-depends:
+    , aeson
+    , base
+    , bytestring
+    , containers
+    , directory
+    , effectful
+    , filepath
+    , generic-arbitrary
+    , hoff
+    , hspec
+    , hspec-core
+    , QuickCheck
+    , quickcheck-instances
+    , text
+    , time
+    , uuid
 
+-- TODO: Use the new function that really deletes directories,
+-- instead of rolling my own.
 test-suite end-to-end
-  default-language: Haskell2010
-  type:           exitcode-stdio-1.0
-  main-is:        EndToEnd.hs
-  other-modules:  EventLoopSpec, ServerSpec
-  hs-source-dirs: tests
-  ghc-options:    -Wall -Werror -threaded -rtsopts -with-rtsopts=-N
+  default-language: GHC2021
+  type:             exitcode-stdio-1.0
+  main-is:          EndToEnd.hs
+  other-modules:
+    EventLoopSpec
+    ServerSpec
 
-  build-depends: async
-               , base
-               , bytestring
-               , containers
-               , cryptonite
-               , filepath
-               -- TODO: Use the new function that really deletes directories,
-               -- instead of rolling my own.
-               , directory
-               , effectful
-               , hoff
-               , http-conduit
-               , hspec
-               , hspec-core
-               , http-types
-               , monad-logger
-               , random
-               , stm
-               , text
-               , time
-               , uuid
+  hs-source-dirs:   tests
+  ghc-options:      -Wall -Werror -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , async
+    , base
+    , bytestring
+    , containers
+    , cryptonite
+    , directory
+    , effectful
+    , filepath
+    , hoff
+    , hspec
+    , hspec-core
+    , http-conduit
+    , http-types
+    , monad-logger
+    , random
+    , stm
+    , text
+    , time
+    , uuid
+
+-- TODO: Use the new function that really deletes directories,
+-- instead of rolling my own.

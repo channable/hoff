@@ -6,7 +6,6 @@
 -- A copy of the License has been included in the root of the repository.
 
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GHC2021 #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}

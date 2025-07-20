@@ -10,7 +10,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE GHC2021 #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -3633,7 +3632,7 @@ main = hspec $ do
           -- friday@ isn't allowed on other weekdays
           (withIntegratedCommits ["00f"])
           testProjectConfig
-      
+
       it "allows retrying merges with 'retry' on Fridays on Friday-safe projects" $ do
         runRetryTest
           [ CommentAdded (PullRequestId 12) "deckard" Nothing "@bot retry"
