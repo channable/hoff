@@ -4,53 +4,79 @@
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
 -- A copy of the License has been included in the root of the repository.
-
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
 
-module WebInterface
-  ( renderPage
-  , viewIndex
-  , viewProject
-  , viewOwner
-  , stylesheet
-  , stylesheetUrl
+module WebInterface (
+  renderPage,
+  viewIndex,
+  viewProject,
+  viewOwner,
+  stylesheet,
+  stylesheetUrl,
+
   -- * The following are only exported for testing
-  , ClassifiedPullRequests (..)
-  , classifiedPullRequests
-  )
- where
+  ClassifiedPullRequests (..),
+  classifiedPullRequests,
+)
+where
 
 import Control.Monad (forM_, unless, void)
 import Crypto.Hash (Digest, SHA256, hash)
-import Data.List (sortOn)
 import Data.Bifunctor (second)
 import Data.ByteArray.Encoding (Base (Base64, Base64URLUnpadded), convertToBase)
 import Data.FileEmbed (embedStringFile)
+import Data.List (sortOn)
 import Data.Text (Text)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.Version (showVersion)
-import Prelude hiding (div, head, id, span)
 import Text.Blaze (toValue, (!))
 import Text.Blaze.Html.Renderer.Utf8
-import Text.Blaze.Html5 (Html, a, body, div, docTypeHtml, h1, h2, h3, head, link, meta, p, span,
-                         title, toHtml, script, preEscapedToHtml)
-import Text.Blaze.Html5.Attributes (charset, class_, content, href, id, name, rel, onclick)
+import Text.Blaze.Html5 (
+  Html,
+  a,
+  body,
+  div,
+  docTypeHtml,
+  h1,
+  h2,
+  h3,
+  head,
+  link,
+  meta,
+  p,
+  preEscapedToHtml,
+  script,
+  span,
+  title,
+  toHtml,
+ )
+import Text.Blaze.Html5.Attributes (charset, class_, content, href, id, name, onclick, rel)
 import Text.Blaze.Internal (Attribute, AttributeValue, attribute)
+import Prelude hiding (div, head, id, span)
 
-import qualified Data.ByteString.Lazy as LazyByteString
-import qualified Data.Map.Strict as Map
-import qualified Data.Text as Text
+import Data.ByteString.Lazy qualified as LazyByteString
+import Data.Map.Strict qualified as Map
+import Data.Text qualified as Text
 
 import Format (format)
-import Git (Sha(..))
-import Project (Approval (..), MergeCommand (..), BuildStatus (..), IntegrationStatus (..), Owner, ProjectInfo,
-                ProjectState, PullRequest (integrationStatus), speculativelyFailedPullRequests,
-                summarize)
+import Git (Sha (..))
+import Project (
+  Approval (..),
+  BuildStatus (..),
+  IntegrationStatus (..),
+  MergeCommand (..),
+  Owner,
+  ProjectInfo,
+  ProjectState,
+  PullRequest (integrationStatus),
+  speculativelyFailedPullRequests,
+  summarize,
+ )
 import Types (PullRequestId (..), Username (..))
 
-import qualified Project
+import Project qualified
 
 import Paths_hoff (version)
 
@@ -87,7 +113,6 @@ stylesheetUrl = "/style/" <> stylesheetUrlDigest <> ".css"
 jsScript :: Text
 jsScript = $(embedStringFile "static/script.js")
 
-
 -- Wraps the given body html in html for an actual page, and encodes the
 -- resulting page in utf-8.
 renderPage :: Text -> Html -> LazyByteString.ByteString
@@ -107,7 +132,7 @@ renderPage pageTitle bodyHtml = renderHtml $ docTypeHtml $ do
     script $ preEscapedToHtml jsScript
 
 autoRefreshToggle :: Html
-autoRefreshToggle = 
+autoRefreshToggle =
   div ! class_ "autoRefresh" $ do
     span ! id "autoRefreshToggle" ! onclick "toggleAutoRefresh();" $ "toggle autoRefresh"
 
@@ -121,9 +146,9 @@ viewProjectInfo :: ProjectInfo -> Html
 viewProjectInfo info =
   let
     owner = Project.owner info
-    repo  = Project.repository info
+    repo = Project.repository info
     ownerUrl = format "/{}" [owner]
-    repoUrl  = format "/{}/{}" [owner, repo]
+    repoUrl = format "/{}/{}" [owner, repo]
   in
     p $ do
       a ! href (toValue ownerUrl) $ (toHtml owner)
@@ -134,37 +159,37 @@ viewProjectInfo info =
 viewIndex :: [ProjectInfo] -> Html
 viewIndex infos =
   let
-  in do
-    h1 "Hoff"
-    h2 "About"
-    p $ do
-      void "Hoff is a gatekeeper for your commits. See "
-      a ! href "https://github.com/ruuda/hoff" $ "github.com/ruuda/hoff"
-      void " for more information."
-    h2 "Tracked repositories"
-    mapM_ viewProjectInfo infos
+  in  do
+        h1 "Hoff"
+        h2 "About"
+        p $ do
+          void "Hoff is a gatekeeper for your commits. See "
+          a ! href "https://github.com/ruuda/hoff" $ "github.com/ruuda/hoff"
+          void " for more information."
+        h2 "Tracked repositories"
+        mapM_ viewProjectInfo infos
 
 -- Renders the body html for the status page of a project.
 viewProject :: ProjectInfo -> ProjectState -> Html
 viewProject info state =
   let
     owner = Project.owner info
-    repo  = Project.repository info
+    repo = Project.repository info
     ownerUrl = format "/{}" [owner]
-    repoUrl  = format "https://github.com/{}/{}" (owner, repo)
-  in do
-    h1 $ do
-      a ! class_ "back" ! href "/" $ void "«"
-      a ! href (toValue ownerUrl) $ toHtml owner
-      void "\x2009/\x2009" -- U+2009 is a thin space.
-      a ! href (toValue repoUrl) $ toHtml repo
+    repoUrl = format "https://github.com/{}/{}" (owner, repo)
+  in
+    do
+      h1 $ do
+        a ! class_ "back" ! href "/" $ void "«"
+        a ! href (toValue ownerUrl) $ toHtml owner
+        void "\x2009/\x2009" -- U+2009 is a thin space.
+        a ! href (toValue repoUrl) $ toHtml repo
 
-    viewProjectQueues info state
+      viewProjectQueues info state
 
 viewOwner :: Owner -> [(ProjectInfo, ProjectState)] -> Html
 viewOwner owner projects = do
-  let
-    ownerUrl = format "https://github.com/{}" [owner]
+  let ownerUrl = format "https://github.com/{}" [owner]
   h1 $ do
     a ! class_ "back" ! href "/" $ void "«"
     a ! href (toValue ownerUrl) $ toHtml owner
@@ -178,25 +203,28 @@ viewOwner owner projects = do
 -- from a 'ProjectState'.
 data ClassifiedPullRequests = ClassifiedPullRequests
   { building
-  , failed
-  , approved
-  , awaiting :: [(PullRequestId, PullRequest, Project.PullRequestStatus)]
-  } deriving (Eq, Show)
+    , failed
+    , approved
+    , awaiting
+      :: [(PullRequestId, PullRequest, Project.PullRequestStatus)]
+  }
+  deriving (Eq, Show)
 
 -- | Given a 'ProjectState', classifies pull requests into
 --   the four sections of the UI (building, failed, approved or awaiting)
 --   in a 'ClassifiedPullRequests' record.
 classifiedPullRequests :: ProjectState -> ClassifiedPullRequests
-classifiedPullRequests state = ClassifiedPullRequests
-  { building = sortPrs $ filterPrs prPending ++ speculativelyFailed
-  , failed   = sortPrs $ realFailed
-  , approved = sortPrs $ filterPrs (== Project.PrStatusApproved)
-  , awaiting = reverse $ filterPrs (== Project.PrStatusAwaitingApproval)
-  }
-  where
+classifiedPullRequests state =
+  ClassifiedPullRequests
+    { building = sortPrs $ filterPrs prPending ++ speculativelyFailed
+    , failed = sortPrs $ realFailed
+    , approved = sortPrs $ filterPrs (== Project.PrStatusApproved)
+    , awaiting = reverse $ filterPrs (== Project.PrStatusAwaitingApproval)
+    }
+ where
   allFailed = filterPrs prFailed
-  realFailed          = filter (\(pid,_,_) -> pid `notElem` speculativelyFailedIds) allFailed
-  speculativelyFailed = filter (\(pid,_,_) -> pid   `elem`  speculativelyFailedIds) allFailed
+  realFailed = filter (\(pid, _, _) -> pid `notElem` speculativelyFailedIds) allFailed
+  speculativelyFailed = filter (\(pid, _, _) -> pid `elem` speculativelyFailedIds) allFailed
   speculativelyFailedIds = speculativelyFailedPullRequests state
   sortPrs = sortOn (\(_, pr, _) -> approvalOrder <$> Project.approval pr)
   filterPrs predicate = filter (\(_, _, status) -> predicate status) pullRequests
@@ -226,12 +254,13 @@ viewProjectQueues info state = do
 -- Render the html for the queues in a project, excluding the header and footer.
 viewGroupedProjectQueues :: [(ProjectInfo, ProjectState)] -> Html
 viewGroupedProjectQueues projects = do
-  let prs = map (second classifiedPullRequests) projects
-      only what = filter (not . null . snd) $ map (second what) prs
-      onlyBuilding = only building
-      onlyApproved = only approved
-      onlyFailed   = only failed
-      onlyAwaiting = only awaiting
+  let
+    prs = map (second classifiedPullRequests) projects
+    only what = filter (not . null . snd) $ map (second what) prs
+    onlyBuilding = only building
+    onlyApproved = only approved
+    onlyFailed = only failed
+    onlyAwaiting = only awaiting
 
   h2 "Building"
   if null onlyBuilding
@@ -249,16 +278,15 @@ viewGroupedProjectQueues projects = do
   unless (null onlyAwaiting) $ do
     h2 "Awaiting approval"
     mapM_ (uncurry $ viewList' viewPullRequest) onlyAwaiting
-
-  where
-    viewList'
-          :: (ProjectInfo -> PullRequestId -> PullRequest -> Html)
-          -> ProjectInfo
-          -> [(PullRequestId, PullRequest, status)]
-          -> Html
-    viewList' view info prs = do
-      h3 (toHtml $ Project.repository info)
-      forM_ prs $ \(prId, pr, _) -> p $ view info prId pr
+ where
+  viewList'
+    :: (ProjectInfo -> PullRequestId -> PullRequest -> Html)
+    -> ProjectInfo
+    -> [(PullRequestId, PullRequest, status)]
+    -> Html
+  viewList' view info prs = do
+    h3 (toHtml $ Project.repository info)
+    forM_ prs $ \(prId, pr, _) -> p $ view info prId pr
 
 -- Renders the contents of a list item with a link for a pull request.
 viewPullRequest :: ProjectInfo -> PullRequestId -> PullRequest -> Html
@@ -270,7 +298,7 @@ viewPullRequestWithApproval :: ProjectInfo -> PullRequestId -> PullRequest -> Ht
 viewPullRequestWithApproval info prId pullRequest = do
   viewPullRequest info prId pullRequest
   case Project.approval pullRequest of
-    Just Approval { approver = Username username, approvedFor = approvalType, approvalRetriedBy = retriedBy } -> do
+    Just Approval{approver = Username username, approvedFor = approvalType, approvalRetriedBy = retriedBy} -> do
       span ! class_ "review" $ do
         -- Show approver
         toHtml $ format "Approved for {} by " [approvedAction]
@@ -284,55 +312,58 @@ viewPullRequestWithApproval info prId pullRequest = do
         -- Show build info
         case integrationStatus pullRequest of
           Integrated sha buildStatus -> do
-            let formatStatus status = case status of
-                  (BuildStarted ciUrl)       -> ciLink ciUrl "🟡"
-                  (BuildFailed (Just ciUrl)) -> ciLink ciUrl "❌"
-                  BuildSucceeded             -> ciLink (commitUrl info sha) "✅"
-                  _                          -> pure ()
-                latestStatus = summarize buildStatus
+            let
+              formatStatus status = case status of
+                (BuildStarted ciUrl) -> ciLink ciUrl "🟡"
+                (BuildFailed (Just ciUrl)) -> ciLink ciUrl "❌"
+                BuildSucceeded -> ciLink (commitUrl info sha) "✅"
+                _ -> pure ()
+              latestStatus = summarize buildStatus
             span " | "
             case buildStatus of
               Project.AnyCheck status -> formatStatus status
               Project.SpecificChecks statuses -> mapM_ (formatStatus . snd) $ Map.toList statuses
             a ! href (toValue $ commitUrl info sha) $ toHtml $ prettySha sha
             case latestStatus of
-              (BuildStarted ciUrl)       -> span " | " >> ciLink ciUrl "CI build"
+              (BuildStarted ciUrl) -> span " | " >> ciLink ciUrl "CI build"
               (BuildFailed (Just ciUrl)) -> span " | " >> ciLink ciUrl "CI build"
-              _                          -> pure ()
-          Conflicted _ _      -> span "  | " >> span "❗ Conflicted"
+              _ -> pure ()
+          Conflicted _ _ -> span "  | " >> span "❗ Conflicted"
           IncorrectBaseBranch -> span "  | " >> span "❗ Incorrect base branch"
-          Promote _ _         -> span "  | " >> span "Awaiting promotion"
-          PromoteAndTag {}    -> span "  | " >> span "Awaiting promotion"
+          Promote _ _ -> span "  | " >> span "Awaiting promotion"
+          PromoteAndTag{} -> span "  | " >> span "Awaiting promotion"
           -- Promotions are not actually shown in the interface
           -- as a PR is deleted right after it is promoted.
           -- The case is here so we cover all branches
           -- (and so we are notified in case we add a new constructor).
-          Promoted            -> span "  | " >> span "🔷 Promoted"
-          NotIntegrated       -> pure ()
-          Outdated            -> pure ()
-        where
-          approvedAction = Project.displayMergeCommand (Approve approvalType)
-          profileUrl = Text.append "https://github.com/"
-          ciLink url text = do
-            a ! href (toValue url) $ text
-            span " "
-
+          Promoted -> span "  | " >> span "🔷 Promoted"
+          NotIntegrated -> pure ()
+          Outdated -> pure ()
+     where
+      approvedAction = Project.displayMergeCommand (Approve approvalType)
+      profileUrl = Text.append "https://github.com/"
+      ciLink url text = do
+        a ! href (toValue url) $ text
+        span " "
     Nothing ->
       error $
-        "Tried to render approval link for pull request " ++ (show prId) ++
-        " which was not approved. This is a programming error."
+        "Tried to render approval link for pull request "
+          ++ (show prId)
+          ++ " which was not approved. This is a programming error."
 
 -- Render all pull requests in the list with the given view function.
-viewList  :: (ProjectInfo -> PullRequestId -> PullRequest -> Html)
-          -> ProjectInfo
-          -> [(PullRequestId, PullRequest, status)]
-          -> Html
-viewList view info prs = forM_  prs $ \(prId, pr, _) -> p $ view info prId pr
+viewList
+  :: (ProjectInfo -> PullRequestId -> PullRequest -> Html)
+  -> ProjectInfo
+  -> [(PullRequestId, PullRequest, status)]
+  -> Html
+viewList view info prs = forM_ prs $ \(prId, pr, _) -> p $ view info prId pr
 
 -- | Formats a pull request URL
 pullRequestUrl :: ProjectInfo -> PullRequestId -> Text
 pullRequestUrl info (PullRequestId n) =
-  format "https://github.com/{}/{}/pull/{}"
+  format
+    "https://github.com/{}/{}/pull/{}"
     ( Project.owner info
     , Project.repository info
     , n
@@ -340,7 +371,8 @@ pullRequestUrl info (PullRequestId n) =
 
 commitUrl :: ProjectInfo -> Sha -> Text
 commitUrl info (Sha sha) =
-  format "https://github.com/{}/{}/commit/{}"
+  format
+    "https://github.com/{}/{}/commit/{}"
     ( Project.owner info
     , Project.repository info
     , sha
@@ -355,24 +387,24 @@ prettySha :: Sha -> Text
 prettySha (Sha sha) = Text.take 7 sha
 
 prFailed :: Project.PullRequestStatus -> Bool
-prFailed Project.PrStatusFailedConflict      = True
-prFailed Project.PrStatusEmptyRebase         = True
-prFailed Project.PrStatusWrongFixups         = True
+prFailed Project.PrStatusFailedConflict = True
+prFailed Project.PrStatusEmptyRebase = True
+prFailed Project.PrStatusWrongFixups = True
 prFailed Project.PrStatusIncorrectBaseBranch = True
-prFailed (Project.PrStatusFailedBuild _)     = True
-prFailed _                                   = False
+prFailed (Project.PrStatusFailedBuild _) = True
+prFailed _ = False
 
 prPending :: Project.PullRequestStatus -> Bool
-prPending Project.PrStatusBuildPending        = True
-prPending (Project.PrStatusBuildStarted _)    = True
+prPending Project.PrStatusBuildPending = True
+prPending (Project.PrStatusBuildStarted _) = True
 -- PrStatusIntegrated here means that the PR successfully built
 -- but it has not been promoted to master yet for either of two reasons:
 -- 1. this is the split-second between receiving the status and promoting;
 -- 2. this PR is not at the head of the merge train,
 --    we are waiting for the build status of the previous PR.
-prPending Project.PrStatusIntegrated          = True
+prPending Project.PrStatusIntegrated = True
 -- A speculative conflict means that the PR is also still "building".
 -- The conflict may have well been fault of a previous PR that will eventually
 -- fail.  At that moment, this PR will be reintegrated automatically.
 prPending Project.PrStatusSpeculativeConflict = True
-prPending _                                   = False
+prPending _ = False

@@ -1,19 +1,26 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-} -- Needed for 'MonadLogger (Eff es)'
+-- Needed for 'MonadLogger (Eff es)'
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module MonadLoggerEffect (MonadLoggerEffect (..), runLoggerStdout) where
 
-import Control.Monad.Logger (Loc, LogLevel, LogSource, MonadLogger (..), ToLogStr (toLogStr),
-                             defaultOutput)
+import Control.Monad.Logger (
+  Loc,
+  LogLevel,
+  LogSource,
+  MonadLogger (..),
+  ToLogStr (toLogStr),
+  defaultOutput,
+ )
 import Effectful (Dispatch (Dynamic), DispatchOf, Eff, Effect, IOE, MonadIO (liftIO), (:>))
 import Effectful.Dispatch.Dynamic (interpret, send)
 import System.IO (stdout)
 
 data MonadLoggerEffect :: Effect where
-    MonadLoggerLog :: ToLogStr msg => Loc -> LogSource -> LogLevel -> msg -> MonadLoggerEffect m ()
+  MonadLoggerLog :: ToLogStr msg => Loc -> LogSource -> LogLevel -> msg -> MonadLoggerEffect m ()
 
 type instance DispatchOf MonadLoggerEffect = 'Dynamic
 

@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeFamilies #-}
+
 module Time (addTime, getDateTime, runTime, TimeOperation (..)) where
 
 import Control.Monad.IO.Class (liftIO)

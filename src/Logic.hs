@@ -4,7 +4,6 @@
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
 -- A copy of the License has been included in the root of the repository.
-
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase #-}
@@ -13,8 +12,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ViewPatterns #-}
 
-module Logic
-(
+module Logic (
   -- Action,
   Action (..),
   Event (..),
@@ -52,49 +50,73 @@ import Data.Text (Text)
 import Data.Text.Lazy (toStrict)
 import GHC.Natural (Natural)
 
-import qualified Data.IntMap.Strict as IntMap
-import qualified Data.IntSet as IntSet
-import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
-import qualified Data.Text as Text
-import qualified Data.Text.Lazy.Builder as B
-import qualified Data.Text.Lazy.Builder.Int as B
-import qualified Data.Text.Read as Text
-import Data.Time (UTCTime, DayOfWeek (Friday), dayOfWeek, utctDay)
+import Data.IntMap.Strict qualified as IntMap
+import Data.IntSet qualified as IntSet
+import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
+import Data.Text qualified as Text
+import Data.Text.Lazy.Builder qualified as B
+import Data.Text.Lazy.Builder.Int qualified as B
+import Data.Text.Read qualified as Text
+import Data.Time (DayOfWeek (Friday), UTCTime, dayOfWeek, utctDay)
 
-import Configuration (ProjectConfiguration (owner, repository, safeForFriday), TriggerConfiguration, MergeWindowExemptionConfiguration, FeatureFreezeWindow, Timeouts)
+import Configuration (FeatureFreezeWindow, MergeWindowExemptionConfiguration, ProjectConfiguration (owner, repository, safeForFriday), Timeouts, TriggerConfiguration)
 import Effectful (Dispatch (Dynamic), DispatchOf, Eff, Effect, (:>))
 import Effectful.Dispatch.Dynamic (interpret, send)
 import Format (format)
-import Git (Branch (..), BaseBranch (..), GitOperation, PushResult (..),
-            GitIntegrationFailure (..), Sha (..), SomeRefSpec (..), TagMessage (..), TagName (..),
-            TagResult (..), Context)
+import Git (
+  BaseBranch (..),
+  Branch (..),
+  Context,
+  GitIntegrationFailure (..),
+  GitOperation,
+  PushResult (..),
+  Sha (..),
+  SomeRefSpec (..),
+  TagMessage (..),
+  TagName (..),
+  TagResult (..),
+ )
 
 import GithubApi (GithubOperation)
 import Metrics.Metrics (MetricsOperation, increaseMergedPRTotal, updateTrainSizeGauge)
 import Parser (ParseResult (..), hoffIgnoreComment, isSuccess, parseMergeCommand, shouldIgnoreComment)
-import Project (Approval (..), ApprovedFor (..), MergeCommand (..), BuildStatus (..), Check (..),
-                DeployEnvironment (..), DeploySubprojects (..), IntegrationStatus (..),
-                MergeWindow(..), Priority (..), ProjectState, PullRequest, PullRequestStatus (..),
-                summarize, supersedes)
+import Project (
+  Approval (..),
+  ApprovedFor (..),
+  BuildStatus (..),
+  Check (..),
+  DeployEnvironment (..),
+  DeploySubprojects (..),
+  IntegrationStatus (..),
+  MergeCommand (..),
+  MergeWindow (..),
+  Priority (..),
+  ProjectState,
+  PullRequest,
+  PullRequestStatus (..),
+  summarize,
+  supersedes,
+ )
 import Time (TimeOperation)
-import Types (Body (..), PullRequestId (..), Username (..), CommentId, ReactableId (..))
+import Types (Body (..), CommentId, PullRequestId (..), ReactableId (..), Username (..))
 
-import qualified Configuration as Config
-import qualified Git
-import qualified GithubApi
-import qualified Project as Pr
-import qualified Time
+import Configuration qualified as Config
+import Git qualified
+import GithubApi qualified
+import Project qualified as Pr
+import Time qualified
 
 -- | Represents the high level manipulations of a pull request
 data Action :: Effect where
-    -- This is a record type, but the names are currently only used for documentation.
-  TryIntegrate ::
-    { _mergeCommitMessage   :: Text
-    , _integrationCandidate :: (PullRequestId, Branch, Sha)
-    , _train                :: [PullRequestId]
-    , _alwaysAddMergeCommit :: Bool
-    } -> Action m (Either IntegrationFailure Sha)
+  -- This is a record type, but the names are currently only used for documentation.
+  TryIntegrate
+    :: { _mergeCommitMessage :: Text
+       , _integrationCandidate :: (PullRequestId, Branch, Sha)
+       , _train :: [PullRequestId]
+       , _alwaysAddMergeCommit :: Bool
+       }
+    -> Action m (Either IntegrationFailure Sha)
   TryForcePush :: Branch -> Sha -> Action m PushResult
   TryPromote :: Sha -> Action m PushResult
   TryPromoteWithTag :: Sha -> TagName -> TagMessage -> Action m PushWithTagResult
@@ -119,10 +141,12 @@ data RetrieveEnvironment :: Effect where
 
 type instance DispatchOf RetrieveEnvironment = 'Dynamic
 
-data PRCloseCause =
-      User            -- ^ The user closed the PR.
-    | StopIntegration -- ^ We close and reopen the PR internally to stop its integration if it is approved.
-  deriving Show
+data PRCloseCause
+  = -- | The user closed the PR.
+    User
+  | -- | We close and reopen the PR internally to stop its integration if it is approved.
+    StopIntegration
+  deriving (Show)
 
 type PushWithTagResult = (Either Text TagName, PushResult)
 
@@ -216,13 +240,14 @@ runAction config =
 
       let targetBranch = fromMaybe (Git.Branch $ Config.branch config) (trainBranch train)
 
-      shaOrFailed <- Git.tryIntegrate
-        message
-        ref
-        sha
-        (Git.toRemoteBranch targetBranch)
-        (testBranch config pr)
-        alwaysAddMergeCommit
+      shaOrFailed <-
+        Git.tryIntegrate
+          message
+          ref
+          sha
+          (Git.toRemoteBranch targetBranch)
+          (testBranch config pr)
+          alwaysAddMergeCommit
 
       case shaOrFailed of
         Left failure -> pure $ Left $ IntegrationFailure (Git.toBaseBranch targetBranch) failure
@@ -230,11 +255,9 @@ runAction config =
     TryForcePush prBranch sha -> do
       ensureCloned config
       Git.forcePush sha prBranch
-
     TryPromote sha -> do
       ensureCloned config
       Git.push sha (Git.Branch $ Config.branch config)
-
     TryPromoteWithTag sha newTagName newTagMessage -> do
       ensureCloned config
       tagResult <- Git.tag sha newTagName newTagMessage
@@ -246,52 +269,40 @@ runAction config =
           atomicPushResult <- Git.pushAtomic [AsRefSpec tagName, AsRefSpec (sha, Git.Branch $ Config.branch config)]
           Git.deleteTag tagName
           pure (Right tagName, atomicPushResult)
-          -- Deleting tag after atomic push is important to maintain one "source of truth", namely
-          -- the origin
+    -- Deleting tag after atomic push is important to maintain one "source of truth", namely
+    -- the origin
 
     CleanupTestBranch pr -> do
       let branch = testBranch config pr
       Git.deleteBranch branch
       void $ Git.deleteRemoteBranch branch
-
     LeaveComment pr body -> do
       GithubApi.leaveComment pr body
-
     AddReaction reactable reaction -> do
       GithubApi.addReaction reactable reaction
-
     IsReviewer username -> do
       GithubApi.hasPushAccess username
-
     GetPullRequest pr -> do
       GithubApi.getPullRequest pr
-
     GetOpenPullRequests -> do
       GithubApi.getOpenPullRequests
-
     GetLatestVersion sha -> do
       Git.fetchBranchWithTags $ Branch (Config.branch config)
       maybe (Right 0) (\t -> maybeToEither t $ parseVersion t) <$> Git.lastTag sha
-
     GetChangelog prevTag curHead ->
       Git.shortlog (AsRefSpec prevTag) (AsRefSpec curHead)
-
     IncreaseMergeMetric -> increaseMergedPRTotal
-
     UpdateTrainSizeMetric n -> updateTrainSizeGauge n
-
-  where
-    trainBranch :: [PullRequestId] -> Maybe Git.Branch
-    trainBranch [] = Nothing
-    trainBranch train = Just $ last [testBranch config pr | pr <- train]
+ where
+  trainBranch :: [PullRequestId] -> Maybe Git.Branch
+  trainBranch [] = Nothing
+  trainBranch train = Just $ last [testBranch config pr | pr <- train]
 
 runRetrieveEnvironment :: TimeOperation :> es => ProjectConfiguration -> Eff (RetrieveEnvironment : es) a -> Eff es a
 runRetrieveEnvironment config = interpret $ \_ -> \case
-    GetProjectConfig -> pure config
-
-    GetDateTime -> Time.getDateTime
-
-    GetBaseBranch -> pure $ BaseBranch (Config.branch config)
+  GetProjectConfig -> pure config
+  GetDateTime -> Time.getDateTime
+  GetBaseBranch -> pure $ BaseBranch (Config.branch config)
 
 ensureCloned :: GitOperation :> es => ProjectConfiguration -> Eff es ()
 ensureCloned config =
@@ -304,27 +315,35 @@ ensureCloned config =
     cloneWithRetry (triesLeft :: Int) = do
       result <- Git.clone (Git.RemoteUrl url)
       case result of
-        Git.CloneOk     -> pure ()
+        Git.CloneOk -> pure ()
         Git.CloneFailed -> cloneWithRetry (triesLeft - 1)
-  in do
-    exists <- Git.doesGitDirectoryExist
-    unless exists (cloneWithRetry 3)
+  in
+    do
+      exists <- Git.doesGitDirectoryExist
+      unless exists (cloneWithRetry 3)
 
 data Event
-  -- GitHub events
-  = PullRequestOpened PullRequestId Branch BaseBranch Sha Text Username (Maybe Body) -- ^ PR, branch, base branch, sha, title, author, body.
-  -- The commit changed event may contain false positives: it may be received
-  -- even if the commit did not really change. This is because GitHub just
-  -- sends a "something changed" event along with the new state.
-  | PullRequestCommitChanged PullRequestId Sha -- ^ PR, new sha.
-  | PullRequestClosed PullRequestId            -- ^ PR.
-  | PullRequestEdited PullRequestId Text BaseBranch -- ^ PR, new title, new base branch.
-  | CommentAdded PullRequestId Username (Maybe CommentId) Text   -- ^ PR, author, comment ID, and body.
-  | PushPerformed BaseBranch Sha               -- ^ branch, sha
-  -- CI events
-  | BuildStatusChanged Sha Context BuildStatus
-  -- ^ sha, possible mandatory check that was submitted with the status update, new build status
-  -- Internal events
+  = -- GitHub events
+
+    -- | PR, branch, base branch, sha, title, author, body.
+    -- The commit changed event may contain false positives: it may be received
+    -- even if the commit did not really change. This is because GitHub just
+    -- sends a "something changed" event along with the new state.
+    PullRequestOpened PullRequestId Branch BaseBranch Sha Text Username (Maybe Body)
+  | -- | PR, new sha.
+    PullRequestCommitChanged PullRequestId Sha
+  | -- | PR.
+    PullRequestClosed PullRequestId
+  | -- | PR, new title, new base branch.
+    PullRequestEdited PullRequestId Text BaseBranch
+  | -- | PR, author, comment ID, and body.
+    CommentAdded PullRequestId Username (Maybe CommentId) Text
+  | -- | branch, sha
+    -- CI events
+    PushPerformed BaseBranch Sha
+  | -- | sha, possible mandatory check that was submitted with the status update, new build status
+    -- Internal events
+    BuildStatusChanged Sha Context BuildStatus
   | Synchronize
   | ClockTick UTCTime
   deriving (Eq, Show)
@@ -366,13 +385,13 @@ clearPullRequest :: Action :> es => PullRequestId -> PullRequest -> ProjectState
 clearPullRequest prId pr state =
   let
     branch = Pr.branch pr
-    title  = Pr.title pr
+    title = Pr.title pr
     author = Pr.author pr
     baseBranch = Pr.baseBranch pr
-    sha    = Pr.sha pr
+    sha = Pr.sha pr
   in
-    handlePullRequestClosed StopIntegration prId state >>=
-      handlePullRequestOpened prId branch baseBranch sha title author
+    handlePullRequestClosed StopIntegration prId state
+      >>= handlePullRequestOpened prId branch baseBranch sha title author
 
 -- Handle a single event, but don't take any other actions. To complete handling
 -- of the event, we must also call `proceed` on the state until we reach a fixed
@@ -387,20 +406,21 @@ handleEventInternal
   -> ProjectState
   -> Eff es ProjectState
 handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow timeouts event = case event of
-  PullRequestOpened pr branch baseBranch sha title author body
-    -> handlePullRequestOpenedByUser triggerConfig mergeWindowExemption featureFreezeWindow pr branch baseBranch sha title author body
+  PullRequestOpened pr branch baseBranch sha title author body ->
+    handlePullRequestOpenedByUser triggerConfig mergeWindowExemption featureFreezeWindow pr branch baseBranch sha title author body
   PullRequestCommitChanged pr sha -> handlePullRequestCommitChanged pr sha
-  PullRequestClosed pr            -> handlePullRequestClosedByUser pr
+  PullRequestClosed pr -> handlePullRequestClosedByUser pr
   PullRequestEdited pr title baseBranch -> handlePullRequestEdited pr title baseBranch
-  CommentAdded pr author commentId body
-    -> handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow pr author (OnIssueComment <$> commentId) body
-  BuildStatusChanged sha context status   -> handleBuildStatusChanged sha context status
-  PushPerformed branch sha        -> handleTargetChanged branch sha
-  Synchronize                     -> synchronizeState
-  ClockTick currTime              -> handleClockTickUpdate timeouts currTime
+  CommentAdded pr author commentId body ->
+    handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow pr author (OnIssueComment <$> commentId) body
+  BuildStatusChanged sha context status -> handleBuildStatusChanged sha context status
+  PushPerformed branch sha -> handleTargetChanged branch sha
+  Synchronize -> synchronizeState
+  ClockTick currTime -> handleClockTickUpdate timeouts currTime
 
 handlePullRequestOpenedByUser
-  :: forall es. (Action :> es, RetrieveEnvironment :> es)
+  :: forall es
+   . (Action :> es, RetrieveEnvironment :> es)
   => TriggerConfiguration
   -> MergeWindowExemptionConfiguration
   -> Maybe FeatureFreezeWindow
@@ -442,19 +462,19 @@ handlePullRequestCommitChanged prId newSha state =
   -- If the commit changes, pretend that the PR was closed. This forgets about
   -- approval and build status. Then pretend a new PR was opened, with the same
   -- author as the original one, but with the new sha.
-    let updateSha pr = pr { Pr.sha = newSha } in
-    case Pr.lookupPullRequest prId state of
-      Just pullRequest
-        -- If this is the result of our force push, we promote the PR.
-        | Pr.promotionSha pullRequest == Just newSha -> tryPromotePullRequest pullRequest prId state
-        -- If the change notification was a false positive, ignore it.
-        | Pr.sha pullRequest == newSha -> pure state
-        -- If the new commit hash is one that we pushed ourselves, ignore the
-        -- change too, we don't want to lose the approval status.
-        | newSha `Pr.wasIntegrationAttemptFor` pullRequest -> pure state
-        | otherwise -> clearPullRequest prId (updateSha pullRequest) state
-      -- If the pull request was not present in the first place, do nothing.
-      Nothing -> pure state
+  let updateSha pr = pr{Pr.sha = newSha}
+  in  case Pr.lookupPullRequest prId state of
+        Just pullRequest
+          -- If this is the result of our force push, we promote the PR.
+          | Pr.promotionSha pullRequest == Just newSha -> tryPromotePullRequest pullRequest prId state
+          -- If the change notification was a false positive, ignore it.
+          | Pr.sha pullRequest == newSha -> pure state
+          -- If the new commit hash is one that we pushed ourselves, ignore the
+          -- change too, we don't want to lose the approval status.
+          | newSha `Pr.wasIntegrationAttemptFor` pullRequest -> pure state
+          | otherwise -> clearPullRequest prId (updateSha pullRequest) state
+        -- If the pull request was not present in the first place, do nothing.
+        Nothing -> pure state
 
 -- | Try to push the final result of a pull request to the target branch.
 tryPromotePullRequest :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => PullRequest -> PullRequestId -> ProjectState -> Eff es ProjectState
@@ -466,19 +486,23 @@ tryPromotePullRequest pullRequest prId state = do
     -- Specifically, we need to leave a comment about the result of the tag.
     Pr.PromoteAndTag _ sha@(Sha shaText) tagName tagMessage -> do
       (tagResult, pushResult) <- tryPromoteWithTag sha tagName tagMessage
-      let approval = fromJust $ Pr.approval pullRequest
-          Username approvedBy = approver approval
-          approvalKind = Pr.approvedFor approval
+      let
+        approval = fromJust $ Pr.approval pullRequest
+        Username approvedBy = approver approval
+        approvalKind = Pr.approvedFor approval
       config <- getProjectConfig
-      when (pushResult == PushOk) $ leaveComment prId . (<>) ("@" <> approvedBy <> " ") $
-        case tagResult of
-          Left err -> "Sorry, I could not tag your PR. " <> err
-          Right (TagName t) -> do
-            let link = format "[{}](https://github.com/{}/{}/releases/tag/{})" (t, owner config, repository config, t)
-            "I tagged your PR with " <> link <> ". " <>
-              if Pr.needsDeploy approvalKind
-              then "It is scheduled for autodeploy!"
-              else Text.concat ["Please wait for the build of ", shaText, " to pass and don't forget to deploy it!"]
+      when (pushResult == PushOk) $
+        leaveComment prId . (<>) ("@" <> approvedBy <> " ") $
+          case tagResult of
+            Left err -> "Sorry, I could not tag your PR. " <> err
+            Right (TagName t) -> do
+              let link = format "[{}](https://github.com/{}/{}/releases/tag/{})" (t, owner config, repository config, t)
+              "I tagged your PR with "
+                <> link
+                <> ". "
+                <> if Pr.needsDeploy approvalKind
+                  then "It is scheduled for autodeploy!"
+                  else Text.concat ["Please wait for the build of ", shaText, " to pass and don't forget to deploy it!"]
       pure pushResult
     _ -> error ""
   case pushResult of
@@ -490,16 +514,18 @@ tryPromotePullRequest pullRequest prId state = do
       cleanupTestBranch prId
       registerMergedPR
       currTime <- getDateTime
-      pure $ Pr.updatePullRequests (unspeculateConflictsAfter pullRequest)
-          $ Pr.updatePullRequests (unspeculateFailuresAfter pullRequest)
-          $ Pr.addPromotedPullRequest pullRequest currTime
-          $ Pr.setIntegrationStatus prId Promoted state
+      pure $
+        Pr.updatePullRequests (unspeculateConflictsAfter pullRequest) $
+          Pr.updatePullRequests (unspeculateFailuresAfter pullRequest) $
+            Pr.addPromotedPullRequest pullRequest currTime $
+              Pr.setIntegrationStatus prId Promoted state
     -- If something was pushed to the target branch while the candidate was
     -- being tested, try to integrate again and hope that next time the push
     -- succeeds.  We also cancel integrations in the merge train.
     -- These should be automatically restarted when we 'proceed'.
-    PushRejected _why -> tryIntegratePullRequest prId
-                      $ unintegrateAfter prId state
+    PushRejected _why ->
+      tryIntegratePullRequest prId $
+        unintegrateAfter prId state
 
 -- | Describe what caused the PR to close.
 prClosingMessage :: PRCloseCause -> Text
@@ -522,20 +548,22 @@ handlePullRequestClosed
   -> Eff es ProjectState
 handlePullRequestClosed closingReason pid state =
   case Pr.lookupPullRequest pid state of
-  Nothing -> pure state
-  Just pr -> do
-    let status = Pr.integrationStatus pr
-    when (Pr.isUnfailedIntegrated status) $
-      leaveComment pid $ prClosingMessage closingReason
-    when (Pr.isIntegrated status) $
-      cleanupTestBranch pid
-    pure $ Pr.deletePullRequest pid $
-      -- if this PR is part of the train
-      -- (i.e. is integrated and has not failed yet),
-      -- we need to unintegrate PRs that are integrated on top of it.
-      if Pr.isUnfailedIntegrated status
-      then unintegrateAfter pid state
-      else state
+    Nothing -> pure state
+    Just pr -> do
+      let status = Pr.integrationStatus pr
+      when (Pr.isUnfailedIntegrated status) $
+        leaveComment pid $
+          prClosingMessage closingReason
+      when (Pr.isIntegrated status) $
+        cleanupTestBranch pid
+      pure $
+        Pr.deletePullRequest pid $
+          -- if this PR is part of the train
+          -- (i.e. is integrated and has not failed yet),
+          -- we need to unintegrate PRs that are integrated on top of it.
+          if Pr.isUnfailedIntegrated status
+            then unintegrateAfter pid state
+            else state
 
 handlePullRequestEdited
   :: Action :> es
@@ -545,15 +573,15 @@ handlePullRequestEdited
   -> ProjectState
   -> Eff es ProjectState
 handlePullRequestEdited prId newTitle newBaseBranch state =
-  let updatePr pr =  pr { Pr.title = newTitle, Pr.baseBranch = newBaseBranch } in
-  case Pr.lookupPullRequest prId state of
-    Just pullRequest
-      -- If the base branch hasn't changed, just update the pull request.
-      | Pr.baseBranch pullRequest == newBaseBranch -> pure $ Pr.updatePullRequest prId updatePr state
-      -- If the base branch has changed, update the PR and clear the approval and build status.
-      | otherwise -> clearPullRequest prId (updatePr pullRequest) state
-    -- Do nothing if the pull request is not present.
-    Nothing -> pure state
+  let updatePr pr = pr{Pr.title = newTitle, Pr.baseBranch = newBaseBranch}
+  in  case Pr.lookupPullRequest prId state of
+        Just pullRequest
+          -- If the base branch hasn't changed, just update the pull request.
+          | Pr.baseBranch pullRequest == newBaseBranch -> pure $ Pr.updatePullRequest prId updatePr state
+          -- If the base branch has changed, update the PR and clear the approval and build status.
+          | otherwise -> clearPullRequest prId (updatePr pullRequest) state
+        -- Do nothing if the pull request is not present.
+        Nothing -> pure state
 
 -- | When we receive a push event, find all PRs
 -- that are in progress and have the same base
@@ -562,7 +590,8 @@ handlePullRequestEdited prId newTitle newBaseBranch state =
 -- Avoid re-integrating due to pushing our own
 -- SHAs of successfully integrated PRs.
 handleTargetChanged
-  :: forall es. (Action :> es, RetrieveEnvironment :> es)
+  :: forall es
+   . (Action :> es, RetrieveEnvironment :> es)
   => BaseBranch
   -> Sha
   -> ProjectState
@@ -571,16 +600,15 @@ handleTargetChanged (BaseBranch baseBranch) sha state
   | Just branch <- Text.stripPrefix "refs/heads/" baseBranch
   , sha `notElem` concatMap Pr.integrationShas (Pr.pullRequests state)
   , sha `notElem` map Pr.promotedPRSha (Pr.recentlyPromoted state) =
-  let
-    update pr
-      | Pr.isInProgress pr
-      , Pr.baseBranch pr == BaseBranch branch
-      = pr
-        { Pr.integrationStatus = Outdated
-        , Pr.needsFeedback = True
-        }
-    update pr = pr
-  in pure $ Pr.updatePullRequests update state
+      let update pr
+            | Pr.isInProgress pr
+            , Pr.baseBranch pr == BaseBranch branch =
+                pr
+                  { Pr.integrationStatus = Outdated
+                  , Pr.needsFeedback = True
+                  }
+          update pr = pr
+      in  pure $ Pr.updatePullRequests update state
 handleTargetChanged _ _ state = pure state
 
 handleClockTickUpdate :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Timeouts -> UTCTime -> ProjectState -> Eff es ProjectState
@@ -588,24 +616,32 @@ handleClockTickUpdate timeouts currTime state = do
   let prsToPromote = Pr.filterPullRequestsBy Pr.awaitingPromotion state
   state' <- foldM update state prsToPromote
   pure $ Pr.filterRecentlyPromoted ((<) currTime . flip Time.addTime (Config.rememberTimeout timeouts)) state'
-  where
-    update state' prId = let pr = fromJust $ Pr.lookupPullRequest prId state
-      in case Pr.promotionTime pr of
-      Nothing -> pure state'
-      Just time -> if Time.addTime time (Config.promotionTimeout timeouts) < currTime
-        then tryPromotePullRequest pr prId state'
-        else pure state'
+ where
+  update state' prId =
+    let pr = fromJust $ Pr.lookupPullRequest prId state
+    in  case Pr.promotionTime pr of
+          Nothing -> pure state'
+          Just time ->
+            if Time.addTime time (Config.promotionTimeout timeouts) < currTime
+              then tryPromotePullRequest pr prId state'
+              else pure state'
 
 -- Mark the pull request as approved, and leave a comment to acknowledge that.
 approvePullRequest :: PullRequestId -> Approval -> ProjectState -> Eff es ProjectState
-approvePullRequest pr approval = pure . Pr.updatePullRequest pr
-    (\pullRequest -> pullRequest
-      { Pr.approval = Just approval
-      , Pr.needsFeedback = True
-      })
+approvePullRequest pr approval =
+  pure
+    . Pr.updatePullRequest
+      pr
+      ( \pullRequest ->
+          pullRequest
+            { Pr.approval = Just approval
+            , Pr.needsFeedback = True
+            }
+      )
 
 handleCommentAdded
-  :: forall es. (Action :> es, RetrieveEnvironment :> es)
+  :: forall es
+   . (Action :> es, RetrieveEnvironment :> es)
   => TriggerConfiguration
   -> MergeWindowExemptionConfiguration
   -> Maybe FeatureFreezeWindow
@@ -621,104 +657,127 @@ handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId a
   -- comments with parser error messages that can be checked for here.
   | shouldIgnoreComment body = pure state
   | otherwise =
-  let maybePR = Pr.lookupPullRequest prId state in
-  case maybePR of
-    -- Check if the comment is a merge command, and if it is, check if the
-    -- author is allowed to approve. Comments by users with push access happen
-    -- frequently, but most comments are not merge commands, and checking that
-    -- a user has push access requires an API call.
-    Just pr -> do
-      projectConfig <- getProjectConfig
+      let maybePR = Pr.lookupPullRequest prId state
+      in  case maybePR of
+            -- Check if the comment is a merge command, and if it is, check if the
+            -- author is allowed to approve. Comments by users with push access happen
+            -- frequently, but most comments are not merge commands, and checking that
+            -- a user has push access requires an API call.
+            Just pr -> do
+              projectConfig <- getProjectConfig
 
-      let commandType = parseMergeCommand projectConfig triggerConfig body
-      -- Check whether the author is allowed to do merge commands, but only if
-      -- a valid command was parsed.
-      isAllowed <- if isSuccess commandType
-        then isReviewer author
-        else pure False
+              let commandType = parseMergeCommand projectConfig triggerConfig body
+              -- Check whether the author is allowed to do merge commands, but only if
+              -- a valid command was parsed.
+              isAllowed <-
+                if isSuccess commandType
+                  then isReviewer author
+                  else pure False
 
-      dateTime <- getDateTime
+              dateTime <- getDateTime
 
-      -- To guard against accidental merges we make use of a merge window.
-      -- Merging inside this window is discouraged but can be overruled with a
-      -- special command or by adding the user to the merge window exemption
-      -- list. For now Friday at UTC+0 is good enough. See
-      -- https://github.com/channable/hoff/pull/95 for caveats and improvement
-      -- ideas.
-      let day = dayOfWeek $ utctDay $ dateTime
+              -- To guard against accidental merges we make use of a merge window.
+              -- Merging inside this window is discouraged but can be overruled with a
+              -- special command or by adding the user to the merge window exemption
+              -- list. For now Friday at UTC+0 is good enough. See
+              -- https://github.com/channable/hoff/pull/95 for caveats and improvement
+              -- ideas.
+              let day = dayOfWeek $ utctDay $ dateTime
 
-      let featureFreezeActive = case featureFreezeWindow of
-            Nothing -> False
-            Just (Config.FeatureFreezeWindow start end) -> dateTime > start && dateTime < end
+              let featureFreezeActive = case featureFreezeWindow of
+                    Nothing -> False
+                    Just (Config.FeatureFreezeWindow start end) -> dateTime > start && dateTime < end
 
-      let exempted :: Username -> Bool
-          exempted (Username user) =
-            let (Config.MergeWindowExemptionConfiguration users) = mergeWindowExemption
-            in elem user users
+              let
+                exempted :: Username -> Bool
+                exempted (Username user) =
+                  let (Config.MergeWindowExemptionConfiguration users) = mergeWindowExemption
+                  in  elem user users
 
-          verifyMergeWindow :: MergeCommand -> MergeWindow -> Eff es ProjectState -> Eff es ProjectState
-          verifyMergeWindow _ _ action | exempted author = action
-          verifyMergeWindow command DuringFeatureFreeze action
-            | featureFreezeActive = action
-            | otherwise = do
-                () <- leaveComment prId ("Your merge request has been denied because \
-                                          \it is not a feature-freeze period. Run '" <>
-                                          Pr.displayMergeCommand command <> "' instead.")
-                pure state
-          verifyMergeWindow command OnFriday action
-            | day == Friday = action
-            | otherwise = do
-                () <- leaveComment prId ("Your merge request has been denied because \
-                                          \it is not Friday. Run '" <>
-                                          Pr.displayMergeCommand command <> "' instead.")
-                pure state
-          verifyMergeWindow command AnyDay action
-            | featureFreezeActive = do
-                () <- leaveComment prId ("Your merge request has been denied because \
-                                          \we are in a feature-freeze period. Run '" <>
-                                          Pr.displayMergeCommand command <> " as hotfix' instead.")
-                pure state
-            | day == Friday && safeForFriday projectConfig /= Just True  = do
-                () <- leaveComment prId ("Your merge request has been denied, because \
-                                          \merging on Fridays is not recommended. \
-                                          \To override this behaviour use the command `"
-                                          <> Pr.displayMergeCommand command <> " on Friday`.")
-                pure state
-            | otherwise = action
+                verifyMergeWindow :: MergeCommand -> MergeWindow -> Eff es ProjectState -> Eff es ProjectState
+                verifyMergeWindow _ _ action | exempted author = action
+                verifyMergeWindow command DuringFeatureFreeze action
+                  | featureFreezeActive = action
+                  | otherwise = do
+                      () <-
+                        leaveComment
+                          prId
+                          ( "Your merge request has been denied because \
+                            \it is not a feature-freeze period. Run '"
+                              <> Pr.displayMergeCommand command
+                              <> "' instead."
+                          )
+                      pure state
+                verifyMergeWindow command OnFriday action
+                  | day == Friday = action
+                  | otherwise = do
+                      () <-
+                        leaveComment
+                          prId
+                          ( "Your merge request has been denied because \
+                            \it is not Friday. Run '"
+                              <> Pr.displayMergeCommand command
+                              <> "' instead."
+                          )
+                      pure state
+                verifyMergeWindow command AnyDay action
+                  | featureFreezeActive = do
+                      () <-
+                        leaveComment
+                          prId
+                          ( "Your merge request has been denied because \
+                            \we are in a feature-freeze period. Run '"
+                              <> Pr.displayMergeCommand command
+                              <> " as hotfix' instead."
+                          )
+                      pure state
+                  | day == Friday && safeForFriday projectConfig /= Just True = do
+                      () <-
+                        leaveComment
+                          prId
+                          ( "Your merge request has been denied, because \
+                            \merging on Fridays is not recommended. \
+                            \To override this behaviour use the command `"
+                              <> Pr.displayMergeCommand command
+                              <> " on Friday`."
+                          )
+                      pure state
+                  | otherwise = action
 
-      case commandType of
-        -- The bot was not mentioned in the comment, ignore
-        Ignored -> pure state
-        -- The bot was mentioned but encountered an invalid command, report error and
-        -- take no further action
-        ParseError message -> do
-          -- The parser error message may use whitespace for alignment and it
-          -- may also contain markdown from the original comment. It should thus
-          -- be formatted as monospace text so it displays correctly. This uses
-          -- the oldschool four space markdown code blocks instead of fenced
-          -- code blocks since it's less ambiguous.
-          let monospaceMessage = Text.unlines . map ("    " <>) . Text.lines $ message
-              usageLink = "https://github.com/channable/hoff/blob/master/readme.md#using-hoff"
-              usageInstructions = "[Basic usage is explained here.](" <> usageLink <> ")"
-              fullComment =
-                -- NOTE: This comment is added to prevent feedback loops, see
-                --       'shouldIgnoreComment'
-                hoffIgnoreComment
-                  <> "Unknown or invalid command found:\n\n"
-                  <> monospaceMessage
-                  <> usageInstructions
-          () <- leaveComment prId fullComment
-          pure state
-        -- Cases where the parse was successful
-        Success (command, mergeWindow, priority)
-          -- Author is a reviewer
-          | isAllowed -> verifyMergeWindow command mergeWindow $ case command of
-            Approve approval -> handleMergeRequested projectConfig prId author source state pr approval priority Nothing
-            Retry -> handleMergeRetry projectConfig prId author source priority state pr
-          -- Author is not a reviewer, so we ignore
-          | otherwise -> pure state
-    -- If the pull request is not in the state, ignore the comment.
-    Nothing -> pure state
+              case commandType of
+                -- The bot was not mentioned in the comment, ignore
+                Ignored -> pure state
+                -- The bot was mentioned but encountered an invalid command, report error and
+                -- take no further action
+                ParseError message -> do
+                  -- The parser error message may use whitespace for alignment and it
+                  -- may also contain markdown from the original comment. It should thus
+                  -- be formatted as monospace text so it displays correctly. This uses
+                  -- the oldschool four space markdown code blocks instead of fenced
+                  -- code blocks since it's less ambiguous.
+                  let
+                    monospaceMessage = Text.unlines . map ("    " <>) . Text.lines $ message
+                    usageLink = "https://github.com/channable/hoff/blob/master/readme.md#using-hoff"
+                    usageInstructions = "[Basic usage is explained here.](" <> usageLink <> ")"
+                    fullComment =
+                      -- NOTE: This comment is added to prevent feedback loops, see
+                      --       'shouldIgnoreComment'
+                      hoffIgnoreComment
+                        <> "Unknown or invalid command found:\n\n"
+                        <> monospaceMessage
+                        <> usageInstructions
+                  () <- leaveComment prId fullComment
+                  pure state
+                -- Cases where the parse was successful
+                Success (command, mergeWindow, priority)
+                  -- Author is a reviewer
+                  | isAllowed -> verifyMergeWindow command mergeWindow $ case command of
+                      Approve approval -> handleMergeRequested projectConfig prId author source state pr approval priority Nothing
+                      Retry -> handleMergeRetry projectConfig prId author source priority state pr
+                  -- Author is not a reviewer, so we ignore
+                  | otherwise -> pure state
+            -- If the pull request is not in the state, ignore the comment.
+            Nothing -> pure state
 
 doMerge
   :: ProjectConfiguration
@@ -746,27 +805,30 @@ doMerge projectConfig prId author source state pr approvalType priority retriedB
       -- The current merge train is determined as all known PRs that are integrated and
       -- either not failed or after a not failed PR.
       High -> do
-        let train = Pr.filterPullRequestsBy Pr.isIntegratedOrSpeculativelyConflicted state''
-            setNewOrder newOrder pullRequest = pullRequest{
-              Pr.integrationStatus = NotIntegrated,
-              Pr.approval = (\x -> x{Pr.approvalOrder = newOrder}) <$> Pr.approval pullRequest
-            }
-            updatePullRequest (currState, started) pid =
-              let (order', nextState) = Pr.newApprovalOrder currState
-                  nextState' = Pr.updatePullRequest pid (setNewOrder order') nextState
-              in
-                if started
-                  then (nextState', True)
-                  else case Pr.isFailedIntegrated . Pr.integrationStatus <$> Pr.lookupPullRequest pid currState of
-                    Just True -> (currState, False)
-                    _         -> (nextState', True)
+        let
+          train = Pr.filterPullRequestsBy Pr.isIntegratedOrSpeculativelyConflicted state''
+          setNewOrder newOrder pullRequest =
+            pullRequest
+              { Pr.integrationStatus = NotIntegrated
+              , Pr.approval = (\x -> x{Pr.approvalOrder = newOrder}) <$> Pr.approval pullRequest
+              }
+          updatePullRequest (currState, started) pid =
+            let
+              (order', nextState) = Pr.newApprovalOrder currState
+              nextState' = Pr.updatePullRequest pid (setNewOrder order') nextState
+            in
+              if started
+                then (nextState', True)
+                else case Pr.isFailedIntegrated . Pr.integrationStatus <$> Pr.lookupPullRequest pid currState of
+                  Just True -> (currState, False)
+                  _ -> (nextState', True)
         pure $ fst $ foldl' updatePullRequest (state'', False) train
 
 -- | Someone issued a `merge*` command on a PR. Depending on what the current
 -- integration state of that PR is, we might reset its state and retry, if it
 -- already exists.
 handleMergeRequested
-  :: (Action :> es)
+  :: Action :> es
   => ProjectConfiguration
   -> PullRequestId
   -> Username
@@ -777,25 +839,25 @@ handleMergeRequested
   -> Priority
   -> Maybe Username
   -> Eff es ProjectState
-handleMergeRequested projectConfig prId author source state pr approvedFor priority retriedBy
-  = case Pr.integrationStatus pr of
-      NotIntegrated -> doMerge projectConfig prId author source state pr approvedFor priority retriedBy
-      Integrated _ checks | not (Pr.isFinalStatus (summarize checks)) -> do
-        state' <- clearPullRequest prId pr state
-        doMerge projectConfig prId author source state' pr approvedFor priority retriedBy
-      Conflicted _ _ ->
-        leaveComment prId "Conflict encountered while integrating, refusing..." >> pure state
-      IncorrectBaseBranch -> do
-        leaveComment prId "Incorrect base branch, refusing..." >> pure state
-      _ ->
-        -- In any other case, we hit a final state, `Promoted`, `Integrated BuildSucceeded`
-        -- or `Integrated BuildFailed`. Report the current state.
-        pure $ Pr.setNeedsFeedback prId True state
+handleMergeRequested projectConfig prId author source state pr approvedFor priority retriedBy =
+  case Pr.integrationStatus pr of
+    NotIntegrated -> doMerge projectConfig prId author source state pr approvedFor priority retriedBy
+    Integrated _ checks | not (Pr.isFinalStatus (summarize checks)) -> do
+      state' <- clearPullRequest prId pr state
+      doMerge projectConfig prId author source state' pr approvedFor priority retriedBy
+    Conflicted _ _ ->
+      leaveComment prId "Conflict encountered while integrating, refusing..." >> pure state
+    IncorrectBaseBranch -> do
+      leaveComment prId "Incorrect base branch, refusing..." >> pure state
+    _ ->
+      -- In any other case, we hit a final state, `Promoted`, `Integrated BuildSucceeded`
+      -- or `Integrated BuildFailed`. Report the current state.
+      pure $ Pr.setNeedsFeedback prId True state
 
 -- | Attempt to retry merging a PR that has previously been approved for
 -- merging.
 handleMergeRetry
-  :: (Action :> es)
+  :: Action :> es
   => ProjectConfiguration
   -> PullRequestId
   -> Username
@@ -806,9 +868,9 @@ handleMergeRetry
   -> Eff es ProjectState
 handleMergeRetry projectConfig prId author source priority state pr
   -- Only approved PRs with failed builds can be retried
-  | Just approval <- Pr.approval pr,
-    Integrated _ buildStatus <- Pr.integrationStatus pr,
-    BuildFailed{} <- summarize buildStatus = do
+  | Just approval <- Pr.approval pr
+  , Integrated _ buildStatus <- Pr.integrationStatus pr
+  , BuildFailed{} <- summarize buildStatus = do
       state' <- clearPullRequest prId pr state
       -- The PR is still approved by its original approver. The person who
       -- triggered the retry is tracked separately.
@@ -823,24 +885,28 @@ unintegrateAfter :: PullRequestId -> ProjectState -> ProjectState
 unintegrateAfter pid state = case Pr.lookupPullRequest pid state of
   Nothing -> state -- PR not found.  Keep the state as it is.
   Just pr -> unintegrateAfter' pr state
-  where
+ where
   unintegrateAfter' :: PullRequest -> ProjectState -> ProjectState
   unintegrateAfter' pr0 = Pr.updatePullRequests unintegrate
-    where
-    unintegrate pr | pr `Pr.approvedAfter` pr0 && Pr.isIntegratedOrSpeculativelyConflicted pr
-                   = pr{Pr.integrationStatus = NotIntegrated}
-                   | otherwise
-                   = pr
+   where
+    unintegrate pr
+      | pr `Pr.approvedAfter` pr0 && Pr.isIntegratedOrSpeculativelyConflicted pr =
+          pr{Pr.integrationStatus = NotIntegrated}
+      | otherwise =
+          pr
 
 -- | If there is an integration candidate, and its integration sha matches that of the build,
 --   then update the build status for that pull request. Otherwise do nothing.
 handleBuildStatusChanged :: Sha -> Context -> BuildStatus -> ProjectState -> Eff es ProjectState
-handleBuildStatusChanged buildSha context newStatus state = pure $
-  compose [ unintegratePullRequestIfNeeded pid
-          . Pr.updatePullRequest pid setBuildStatus
-          | pid <- Pr.filterPullRequestsBy shouldUpdate state
-          ] state
-  where
+handleBuildStatusChanged buildSha context newStatus state =
+  pure $
+    compose
+      [ unintegratePullRequestIfNeeded pid
+        . Pr.updatePullRequest pid setBuildStatus
+      | pid <- Pr.filterPullRequestsBy shouldUpdate state
+      ]
+      state
+ where
   satisfiedCheck = contextSatisfiesChecks (Pr.mandatoryChecks state) context
   getNewStatus new old = if new `supersedes` old then new else old
   newStatusState oldStatus = case oldStatus of
@@ -852,7 +918,7 @@ handleBuildStatusChanged buildSha context newStatus state = pure $
 
   shouldUpdate pr = case Pr.integrationStatus pr of
     Integrated candidateSha _ -> candidateSha == buildSha
-    _                         -> False
+    _ -> False
 
   -- We need to do edge detection for failures on the summarized status of the
   -- pull request, as we only want to trigger unintegration once. The nature of
@@ -862,36 +928,41 @@ handleBuildStatusChanged buildSha context newStatus state = pure $
     | Just oldPr <- Pr.lookupPullRequest pid state
     , Just newPr <- Pr.lookupPullRequest pid newState
     , Integrated _ oldStatus <- Pr.integrationStatus oldPr
-    , Integrated _ newStatus' <- Pr.integrationStatus newPr
-    = let summarized = summarize newStatus' in if
-        | summarized `supersedes` summarize oldStatus
-        , BuildFailed _ <- summarized -> unintegrateAfter pid newState
-        | otherwise -> newState
+    , Integrated _ newStatus' <- Pr.integrationStatus newPr =
+        let summarized = summarize newStatus'
+        in  if
+              | summarized `supersedes` summarize oldStatus
+              , BuildFailed _ <- summarized ->
+                  unintegrateAfter pid newState
+              | otherwise -> newState
   unintegratePullRequestIfNeeded _ newState = newState
 
   -- Like unintegration, we also need edge detection to avoid commenting
   -- multiple times on the same PR.
   setBuildStatus pr
-    | Integrated _ oldStatus <- Pr.integrationStatus pr
-    = let newStatus' = newStatusState oldStatus
+    | Integrated _ oldStatus <- Pr.integrationStatus pr =
+        let
+          newStatus' = newStatusState oldStatus
           wasSuperseded = summarize newStatus' `supersedes` summarize oldStatus
-      in pr
-        { Pr.integrationStatus = Integrated buildSha newStatus'
-        , Pr.needsFeedback = case newStatus of
-                              BuildStarted _ -> wasSuperseded
-                              BuildFailed _  -> wasSuperseded
-                              _              -> Pr.needsFeedback pr -- unchanged
-        }
+        in
+          pr
+            { Pr.integrationStatus = Integrated buildSha newStatus'
+            , Pr.needsFeedback = case newStatus of
+                BuildStarted _ -> wasSuperseded
+                BuildFailed _ -> wasSuperseded
+                _ -> Pr.needsFeedback pr -- unchanged
+            }
     | otherwise = pr
 
 -- | Check if the given context for a status update pertains to any of the known
 -- mandatory checks for the project.
 contextSatisfiesChecks :: Pr.MandatoryChecks -> Git.Context -> Maybe Project.Check
 contextSatisfiesChecks (Pr.MandatoryChecks checks) (Git.Context context) =
-  let go []                           = Nothing
-      go (c@(Project.Check check):cs) = if check `Text.isPrefixOf` context
-        then Just c
-        else go cs
+  let go [] = Nothing
+      go (c@(Project.Check check) : cs) =
+        if check `Text.isPrefixOf` context
+          then Just c
+          else go cs
   in  go (Set.toList checks)
 
 -- Query the GitHub API to resolve inconsistencies between our state and GitHub.
@@ -907,19 +978,22 @@ synchronizeState stateInitial =
         -- We need to convert to a list because IntSet has no Foldable instance.
         toList = fmap PullRequestId . IntSet.toList
         prsToClose = toList $ IntSet.difference internalOpenPrIds externalOpenPrIds
-        prsToOpen  = toList $ IntSet.difference externalOpenPrIds internalOpenPrIds
+        prsToOpen = toList $ IntSet.difference externalOpenPrIds internalOpenPrIds
 
-        insertMissingPr state pr = getPullRequest pr >>= \case
-          -- On error, ignore this pull request.
-          Nothing -> pure state
-          Just details -> pure $ Pr.insertPullRequest
-            pr
-            (GithubApi.branch details)
-            (GithubApi.baseBranch details)
-            (GithubApi.sha details)
-            (GithubApi.title details)
-            (GithubApi.author details)
-            state
+        insertMissingPr state pr =
+          getPullRequest pr >>= \case
+            -- On error, ignore this pull request.
+            Nothing -> pure state
+            Just details ->
+              pure $
+                Pr.insertPullRequest
+                  pr
+                  (GithubApi.branch details)
+                  (GithubApi.baseBranch details)
+                  (GithubApi.sha details)
+                  (GithubApi.title details)
+                  (GithubApi.author details)
+                  state
 
       -- Close all pull requests that are still open internally (in our state),
       -- but which are not open externally (on GitHub).
@@ -961,9 +1035,10 @@ proceed
   :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
   => ProjectState
   -> Eff es ProjectState
-proceed = provideFeedback
-      >=> proceedFirstCandidate
-      >=> tryIntegrateFirstPullRequest
+proceed =
+  provideFeedback
+    >=> proceedFirstCandidate
+    >=> tryIntegrateFirstPullRequest
 
 -- | Proceeds with the candidate that was approved first
 -- by pushing it to be the new master if the build succeeded.
@@ -973,7 +1048,7 @@ proceedFirstCandidate
   => ProjectState
   -> Eff es ProjectState
 proceedFirstCandidate state = case Pr.unfailedIntegratedPullRequests state of
-  (candidate:_) -> proceedCandidate candidate state
+  (candidate : _) -> proceedCandidate candidate state
   _ -> pure state
 
 -- | Try to integrate the pull request that was approved first
@@ -981,7 +1056,7 @@ proceedFirstCandidate state = case Pr.unfailedIntegratedPullRequests state of
 -- (cf. 'tryIntegratePullRequest')
 tryIntegrateFirstPullRequest :: Action :> es => ProjectState -> Eff es ProjectState
 tryIntegrateFirstPullRequest state = case Pr.candidatePullRequests state of
-  (pr:_) -> tryIntegratePullRequest pr state
+  (pr : _) -> tryIntegratePullRequest pr state
   _ -> pure state
 
 -- | Pushes the given integrated PR to be the new master if the build succeeded
@@ -992,15 +1067,15 @@ proceedCandidate
   -> Eff es ProjectState
 proceedCandidate pullRequestId state =
   case Pr.lookupPullRequest pullRequestId state of
-  Nothing -> pure state -- should not be reachable when called from 'proceed'
-  Just pullRequest ->
-    case Pr.integrationStatus pullRequest of
-      -- Check if all mandatory checks succeeded for the given sha and push
-      -- the candidate if so.
-      Integrated sha (summarize -> BuildSucceeded) ->
-        pushCandidate (pullRequestId, pullRequest) sha state
-      _ ->
-        pure state -- BuildFailed/BuildPending
+    Nothing -> pure state -- should not be reachable when called from 'proceed'
+    Just pullRequest ->
+      case Pr.integrationStatus pullRequest of
+        -- Check if all mandatory checks succeeded for the given sha and push
+        -- the candidate if so.
+        Integrated sha (summarize -> BuildSucceeded) ->
+          pushCandidate (pullRequestId, pullRequest) sha state
+        _ ->
+          pure state -- BuildFailed/BuildPending
 
 -- Given a pull request id, returns the name of the GitHub ref for that pull
 -- request, so it can be fetched.
@@ -1013,7 +1088,7 @@ tryIntegratePullRequest :: Action :> es => PullRequestId -> ProjectState -> Eff 
 tryIntegratePullRequest pr state =
   let
     PullRequestId prNumber = pr
-    pullRequest  = fromJust $ Pr.lookupPullRequest pr state
+    pullRequest = fromJust $ Pr.lookupPullRequest pr state
     title = Pr.title pullRequest
     Approval (Username approvedBy) _source approvalType _prOrder _retriedBy priority = fromJust $ Pr.approval pullRequest
     candidateSha = Pr.sha pullRequest
@@ -1024,8 +1099,8 @@ tryIntegratePullRequest pr state =
       , ""
       , format "Approved-by: {}" [approvedBy]
       , format "Priority: {}" [show priority]
-      ] ++
-        case approvalType of
+      ]
+        ++ case approvalType of
           MergeAndDeploy EntireProject (DeployEnvironment env) ->
             [ "Auto-deploy: true"
             , format "Deploy-Environment: {}" [env]
@@ -1036,35 +1111,37 @@ tryIntegratePullRequest pr state =
             , format "Deploy-Environment: {}" [env]
             , format "Deploy-Subprojects: {}" [Text.intercalate ", " subs]
             ]
-          _ -> [ "Auto-deploy: false" ]
+          _ -> ["Auto-deploy: false"]
 
     mergeMessage = Text.unlines mergeMessageLines
     -- the takeWhile here is needed in case of reintegrations after failing pushes
     train = takeWhile (/= pr) $ Pr.unfailedIntegratedPullRequests state
-  in do
-    result <- tryIntegrate mergeMessage candidate train $ Pr.alwaysAddMergeCommit approvalType
-    case result of
-      Left (IntegrationFailure targetBranch reason) ->
-        -- If integrating failed, perform no further actions but do set the
-        -- state to conflicted.
-        -- If this is a speculative rebase, we wait before giving feedback.
-        -- For WrongFixups, we can report issues right away.
-        pure $ Pr.setIntegrationStatus pr (Conflicted targetBranch reason) $
-          Pr.setNeedsFeedback pr (null train || reason == WrongFixups) state
+  in
+    do
+      result <- tryIntegrate mergeMessage candidate train $ Pr.alwaysAddMergeCommit approvalType
+      case result of
+        Left (IntegrationFailure targetBranch reason) ->
+          -- If integrating failed, perform no further actions but do set the
+          -- state to conflicted.
+          -- If this is a speculative rebase, we wait before giving feedback.
+          -- For WrongFixups, we can report issues right away.
+          pure $
+            Pr.setIntegrationStatus pr (Conflicted targetBranch reason) $
+              Pr.setNeedsFeedback pr (null train || reason == WrongFixups) state
+        Right (Sha sha) -> do
+          -- If it succeeded, set the build to pending,
+          -- as pushing should have triggered a build.
+          let Pr.MandatoryChecks check = Pr.mandatoryChecks state
+          let integrationStatus =
+                if Set.null check
+                  then Pr.AnyCheck BuildPending
+                  else Pr.SpecificChecks (Map.fromSet (const BuildPending) check)
 
-      Right (Sha sha) -> do
-        -- If it succeeded, set the build to pending,
-        -- as pushing should have triggered a build.
-        let Pr.MandatoryChecks check = Pr.mandatoryChecks state
-            integrationStatus = if Set.null check
-              then Pr.AnyCheck BuildPending
-              else Pr.SpecificChecks (Map.fromSet (const BuildPending) check)
-
-        pure
           -- The build pending has no URL here, we need to wait for semaphore
-          $ Pr.setIntegrationStatus pr (Integrated (Sha sha) integrationStatus)
-          $ Pr.setNeedsFeedback pr True
-          $ state
+          pure $
+            Pr.setIntegrationStatus pr (Integrated (Sha sha) integrationStatus) $
+              Pr.setNeedsFeedback pr True $
+                state
 
 -- Pushes the integrated commits of the given candidate pull request to the
 -- target branch. If the push fails, restarts the integration cycle for the
@@ -1080,37 +1157,41 @@ pushCandidate (pullRequestId, pullRequest) newHead state =
   -- Look up the sha that will be pushed to the target branch. Also assert that
   -- the pull request has really been approved. If it was
   -- not, there is a bug in the program.
-  let prBranch  = Pr.branch pullRequest
-      approval = fromJust $ Pr.approval pullRequest
-      Username approvedBy = approver approval
-      commentToUser = leaveComment pullRequestId . (<>) ("@" <> approvedBy <> " ")
-  in assert (isJust $ Pr.approval pullRequest) $ do
-    let approvalKind = Pr.approvedFor approval
-    currTime <- Time.getDateTime
-    (pushResult, newStatus) <- if Pr.needsTag approvalKind
-        then do
-          versionOrBadTag <- getLatestVersion newHead
-          case versionOrBadTag of
-            Left (TagName bad) -> do
-              commentToUser ("Sorry, I could not tag your PR. The previous tag `" <> bad <> "` seems invalid")
-              pushResult <- tryForcePush prBranch newHead
-              pure (pushResult, Pr.Promote currTime newHead)
-            Right v -> do
-              let previousTag = versionToTag v
-              mChangelog <- getChangelog previousTag newHead
-              let
-                tagName = versionToTag $ v + 1
-                changelog = fromMaybe "Failed to get the changelog" mChangelog
-                tagMessage = messageForTag tagName approvalKind changelog
-              pushResult <- tryForcePush prBranch newHead
-              pure (pushResult, Pr.PromoteAndTag currTime newHead tagName tagMessage)
-      else do
-        pushResult <- tryForcePush prBranch newHead
-        pure (pushResult, Pr.Promote currTime newHead)
-    case pushResult of
-      PushOk -> pure $ Pr.setIntegrationStatus pullRequestId newStatus state
-      PushRejected _ -> tryIntegratePullRequest pullRequestId
-                      $ unintegrateAfter pullRequestId state
+  let
+    prBranch = Pr.branch pullRequest
+    approval = fromJust $ Pr.approval pullRequest
+    Username approvedBy = approver approval
+    commentToUser = leaveComment pullRequestId . (<>) ("@" <> approvedBy <> " ")
+  in
+    assert (isJust $ Pr.approval pullRequest) $ do
+      let approvalKind = Pr.approvedFor approval
+      currTime <- Time.getDateTime
+      (pushResult, newStatus) <-
+        if Pr.needsTag approvalKind
+          then do
+            versionOrBadTag <- getLatestVersion newHead
+            case versionOrBadTag of
+              Left (TagName bad) -> do
+                commentToUser ("Sorry, I could not tag your PR. The previous tag `" <> bad <> "` seems invalid")
+                pushResult <- tryForcePush prBranch newHead
+                pure (pushResult, Pr.Promote currTime newHead)
+              Right v -> do
+                let previousTag = versionToTag v
+                mChangelog <- getChangelog previousTag newHead
+                let
+                  tagName = versionToTag $ v + 1
+                  changelog = fromMaybe "Failed to get the changelog" mChangelog
+                  tagMessage = messageForTag tagName approvalKind changelog
+                pushResult <- tryForcePush prBranch newHead
+                pure (pushResult, Pr.PromoteAndTag currTime newHead tagName tagMessage)
+          else do
+            pushResult <- tryForcePush prBranch newHead
+            pure (pushResult, Pr.Promote currTime newHead)
+      case pushResult of
+        PushOk -> pure $ Pr.setIntegrationStatus pullRequestId newStatus state
+        PushRejected _ ->
+          tryIntegratePullRequest pullRequestId $
+            unintegrateAfter pullRequestId state
 
 -- | When a pull request has been promoted to master this means that any
 -- conflicts (failed rebases) built on top of it are not speculative anymore:
@@ -1120,15 +1201,18 @@ pushCandidate (pullRequestId, pullRequest) newHead state =
 -- after the given PR and sets them to need feedback.
 unspeculateConflictsAfter :: PullRequest -> PullRequest -> PullRequest
 unspeculateConflictsAfter promotedPullRequest pr
-  | Pr.PullRequest{ Pr.integrationStatus = Conflicted specBase reason
-                  , Pr.baseBranch        = realBase
-                  } <- pr
-  , specBase /= realBase && pr `Pr.approvedAfter` promotedPullRequest
-  = pr { Pr.integrationStatus = Conflicted realBase reason
-       , Pr.needsFeedback = True
-       }
-  | otherwise
-  = pr
+  | Pr.PullRequest
+      { Pr.integrationStatus = Conflicted specBase reason
+      , Pr.baseBranch = realBase
+      } <-
+      pr
+  , specBase /= realBase && pr `Pr.approvedAfter` promotedPullRequest =
+      pr
+        { Pr.integrationStatus = Conflicted realBase reason
+        , Pr.needsFeedback = True
+        }
+  | otherwise =
+      pr
 
 -- | When a pull request has been promoted to master this means that any build
 -- failures build on top of it are not speculative anymore: they are real build
@@ -1139,10 +1223,10 @@ unspeculateConflictsAfter promotedPullRequest pr
 unspeculateFailuresAfter :: PullRequest -> PullRequest -> PullRequest
 unspeculateFailuresAfter promotedPullRequest pr
   | Pr.PullRequest{Pr.integrationStatus = Integrated _ (summarize -> BuildFailed _)} <- pr
-  , pr `Pr.approvedAfter` promotedPullRequest
-  = pr{Pr.needsFeedback = True}
-  | otherwise
-  = pr
+  , pr `Pr.approvedAfter` promotedPullRequest =
+      pr{Pr.needsFeedback = True}
+  | otherwise =
+      pr
 
 -- | Keep doing a 'proceed' step until the state doesn't change any more.
 -- For this to work properly, it is essential that 'proceed' does not have any
@@ -1184,7 +1268,7 @@ feedbackOnStatus (BaseBranch projectBaseBranchName) prId pr state = case Pr.clas
       priorityMsg = case priority of
         Normal -> mempty
         High -> " with high priority"
-     in
+    in
       case (queuePosition, source) of
         (0, Just reactable) -> ReactionFeedback reactable GithubApi.PlusOne
         _ ->
@@ -1194,24 +1278,26 @@ feedbackOnStatus (BaseBranch projectBaseBranchName) prId pr state = case Pr.clas
               [approvalCommand, priorityMsg, approvedBy, retriedByMsg, queuePositionMsg]
   PrStatusOutdated ->
     let BaseBranch baseBranchName = Pr.baseBranch pr
-     in CommentFeedback $ format "Push to {} detected, rebasing again." [baseBranchName]
+    in  CommentFeedback $ format "Push to {} detected, rebasing again." [baseBranchName]
   PrStatusBuildPending ->
-    let Sha sha = fromJust $ Pr.integrationSha pr
-        train = takeWhile (/= prId) $ Pr.unfailedIntegratedPullRequests state
-        len = length train
-        prs = if len == 1 then "PR" else "PRs"
-     in CommentFeedback $ case train of
-          [] -> format "Rebased as {}, waiting for CI …" [sha]
-          (_ : _) ->
-            format
-              "Speculatively rebased as {} behind {} other {}, waiting for CI …"
-              [sha, Text.pack $ show len, prs]
+    let
+      Sha sha = fromJust $ Pr.integrationSha pr
+      train = takeWhile (/= prId) $ Pr.unfailedIntegratedPullRequests state
+      len = length train
+      prs = if len == 1 then "PR" else "PRs"
+    in
+      CommentFeedback $ case train of
+        [] -> format "Rebased as {}, waiting for CI …" [sha]
+        (_ : _) ->
+          format
+            "Speculatively rebased as {} behind {} other {}, waiting for CI …"
+            [sha, Text.pack $ show len, prs]
   PrStatusBuildStarted url -> CommentFeedback $ format "[CI job :yellow_circle:]({}) started." [url]
   PrStatusAwaitingPromotion -> CommentFeedback "The PR is waiting to be pushed to the target branch"
   PrStatusIntegrated -> CommentFeedback "The build succeeded."
   PrStatusIncorrectBaseBranch ->
     let BaseBranch baseBranchName = Pr.baseBranch pr
-     in CommentFeedback $
+    in  CommentFeedback $
           format
             "Merge rejected: the base branch of this pull request must be set to {}. It is currently set to {}."
             [projectBaseBranchName, baseBranchName]
@@ -1226,7 +1312,7 @@ feedbackOnStatus (BaseBranch projectBaseBranchName) prId pr state = case Pr.clas
     let
       BaseBranch targetBranchName = Pr.baseBranch pr
       Branch prBranchName = Pr.branch pr
-     in
+    in
       CommentFeedback $
         format
           "Failed to rebase, please rebase manually using\n\n\
@@ -1284,11 +1370,12 @@ provideFeedback
   :: (Action :> es, RetrieveEnvironment :> es)
   => ProjectState
   -> Eff es ProjectState
-provideFeedback state
-  = foldM (flip leaveFeedback) state
-  $ filter (Pr.needsFeedback . snd)
-  $ fmap (first PullRequestId)
-  $ IntMap.toList $ Pr.pullRequests state
+provideFeedback state =
+  foldM (flip leaveFeedback) state $
+    filter (Pr.needsFeedback . snd) $
+      fmap (first PullRequestId) $
+        IntMap.toList $
+          Pr.pullRequests state
 
 handleEvent
   :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
@@ -1304,16 +1391,16 @@ handleEvent triggerConfig mergeWindowExemption featureFreezeWindow timeouts even
   triggerTrainSizeUpdate projectState
   pure projectState
 
-
 -- TODO this is very Channable specific, perhaps it should be more generic
 parseVersion :: TagName -> Maybe Integer
-parseVersion (TagName t) = Text.uncons t >>= \case
+parseVersion (TagName t) =
+  Text.uncons t >>= \case
     ('v', num) -> parseNum num
-    _          -> Nothing
-  where
-    parseNum num = case Text.decimal num of
-      Right (v, remaining) | Text.null (Text.strip remaining) -> Just v
-      _                                                       -> Nothing
+    _ -> Nothing
+ where
+  parseNum num = case Text.decimal num of
+    Right (v, remaining) | Text.null (Text.strip remaining) -> Just v
+    _ -> Nothing
 
 versionToTag :: Integer -> TagName
 versionToTag v = TagName $ toStrict $ B.toLazyText $ B.singleton 'v' <> B.decimal v
@@ -1321,7 +1408,8 @@ versionToTag v = TagName $ toStrict $ B.toLazyText $ B.singleton 'v' <> B.decima
 messageForTag :: TagName -> ApprovedFor -> Text -> TagMessage
 messageForTag (TagName tagName) tagOrDeploy changelog =
   TagMessage $ tagName <> mark <> "\n\n" <> changelog
-  where mark = if Pr.needsDeploy tagOrDeploy then " (autodeploy)" else ""
+ where
+  mark = if Pr.needsDeploy tagOrDeploy then " (autodeploy)" else ""
 
 pullRequestIdToText :: PullRequestId -> Text
 pullRequestIdToText (PullRequestId prid) = Text.pack $ show prid
@@ -1335,7 +1423,7 @@ testBranch config pullRequestId = Git.Branch $ Config.testBranch config <> "/" <
 -- "#12, #60 and #1337"
 prettyPullRequestIds :: [PullRequestId] -> Text
 prettyPullRequestIds = commaAnd . map prettyPullRequestId
-  where
+ where
   prettyPullRequestId (PullRequestId n) = "#" <> Text.pack (show n)
 
 -- | Pretty printing of a list of Text with comma and and.
@@ -1345,8 +1433,8 @@ prettyPullRequestIds = commaAnd . map prettyPullRequestId
 commaAnd :: [Text] -> Text
 commaAnd [] = "none"
 commaAnd ss = case init ss of
-              [] -> last ss
-              is -> Text.intercalate ", " is <> " and " <> last ss
+  [] -> last ss
+  is -> Text.intercalate ", " is <> " and " <> last ss
 
 -- | Fold a list of unary functions by composition
 --
@@ -1368,5 +1456,5 @@ compose = foldr (.) id
 -- >>> markdownLink "build failed" (Just "https://example.com")
 -- "[build failed](https://example.com)"
 markdownLink :: Text -> Maybe Text -> Text
-markdownLink text Nothing    = text
+markdownLink text Nothing = text
 markdownLink text (Just url) = format "[{}]({})" [text, url]

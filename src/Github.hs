@@ -4,13 +4,11 @@
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
 -- A copy of the License has been included in the root of the repository.
-
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Github
-(
+module Github (
   CommentAction (..),
   CommentPayload (..),
   CommitStatus (..),
@@ -23,22 +21,22 @@ module Github
   WebhookEvent (..),
   eventProjectInfo,
   newEventQueue,
-  tryEnqueueEvent
+  tryEnqueueEvent,
 )
 where
 
-import Control.Applicative ((<|>), optional)
+import Control.Applicative (optional, (<|>))
 import Control.Concurrent.STM.TBQueue (TBQueue, isFullTBQueue, newTBQueue, writeTBQueue)
 import Control.Monad.STM (atomically)
 import Data.Aeson (FromJSON (parseJSON), Object, Value (Object, String), (.:))
-import Data.Aeson.Types (Parser, Key, typeMismatch)
+import Data.Aeson.Types (Key, Parser, typeMismatch)
 import Data.Text (Text)
 import GHC.Natural (Natural)
 
-import Git (Sha (..), Branch (..), BaseBranch (..), Context)
-import Project (ProjectInfo (..))
-import Types (Body, Username, CommentId (..))
 import Data.Maybe (fromMaybe)
+import Git (BaseBranch (..), Branch (..), Context, Sha (..))
+import Project (ProjectInfo (..))
+import Types (Body, CommentId (..), Username)
 
 data PullRequestAction
   = Opened
@@ -67,97 +65,104 @@ data CommitStatus
   | Error
   deriving (Eq, Show)
 
-data PullRequestPayload = PullRequestPayload {
-  action      :: PullRequestAction, -- Corresponds to "action".
-  owner       :: Text,       -- Corresponds to "pull_request.base.repo.owner.login".
-  repository  :: Text,       -- Corresponds to "pull_request.base.repo.name".
-  baseBranch  :: BaseBranch, -- Corresponds to "pull_request.base.ref"
-  number      :: Int,        -- Corresponds to "pull_request.number".
-  branch      :: Branch,     -- Corresponds to "pull_request.head.ref".
-  sha         :: Sha,        -- Corresponds to "pull_request.head.sha".
-  title       :: Text,       -- Corresponds to "pull_request.title".
-  author      :: Username,   -- Corresponds to "pull_request.user.login".
-  body        :: Maybe Body  -- Corresponds to "pull_request.body"
-} deriving (Eq, Show)
+data PullRequestPayload = PullRequestPayload
+  { action :: PullRequestAction -- Corresponds to "action".
+  , owner :: Text -- Corresponds to "pull_request.base.repo.owner.login".
+  , repository :: Text -- Corresponds to "pull_request.base.repo.name".
+  , baseBranch :: BaseBranch -- Corresponds to "pull_request.base.ref"
+  , number :: Int -- Corresponds to "pull_request.number".
+  , branch :: Branch -- Corresponds to "pull_request.head.ref".
+  , sha :: Sha -- Corresponds to "pull_request.head.sha".
+  , title :: Text -- Corresponds to "pull_request.title".
+  , author :: Username -- Corresponds to "pull_request.user.login".
+  , body :: Maybe Body -- Corresponds to "pull_request.body"
+  }
+  deriving (Eq, Show)
 
-data CommentPayload = CommentPayload {
-  action     :: Either CommentAction ReviewAction, -- Corresponds to "action".
-  owner      :: Text,            -- Corresponds to "repository.owner.login".
-  repository :: Text,            -- Corresponds to "repository.name".
-  number     :: Int,             -- Corresponds to "issue.number" or "pull_request.number".
-  author     :: Username,        -- Corresponds to "sender.login".
-  id         :: Maybe CommentId, -- Corresponds to "comment.id".
-                                 -- Can be absent if we actually received a review,
-                                 -- because those have separate IDs from ordinary issue
-                                 -- comments.
-  body       :: Text             -- Corresponds to "comment.body" or "review.body".
-} deriving (Eq, Show)
+data CommentPayload = CommentPayload
+  { action :: Either CommentAction ReviewAction -- Corresponds to "action".
+  , owner :: Text -- Corresponds to "repository.owner.login".
+  , repository :: Text -- Corresponds to "repository.name".
+  , number :: Int -- Corresponds to "issue.number" or "pull_request.number".
+  , author :: Username -- Corresponds to "sender.login".
+  , id :: Maybe CommentId -- Corresponds to "comment.id".
+  -- Can be absent if we actually received a review,
+  -- because those have separate IDs from ordinary issue
+  -- comments.
+  , body :: Text -- Corresponds to "comment.body" or "review.body".
+  }
+  deriving (Eq, Show)
 
-data CommitStatusPayload = CommitStatusPayload {
-  owner      :: Text,                -- Corresponds to "repository.owner.login".
-  repository :: Text,                -- Corresponds to "repository.name".
-  status     :: CommitStatus,        -- Corresponds to "action".
-  context    :: Context,             -- Corresponds to "context".
-  url        :: Maybe Text,          -- Corresponds to "target_url".
-  sha        :: Sha                  -- Corresponds to "sha".
-} deriving (Eq, Show)
+data CommitStatusPayload = CommitStatusPayload
+  { owner :: Text -- Corresponds to "repository.owner.login".
+  , repository :: Text -- Corresponds to "repository.name".
+  , status :: CommitStatus -- Corresponds to "action".
+  , context :: Context -- Corresponds to "context".
+  , url :: Maybe Text -- Corresponds to "target_url".
+  , sha :: Sha -- Corresponds to "sha".
+  }
+  deriving (Eq, Show)
 
-data PushPayload = PushPayload {
-  owner      :: Text,       -- Corresponds to "repository.owner.login".
-  repository :: Text,       -- Corresponds to "repository.name".
-  branch     :: BaseBranch, -- Corresponds to "ref"
-  sha        :: Sha         -- Cooresponds to "after"
-} deriving (Eq, Show)
+data PushPayload = PushPayload
+  { owner :: Text -- Corresponds to "repository.owner.login".
+  , repository :: Text -- Corresponds to "repository.name".
+  , branch :: BaseBranch -- Corresponds to "ref"
+  , sha :: Sha -- Cooresponds to "after"
+  }
+  deriving (Eq, Show)
 
 instance FromJSON PullRequestAction where
-  parseJSON (String "opened")      = return Opened
-  parseJSON (String "closed")      = return Closed
-  parseJSON (String "reopened")    = return Opened
+  parseJSON (String "opened") = return Opened
+  parseJSON (String "closed") = return Closed
+  parseJSON (String "reopened") = return Opened
   parseJSON (String "synchronize") = return Synchronize
-  parseJSON (String "edited")      = return Edited
-  parseJSON _                      = fail "unexpected pull_request action"
+  parseJSON (String "edited") = return Edited
+  parseJSON _ = fail "unexpected pull_request action"
 
 instance FromJSON CommentAction where
-  parseJSON (String "created")   = return CommentCreated
-  parseJSON (String "edited")    = return CommentEdited
-  parseJSON (String "deleted")   = return CommentDeleted
-  parseJSON _                    = fail "unexpected issue_comment action"
+  parseJSON (String "created") = return CommentCreated
+  parseJSON (String "edited") = return CommentEdited
+  parseJSON (String "deleted") = return CommentDeleted
+  parseJSON _ = fail "unexpected issue_comment action"
 
 instance FromJSON ReviewAction where
   parseJSON (String "submitted") = return ReviewSubmitted
-  parseJSON (String "edited")    = return ReviewEdited
+  parseJSON (String "edited") = return ReviewEdited
   parseJSON (String "dismissed") = return ReviewDismissed
-  parseJSON _                    = fail "unexpected pull_request_review action"
+  parseJSON _ = fail "unexpected pull_request_review action"
 
 instance FromJSON CommitStatus where
   parseJSON (String "pending") = return Pending
   parseJSON (String "success") = return Success
   parseJSON (String "failure") = return Failure
-  parseJSON (String "error")   = return Error
-  parseJSON _                  = fail "unexpected status state"
+  parseJSON (String "error") = return Error
+  parseJSON _ = fail "unexpected status state"
 
 -- A helper function to parse nested fields in json.
 getNested :: FromJSON a => Object -> [Key] -> Parser a
 getNested rootObject fields =
   -- Build object parsers for every field except the last one. The last field is
   -- different, as it needs a parser of type "a", not "Object".
-  let parsers :: [Object -> Parser Object]
-      parsers = fmap (\ field -> (.: field)) (init fields)
-      object  = foldl (>>=) (return rootObject) parsers
-  in  object >>= (.: (last fields))
+  let
+    parsers :: [Object -> Parser Object]
+    parsers = fmap (\field -> (.: field)) (init fields)
+    object = foldl (>>=) (return rootObject) parsers
+  in
+    object >>= (.: (last fields))
 
 instance FromJSON PullRequestPayload where
-  parseJSON (Object v) = PullRequestPayload
-    <$> (v .: "action")
-    <*> getNested v ["pull_request", "base", "repo", "owner", "login"]
-    <*> getNested v ["pull_request", "base", "repo", "name"]
-    <*> getNested v ["pull_request", "base", "ref"]
-    <*> getNested v ["pull_request", "number"]
-    <*> getNested v ["pull_request", "head", "ref"]
-    <*> getNested v ["pull_request", "head", "sha"]
-    <*> getNested v ["pull_request", "title"]
-    <*> getNested v ["pull_request", "user", "login"]
-    <*> getNested v ["pull_request", "body"]
+  parseJSON (Object v) =
+    PullRequestPayload
+      <$> (v .: "action")
+      <*> getNested v ["pull_request", "base", "repo", "owner", "login"]
+      <*> getNested v ["pull_request", "base", "repo", "name"]
+      <*> getNested v ["pull_request", "base", "ref"]
+      <*> getNested v ["pull_request", "number"]
+      <*> getNested v ["pull_request", "head", "ref"]
+      <*> getNested v ["pull_request", "head", "sha"]
+      <*> getNested v ["pull_request", "title"]
+      <*> getNested v ["pull_request", "user", "login"]
+      <*> getNested v ["pull_request", "body"]
   parseJSON nonObject = typeMismatch "pull_request payload" nonObject
 
 instance FromJSON CommentPayload where
@@ -170,33 +175,38 @@ instance FromJSON CommentPayload where
       <$> getNested v ["repository", "owner", "login"]
       <*> getNested v ["repository", "name"]
       -- We subscribe to both issue comments and pull request review comments.
-      <*> (getNested v ["issue", "number"]
-        <|> getNested v ["pull_request", "number"])
+      <*> ( getNested v ["issue", "number"]
+              <|> getNested v ["pull_request", "number"]
+          )
       <*> getNested v ["sender", "login"]
-      <*> (getNested v ["comment", "id"]
-        -- If we couldn't get a comment ID, we likely got a review, which does have an ID,
-        -- but we can't treat that as a comment ID for API requests.
-        <|> pure Nothing)
-      <*> (getNested v ["comment", "body"]
-        <|> fromMaybe "" <$> getNested v ["review", "body"])
+      <*> ( getNested v ["comment", "id"]
+              -- If we couldn't get a comment ID, we likely got a review, which does have an ID,
+              -- but we can't treat that as a comment ID for API requests.
+              <|> pure Nothing
+          )
+      <*> ( getNested v ["comment", "body"]
+              <|> fromMaybe "" <$> getNested v ["review", "body"]
+          )
   parseJSON nonObject = typeMismatch "(issue_comment | pull_request_review) payload" nonObject
 
 instance FromJSON CommitStatusPayload where
-  parseJSON (Object v) = CommitStatusPayload
-    <$> getNested v ["repository", "owner", "login"]
-    <*> getNested v ["repository", "name"]
-    <*> (v .: "state")
-    <*> (v .: "context")
-    <*> (v .: "target_url")
-    <*> (v .: "sha")
+  parseJSON (Object v) =
+    CommitStatusPayload
+      <$> getNested v ["repository", "owner", "login"]
+      <*> getNested v ["repository", "name"]
+      <*> (v .: "state")
+      <*> (v .: "context")
+      <*> (v .: "target_url")
+      <*> (v .: "sha")
   parseJSON nonObject = typeMismatch "status payload" nonObject
 
 instance FromJSON PushPayload where
-  parseJSON (Object v) = PushPayload
-    <$> getNested v ["repository", "owner", "login"]
-    <*> getNested v ["repository", "name"]
-    <*> (v .: "ref")
-    <*> (v .: "after")
+  parseJSON (Object v) =
+    PushPayload
+      <$> getNested v ["repository", "owner", "login"]
+      <*> getNested v ["repository", "name"]
+      <*> (v .: "ref")
+      <*> (v .: "after")
   parseJSON nonObject = typeMismatch "push payload" nonObject
 
 -- Note that GitHub calls pull requests "issues" for the sake of comments: the
@@ -212,20 +222,20 @@ data WebhookEvent
 -- Returns the owner of the repository for which the webhook was triggered.
 eventRepositoryOwner :: WebhookEvent -> Text
 eventRepositoryOwner event = case event of
-  Ping                 -> error "ping event must not be processed"
-  PullRequest payload  -> payload.owner
-  Comment payload      -> payload.owner
+  Ping -> error "ping event must not be processed"
+  PullRequest payload -> payload.owner
+  Comment payload -> payload.owner
   CommitStatus payload -> payload.owner
-  Push payload         -> payload.owner
+  Push payload -> payload.owner
 
 -- Returns the name of the repository for which the webhook was triggered.
 eventRepository :: WebhookEvent -> Text
 eventRepository event = case event of
-  Ping                 -> error "ping event must not be processed"
-  PullRequest payload  -> payload.repository
-  Comment payload      -> payload.repository
+  Ping -> error "ping event must not be processed"
+  PullRequest payload -> payload.repository
+  Comment payload -> payload.repository
   CommitStatus payload -> payload.repository
-  Push payload         -> payload.repository
+  Push payload -> payload.repository
 
 eventProjectInfo :: WebhookEvent -> ProjectInfo
 eventProjectInfo event =
@@ -244,6 +254,6 @@ tryEnqueueEvent queue event = atomically $ do
   isFull <- isFullTBQueue queue
   if isFull
     then return False
-    -- Normally writeTBQueue would block if the queue is full, but at this point
+    else -- Normally writeTBQueue would block if the queue is full, but at this point
     -- we know that the queue is not full, so it will return immediately.
-    else (writeTBQueue queue event) >> (return True)
+      (writeTBQueue queue event) >> (return True)

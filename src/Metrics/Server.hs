@@ -1,14 +1,13 @@
-module Metrics.Server
-(
+module Metrics.Server (
   MetricsServerConfig (..),
   serverConfig,
-  runMetricsServer
+  runMetricsServer,
 )
 where
 
-import qualified Network.Wai.Handler.Warp as Warp
-import qualified Network.Wai.Middleware.Prometheus as PrometheusWai
 import Data.Function ((&))
+import Network.Wai.Handler.Warp qualified as Warp
+import Network.Wai.Middleware.Prometheus qualified as PrometheusWai
 
 data MetricsServerConfig = MetricsServerConfig
   { metricsConfigHost :: Warp.HostPreference
@@ -16,9 +15,10 @@ data MetricsServerConfig = MetricsServerConfig
   }
 
 serverConfig :: MetricsServerConfig -> Warp.Settings
-serverConfig config = Warp.defaultSettings
-  & Warp.setHost (metricsConfigHost config)
-  & Warp.setPort (metricsConfigPort config)
+serverConfig config =
+  Warp.defaultSettings
+    & Warp.setHost (metricsConfigHost config)
+    & Warp.setPort (metricsConfigPort config)
 
 runMetricsServer :: MetricsServerConfig -> IO ()
 runMetricsServer config = Warp.runSettings (serverConfig config) PrometheusWai.metricsApp
