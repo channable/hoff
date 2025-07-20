@@ -43,6 +43,9 @@ blocks:
             # contains them.
             - "export LOCALE_ARCHIVE=$(nix-build --no-out-link locale.nix)/lib/locale/locale-archive"
 
+            # Check the style of the hoff.cabal file
+            - "cabal-fmt --check hoff.cabal"
+
             # This makes sure the version bounds from the `cabal.project.freeze`
             # file match the versions from nixpkgs. It also builds the project
             # for weeder to check.

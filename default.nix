@@ -14,6 +14,7 @@ let
       pkgs.shellcheck
 
       pkgs.haskellPackages.cabal-install
+      pkgs.haskellPackages.cabal-fmt
       pkgs.haskellPackages.haskell-language-server
       pkgs.haskellPackages.implicit-hie
       pkgs.haskellPackages.stylish-haskell
