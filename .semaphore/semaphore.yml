@@ -46,6 +46,9 @@ blocks:
             # Check the style of the hoff.cabal file
             - "cabal-fmt --check hoff.cabal"
 
+            # Check the style of Haskell files
+            - "fourmolu --mode check ."
+
             # This makes sure the version bounds from the `cabal.project.freeze`
             # file match the versions from nixpkgs. It also builds the project
             # for weeder to check.

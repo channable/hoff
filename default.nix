@@ -15,9 +15,9 @@ let
 
       pkgs.haskellPackages.cabal-install
       pkgs.haskellPackages.cabal-fmt
+      pkgs.haskellPackages.fourmolu
       pkgs.haskellPackages.haskell-language-server
       pkgs.haskellPackages.implicit-hie
-      pkgs.haskellPackages.stylish-haskell
       pkgs.haskellPackages.weeder
     ];
 
