@@ -4,13 +4,11 @@
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
 -- A copy of the License has been included in the root of the repository.
-
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
 
-module Types
-(
+module Types (
   Body (..),
   PullRequestId (..),
   CommentId (..),
@@ -22,10 +20,10 @@ where
 import Data.Aeson (FromJSON, ToJSON)
 import Data.String (IsString)
 import Data.Text (Text)
-import Data.Text.Buildable (Buildable(..))
+import Data.Text.Buildable (Buildable (..))
 import GHC.Generics (Generic)
 
-import qualified Data.Aeson as Aeson
+import Data.Aeson qualified as Aeson
 
 -- The name of a user on GitHub.
 newtype Username = Username Text deriving (Eq, Show, Generic, IsString, Buildable)

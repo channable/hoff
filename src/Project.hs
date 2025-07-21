@@ -4,7 +4,6 @@
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
 -- A copy of the License has been included in the root of the repository.
-
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -13,14 +12,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ViewPatterns #-}
 
-module Project
-(
+module Project (
   Approval (..),
   ApprovedFor (..),
   MergeCommand (..),
   BuildStatus (..),
-  DeployEnvironment(..),
-  DeploySubprojects(..),
+  DeployEnvironment (..),
+  DeploySubprojects (..),
   MandatoryChecks (..),
   Check (..),
   IntegrationStatus (..),
@@ -78,37 +76,38 @@ module Project
   supersedes,
   summarize,
   isFinalStatus,
-  MergeWindow(..))
+  MergeWindow (..),
+)
 where
 
-import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
+import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey)
 import Data.ByteString (readFile)
 import Data.ByteString.Lazy (writeFile)
 import Data.Foldable (asum)
 import Data.IntMap.Strict (IntMap)
 import Data.List (intersect, sortBy)
-import Data.Maybe (isJust, maybeToList)
 import Data.Map.Strict (Map)
-import Data.Text (Text)
+import Data.Maybe (isJust, maybeToList)
 import Data.Set (Set)
 import Data.String (IsString)
+import Data.Text (Text)
 import Format (format)
 import GHC.Generics
-import Git (Branch (..), BaseBranch (..), Sha (..), GitIntegrationFailure (..), TagName, TagMessage)
-import Prelude hiding (readFile, writeFile)
+import Git (BaseBranch (..), Branch (..), GitIntegrationFailure (..), Sha (..), TagMessage, TagName)
 import System.Directory (renameFile)
+import Prelude hiding (readFile, writeFile)
 
 import Data.Text.Buildable (Buildable (build))
 import Data.Text.Lazy.Builder as Text
 
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Encode.Pretty as Aeson
-import qualified Data.IntMap.Strict as IntMap
-import qualified Data.Map.Strict as Map
-import qualified Data.Text as T
+import Data.Aeson qualified as Aeson
+import Data.Aeson.Encode.Pretty qualified as Aeson
+import Data.IntMap.Strict qualified as IntMap
+import Data.Map.Strict qualified as Map
+import Data.Text qualified as T
 
-import Types (PullRequestId (..), Username, ReactableId)
 import Data.Time (UTCTime)
+import Types (PullRequestId (..), ReactableId, Username)
 
 -- For any integrated sha, we either wait for the first check, or for
 -- a variety of mandatory checks to pass before merging the pullrequest.
@@ -120,10 +119,14 @@ data OutstandingChecks
 
 -- | The build status of a pull request.
 data BuildStatus
-  = BuildPending             -- ^ we have just pushed to @testing/id@
-  | BuildStarted Text        -- ^ the build started with the given URL
-  | BuildSucceeded           -- ^ the build succeeded
-  | BuildFailed (Maybe Text) -- ^ the build failed with the given URL
+  = -- | we have just pushed to @testing/id@
+    BuildPending
+  | -- | the build started with the given URL
+    BuildStarted Text
+  | -- | the build succeeded
+    BuildSucceeded
+  | -- | the build failed with the given URL
+    BuildFailed (Maybe Text)
   deriving (Eq, Show, Generic)
 
 -- | When attempting to integrated changes, there can be six states:
@@ -152,21 +155,34 @@ data IntegrationStatus
   deriving (Eq, Show, Generic)
 
 data PullRequestStatus
-  = PrStatusAwaitingApproval          -- ^ New, awaiting review.
-  | PrStatusApproved                  -- ^ Approved, but not yet integrated or built.
-  | PrStatusOutdated                  -- ^ Approved, but master updated during integration.
-  | PrStatusBuildPending              -- ^ Integrated, and build pending or in progress.
-  | PrStatusBuildStarted Text         -- ^ Integrated, and build pending or in progress.
-  | PrStatusAwaitingPromotion         -- ^ Integrated, waiting to be pushed to target branch
-  | PrStatusIntegrated                -- ^ Integrated, build passed, merged into target branch.
-  | PrStatusIncorrectBaseBranch       -- ^ Integration branch not being valid.
-  | PrStatusWrongFixups               -- ^ Failed to integrate due to the presence of orphan fixup commits.
-  | PrStatusEmptyRebase               -- ^ Rebase was empty (changes already in the target branch?)
-  | PrStatusFailedConflict            -- ^ Failed to integrate due to merge conflict.
-  | PrStatusSpeculativeConflict       -- ^ Failed to integrate but this was a speculative build
-  | PrStatusFailedBuild (Maybe Text)  -- ^ Integrated, but the build failed.
-                                      --   Field should contain the URL to a page
-                                      --   explaining the build failure.
+  = -- | New, awaiting review.
+    PrStatusAwaitingApproval
+  | -- | Approved, but not yet integrated or built.
+    PrStatusApproved
+  | -- | Approved, but master updated during integration.
+    PrStatusOutdated
+  | -- | Integrated, and build pending or in progress.
+    PrStatusBuildPending
+  | -- | Integrated, and build pending or in progress.
+    PrStatusBuildStarted Text
+  | -- | Integrated, waiting to be pushed to target branch
+    PrStatusAwaitingPromotion
+  | -- | Integrated, build passed, merged into target branch.
+    PrStatusIntegrated
+  | -- | Integration branch not being valid.
+    PrStatusIncorrectBaseBranch
+  | -- | Failed to integrate due to the presence of orphan fixup commits.
+    PrStatusWrongFixups
+  | -- | Rebase was empty (changes already in the target branch?)
+    PrStatusEmptyRebase
+  | -- | Failed to integrate due to merge conflict.
+    PrStatusFailedConflict
+  | -- | Failed to integrate but this was a speculative build
+    PrStatusSpeculativeConflict
+  | -- | Integrated, but the build failed.
+    --   Field should contain the URL to a page
+    --   explaining the build failure.
+    PrStatusFailedBuild (Maybe Text)
   deriving (Eq, Show)
 
 newtype DeployEnvironment = DeployEnvironment Text
@@ -197,7 +213,7 @@ data MergeCommand
 -- | For a PR to be approved a specific user must give a specific approval
 --   command, i.e. either just "merge" or "merge and deploy".
 data Approval = Approval
-  { approver    :: Username
+  { approver :: Username
   , approvalSource :: Maybe ReactableId
   , approvedFor :: ApprovedFor
   , approvalOrder :: Int
@@ -225,29 +241,29 @@ newtype MandatoryChecks = MandatoryChecks (Set Check)
   deriving newtype (FromJSON, ToJSON, Monoid, Semigroup)
 
 data PromotedPullRequest = PromotedPullRequest
-  { promotedPRSha   :: Sha
+  { promotedPRSha :: Sha
   , promotedPRTime :: UTCTime
   }
   deriving (Eq, Show, Generic)
 
 data PullRequest = PullRequest
-  { sha                 :: Sha
-  , branch              :: Branch
-  , baseBranch          :: BaseBranch
-  , title               :: Text
-  , author              :: Username
-  , approval            :: Maybe Approval
-  , integrationStatus   :: IntegrationStatus
+  { sha :: Sha
+  , branch :: Branch
+  , baseBranch :: BaseBranch
+  , title :: Text
+  , author :: Username
+  , approval :: Maybe Approval
+  , integrationStatus :: IntegrationStatus
   , integrationAttempts :: [Sha]
-  , needsFeedback       :: Bool
+  , needsFeedback :: Bool
   }
   deriving (Eq, Show, Generic)
 
 data ProjectState = ProjectState
-  { pullRequests              :: IntMap PullRequest
-  , pullRequestApprovalIndex  :: Int
-  , mandatoryChecks           :: MandatoryChecks
-  , recentlyPromoted          :: [PromotedPullRequest]
+  { pullRequests :: IntMap PullRequest
+  , pullRequestApprovalIndex :: Int
+  , mandatoryChecks :: MandatoryChecks
+  , recentlyPromoted :: [PromotedPullRequest]
   }
   deriving (Eq, Show, Generic)
 
@@ -258,9 +274,8 @@ type Owner = Text
 --   important as we're using that property for quick lookups via the usual Ord
 --   instance.
 data ProjectInfo = ProjectInfo
-  {
-    owner      :: Owner,
-    repository :: Text
+  { owner :: Owner
+  , repository :: Text
   }
   deriving (Eq, Show, Ord)
 
@@ -271,17 +286,18 @@ subMapByOwner owner' perProjectInfo = do
   -- relation of project info. As a result of the ordering relation, we can
   -- neatly split the map such that we get the subset of repositories that
   -- match that specific owner using just two lookups.
-  let subsetToCheck = Map.dropWhileAntitone (\info -> owner info < owner') perProjectInfo
-      projectSubset = Map.takeWhileAntitone (\info -> owner info == owner') subsetToCheck
+  let
+    subsetToCheck = Map.dropWhileAntitone (\info -> owner info < owner') perProjectInfo
+    projectSubset = Map.takeWhileAntitone (\info -> owner info == owner') subsetToCheck
   projectSubset
 
 -- Buildable instance for use with `format`,
 -- mainly for nicer formatting in the logs.
 instance Buildable ProjectInfo where
-  build info
-    =  Text.fromText (owner info)
-    <> Text.singleton '/'
-    <> Text.fromText (repository info)
+  build info =
+    Text.fromText (owner info)
+      <> Text.singleton '/'
+      <> Text.fromText (repository info)
 
 instance FromJSON PromotedPullRequest
 instance FromJSON BuildStatus
@@ -293,7 +309,6 @@ instance FromJSON Approval
 instance FromJSON Priority
 instance FromJSON ProjectState
 instance FromJSON PullRequest
-
 
 instance ToJSON PromotedPullRequest where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 instance ToJSON BuildStatus where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
@@ -320,12 +335,13 @@ saveProjectState fname state = do
   renameFile (fname ++ ".new") fname
 
 emptyProjectState :: ProjectState
-emptyProjectState = ProjectState {
-  pullRequests             = IntMap.empty,
-  pullRequestApprovalIndex = 0,
-  mandatoryChecks          = mempty,
-  recentlyPromoted         = []
-}
+emptyProjectState =
+  ProjectState
+    { pullRequests = IntMap.empty
+    , pullRequestApprovalIndex = 0
+    , mandatoryChecks = mempty
+    , recentlyPromoted = []
+    }
 
 -- Inserts a new pull request into the project, with approval set to Nothing,
 -- build status to BuildNotStarted, and integration status to NotIntegrated.
@@ -339,26 +355,27 @@ insertPullRequest
   -> ProjectState
   -> ProjectState
 insertPullRequest (PullRequestId n) prBranch bsBranch prSha prTitle prAuthor state =
-  let
-    pullRequest = PullRequest {
-        sha                 = prSha,
-        branch              = prBranch,
-        baseBranch          = bsBranch,
-        title               = prTitle,
-        author              = prAuthor,
-        approval            = Nothing,
-        integrationStatus   = NotIntegrated,
-        integrationAttempts = [],
-        needsFeedback       = False
-      }
-  in state { pullRequests = IntMap.insert n pullRequest $ pullRequests state }
+  let pullRequest =
+        PullRequest
+          { sha = prSha
+          , branch = prBranch
+          , baseBranch = bsBranch
+          , title = prTitle
+          , author = prAuthor
+          , approval = Nothing
+          , integrationStatus = NotIntegrated
+          , integrationAttempts = []
+          , needsFeedback = False
+          }
+  in  state{pullRequests = IntMap.insert n pullRequest $ pullRequests state}
 
 -- Removes the pull request detail from the project. This does not change the
 -- integration candidate, which can be equal to the deleted pull request.
 deletePullRequest :: PullRequestId -> ProjectState -> ProjectState
-deletePullRequest (PullRequestId n) state = state {
-  pullRequests = IntMap.delete n $ pullRequests state
-}
+deletePullRequest (PullRequestId n) state =
+  state
+    { pullRequests = IntMap.delete n $ pullRequests state
+    }
 
 -- Returns whether the pull request is part of the set of open pull requests.
 existsPullRequest :: PullRequestId -> ProjectState -> Bool
@@ -368,55 +385,59 @@ lookupPullRequest :: PullRequestId -> ProjectState -> Maybe PullRequest
 lookupPullRequest (PullRequestId n) = IntMap.lookup n . pullRequests
 
 updatePullRequest :: PullRequestId -> (PullRequest -> PullRequest) -> ProjectState -> ProjectState
-updatePullRequest (PullRequestId n) f state = state {
-  pullRequests = IntMap.adjust f n $ pullRequests state
-}
+updatePullRequest (PullRequestId n) f state =
+  state
+    { pullRequests = IntMap.adjust f n $ pullRequests state
+    }
 
 updatePullRequests :: (PullRequest -> PullRequest) -> ProjectState -> ProjectState
-updatePullRequests f state = state {
-  pullRequests = IntMap.map f $ pullRequests state
-}
+updatePullRequests f state =
+  state
+    { pullRequests = IntMap.map f $ pullRequests state
+    }
 
 addPromotedPullRequest :: PullRequest -> UTCTime -> ProjectState -> ProjectState
 addPromotedPullRequest pr currTime state =
   case promotionSha pr of
-    Just promotedSha -> state { recentlyPromoted = PromotedPullRequest promotedSha currTime : recentlyPromoted state }
+    Just promotedSha -> state{recentlyPromoted = PromotedPullRequest promotedSha currTime : recentlyPromoted state}
     Nothing -> error "Can't add promoted pull request that is not being promoted."
 
 filterRecentlyPromoted :: (UTCTime -> Bool) -> ProjectState -> ProjectState
-filterRecentlyPromoted p state = state {recentlyPromoted = filter (p . promotedPRTime) (recentlyPromoted state)}
+filterRecentlyPromoted p state = state{recentlyPromoted = filter (p . promotedPRTime) (recentlyPromoted state)}
 
 -- Marks the pull request as approved by somebody or nobody.
 setApproval :: PullRequestId -> Maybe Approval -> ProjectState -> ProjectState
 setApproval pr newApproval = updatePullRequest pr changeApproval
-  where changeApproval pullRequest = pullRequest { approval = newApproval }
+ where
+  changeApproval pullRequest = pullRequest{approval = newApproval}
 
 newApprovalOrder :: ProjectState -> (Int, ProjectState)
 newApprovalOrder state =
   let index = pullRequestApprovalIndex state
-  in (index, state{ pullRequestApprovalIndex = index + 1})
+  in  (index, state{pullRequestApprovalIndex = index + 1})
 
 -- Sets the integration status for a pull request.
 setIntegrationStatus :: PullRequestId -> IntegrationStatus -> ProjectState -> ProjectState
 setIntegrationStatus pr newStatus = updatePullRequest pr changeIntegrationStatus
-  where
-    -- If there is a current integration candidate, remember it, so that we can
-    -- ignore push webhook events for that commit (we probably pushed it
-    -- ourselves, in any case it should not clear approval status).
-    changeIntegrationStatus pullRequest = case integrationStatus pullRequest of
-      Integrated oldSha _buildStatus -> pullRequest
+ where
+  -- If there is a current integration candidate, remember it, so that we can
+  -- ignore push webhook events for that commit (we probably pushed it
+  -- ourselves, in any case it should not clear approval status).
+  changeIntegrationStatus pullRequest = case integrationStatus pullRequest of
+    Integrated oldSha _buildStatus ->
+      pullRequest
         { integrationStatus = newStatus
         , integrationAttempts = oldSha : (integrationAttempts pullRequest)
         }
-      _notIntegrated -> pullRequest { integrationStatus = newStatus }
+    _notIntegrated -> pullRequest{integrationStatus = newStatus}
 
 setNeedsFeedback :: PullRequestId -> Bool -> ProjectState -> ProjectState
-setNeedsFeedback pr value = updatePullRequest pr (\pullRequest -> pullRequest { needsFeedback = value })
+setNeedsFeedback pr value = updatePullRequest pr (\pullRequest -> pullRequest{needsFeedback = value})
 
 classifyPullRequest :: PullRequest -> PullRequestStatus
 classifyPullRequest pr = case approval pr of
   Nothing -> PrStatusAwaitingApproval
-  Just _  -> case integrationStatus pr of
+  Just _ -> case integrationStatus pr of
     NotIntegrated -> PrStatusApproved
     Outdated -> PrStatusOutdated
     IncorrectBaseBranch -> PrStatusIncorrectBaseBranch
@@ -424,22 +445,22 @@ classifyPullRequest pr = case approval pr of
     Conflicted _ WrongFixups -> PrStatusWrongFixups
     Conflicted base _ | base /= baseBranch pr -> PrStatusSpeculativeConflict
     Conflicted _ EmptyRebase -> PrStatusEmptyRebase
-    Conflicted _ _  -> PrStatusFailedConflict
+    Conflicted _ _ -> PrStatusFailedConflict
     Integrated _ buildStatus -> case summarize buildStatus of
-      BuildPending     -> PrStatusBuildPending
+      BuildPending -> PrStatusBuildPending
       BuildStarted url -> PrStatusBuildStarted url
-      BuildSucceeded   -> PrStatusIntegrated
-      BuildFailed url  -> PrStatusFailedBuild url
+      BuildSucceeded -> PrStatusIntegrated
+      BuildFailed url -> PrStatusFailedBuild url
     Promote _ _ -> PrStatusAwaitingPromotion
-    PromoteAndTag {} -> PrStatusAwaitingPromotion
+    PromoteAndTag{} -> PrStatusAwaitingPromotion
     Promoted -> PrStatusIntegrated
 
 -- Classify every pull request into one status. Orders pull requests by id in
 -- ascending order.
 classifyPullRequests :: ProjectState -> [(PullRequestId, PullRequest, PullRequestStatus)]
 classifyPullRequests state = IntMap.foldMapWithKey aux (pullRequests state)
-  where
-    aux i pr = [(PullRequestId i, pr, classifyPullRequest pr)]
+ where
+  aux i pr = [(PullRequestId i, pr, classifyPullRequest pr)]
 
 -- Returns the ids of the pull requests that satisfy the predicate, in ascending
 -- order. The ids are sorted by the approval order, with not yet approved PRs
@@ -447,18 +468,18 @@ classifyPullRequests state = IntMap.foldMapWithKey aux (pullRequests state)
 filterPullRequestsBy :: (PullRequest -> Bool) -> ProjectState -> [PullRequestId]
 filterPullRequestsBy p =
   fmap PullRequestId
-  . map fst
-  . sortBy comp
-  . IntMap.toList
-  . IntMap.filter p
-  . pullRequests
-  where
-    -- Compare the approval orders, prefer a Just over a Nothing
-    comp x y = comp' (approvalOrder <$> approval (snd x)) (approvalOrder <$> approval (snd y))
-    comp' Nothing Nothing = EQ
-    comp' (Just _) Nothing = LT
-    comp' Nothing (Just _) = GT
-    comp' (Just n) (Just m) = compare n m
+    . map fst
+    . sortBy comp
+    . IntMap.toList
+    . IntMap.filter p
+    . pullRequests
+ where
+  -- Compare the approval orders, prefer a Just over a Nothing
+  comp x y = comp' (approvalOrder <$> approval (snd x)) (approvalOrder <$> approval (snd y))
+  comp' Nothing Nothing = EQ
+  comp' (Just _) Nothing = LT
+  comp' Nothing (Just _) = GT
+  comp' (Just n) (Just m) = compare n m
 
 -- Returns the pull requests that have been approved, in order of ascending id.
 approvedPullRequests :: ProjectState -> [PullRequestId]
@@ -482,14 +503,14 @@ getQueuePosition prIndex state =
 isQueued :: PullRequest -> Bool
 isQueued pr = case approval pr of
   Nothing -> False
-  Just _  -> case integrationStatus pr of
-    NotIntegrated  -> True
+  Just _ -> case integrationStatus pr of
+    NotIntegrated -> True
     Outdated -> True
     IncorrectBaseBranch -> False
     Conflicted _ _ -> False
     Integrated _ _ -> False
     Promote _ _ -> False
-    PromoteAndTag {} -> False
+    PromoteAndTag{} -> False
     Promoted -> False
 
 -- Returns whether a pull request is in the process of being integrated (pending
@@ -497,18 +518,18 @@ isQueued pr = case approval pr of
 isInProgress :: PullRequest -> Bool
 isInProgress pr = case approval pr of
   Nothing -> False
-  Just _  -> case integrationStatus pr of
+  Just _ -> case integrationStatus pr of
     NotIntegrated -> False
     Outdated -> False
     IncorrectBaseBranch -> False
     Conflicted _ _ -> False
     Integrated _ buildStatus -> case summarize buildStatus of
-      BuildPending   -> True
+      BuildPending -> True
       BuildStarted _ -> True
       BuildSucceeded -> True
-      BuildFailed _  -> False
+      BuildFailed _ -> False
     Promote _ _ -> True
-    PromoteAndTag {} -> True
+    PromoteAndTag{} -> True
     Promoted -> False
 
 -- Return whether the given commit is, or in this approval cycle ever was, an
@@ -516,7 +537,7 @@ isInProgress pr = case approval pr of
 wasIntegrationAttemptFor :: Sha -> PullRequest -> Bool
 wasIntegrationAttemptFor commit pr = case integrationStatus pr of
   Integrated candidate _buildStatus -> commit `elem` (candidate : integrationAttempts pr)
-  _                                 -> commit `elem` (integrationAttempts pr)
+  _ -> commit `elem` (integrationAttempts pr)
 
 integratedPullRequests :: ProjectState -> [PullRequestId]
 integratedPullRequests = filterPullRequestsBy $ isIntegrated . integrationStatus
@@ -527,14 +548,15 @@ integratedPullRequests = filterPullRequestsBy $ isIntegrated . integrationStatus
 -- that come after the first non-failing PR
 -- in approval order.
 speculativelyFailedPullRequests :: ProjectState -> [PullRequestId]
-speculativelyFailedPullRequests state
-  = map fst
-  $ filter (isFailedIntegrated . integrationStatus . snd)
-  $ dropWhile (not . isUnfailedIntegrated . integrationStatus . snd)
-  [ (pid, pr)
-  | pid <- integratedPullRequests state
-  , Just pr <- [lookupPullRequest pid state]
-  ]
+speculativelyFailedPullRequests state =
+  map fst $
+    filter (isFailedIntegrated . integrationStatus . snd) $
+      dropWhile
+        (not . isUnfailedIntegrated . integrationStatus . snd)
+        [ (pid, pr)
+        | pid <- integratedPullRequests state
+        , Just pr <- [lookupPullRequest pid state]
+        ]
 
 -- | Lists all pull requests that were integrated and did not fail.
 unfailedIntegratedPullRequests :: ProjectState -> [PullRequestId]
@@ -544,7 +566,8 @@ unfailedIntegratedPullRequests = filterPullRequestsBy $ isUnfailedIntegrated . i
 -- and that come before a given PR in approval order.
 unfailedIntegratedPullRequestsBefore :: PullRequest -> ProjectState -> [PullRequestId]
 unfailedIntegratedPullRequestsBefore referencePullRequest = filterPullRequestsBy $
-  \pr -> isUnfailedIntegrated (integrationStatus pr)
+  \pr ->
+    isUnfailedIntegrated (integrationStatus pr)
       && referencePullRequest `approvedAfter` pr
 
 -- | Returns the pull requests that have not been integrated yet,
@@ -557,7 +580,7 @@ unintegratedPullRequests = filterPullRequestsBy $ (\x -> x == NotIntegrated || x
 candidatePullRequests :: ProjectState -> [PullRequestId]
 candidatePullRequests state =
   let
-    approved     = approvedPullRequests state
+    approved = approvedPullRequests state
     unintegrated = unintegratedPullRequests state
   in
     approved `intersect` unintegrated
@@ -565,14 +588,15 @@ candidatePullRequests state =
 -- | A string representation of a merge command, without the optional @ on
 -- friday@ merge window suffix.
 displayMergeCommand :: MergeCommand -> Text
-displayMergeCommand (Approve Merge)                                    = "merge"
+displayMergeCommand (Approve Merge) = "merge"
 displayMergeCommand (Approve (MergeAndDeploy subprojects (DeployEnvironment env))) =
   case subprojects of
-    EntireProject      -> format "merge and deploy to {}" [env]
-    OnlySubprojects ss  -> let subs = T.intercalate ", " ss
-                            in format "merge and deploy {} to {}" (subs, env)
-displayMergeCommand (Approve MergeAndTag)                              = "merge and tag"
-displayMergeCommand Retry                                              = "retry"
+    EntireProject -> format "merge and deploy to {}" [env]
+    OnlySubprojects ss ->
+      let subs = T.intercalate ", " ss
+      in  format "merge and deploy {} to {}" (subs, env)
+displayMergeCommand (Approve MergeAndTag) = "merge and tag"
+displayMergeCommand Retry = "retry"
 
 -- | Whether the specified approval type requires a merge commit to be created.
 -- This is currently the case if a tag is to be created, because the deployment
@@ -581,39 +605,39 @@ alwaysAddMergeCommit :: ApprovedFor -> Bool
 alwaysAddMergeCommit = needsTag
 
 needsDeploy :: ApprovedFor -> Bool
-needsDeploy Merge              = False
-needsDeploy MergeAndDeploy{}   = True
-needsDeploy MergeAndTag        = False
+needsDeploy Merge = False
+needsDeploy MergeAndDeploy{} = True
+needsDeploy MergeAndTag = False
 
 needsTag :: ApprovedFor -> Bool
-needsTag Merge              = False
-needsTag MergeAndDeploy{}   = True
-needsTag MergeAndTag        = True
+needsTag Merge = False
+needsTag MergeAndDeploy{} = True
+needsTag MergeAndTag = True
 
 integrationSha :: PullRequest -> Maybe Sha
 integrationSha PullRequest{integrationStatus = Integrated s _} = Just s
-integrationSha _                                               = Nothing
+integrationSha _ = Nothing
 
 integrationShas :: PullRequest -> [Sha]
 integrationShas pr = maybeToList (integrationSha pr) ++ integrationAttempts pr
 
 promotionSha :: PullRequest -> Maybe Sha
 promotionSha pr = case integrationStatus pr of
-  Promote       _ newHead     -> Just newHead
+  Promote _ newHead -> Just newHead
   PromoteAndTag _ newHead _ _ -> Just newHead
-  _                           -> Nothing
+  _ -> Nothing
 
 promotionTime :: PullRequest -> Maybe UTCTime
 promotionTime pr = case integrationStatus pr of
-  Promote       time _     -> Just time
+  Promote time _ -> Just time
   PromoteAndTag time _ _ _ -> Just time
-  _                        -> Nothing
+  _ -> Nothing
 
 awaitingPromotion :: PullRequest -> Bool
 awaitingPromotion pr = case integrationStatus pr of
-  Promote _ _      -> True
-  PromoteAndTag {} -> True
-  _                -> False
+  Promote _ _ -> True
+  PromoteAndTag{} -> True
+  _ -> False
 
 -- | Returns whether the first pull request was approved after the second.
 -- To be used in infix notation:
@@ -621,17 +645,17 @@ awaitingPromotion pr = case integrationStatus pr of
 -- > pr1 `approvedAfter` pr2
 approvedAfter :: PullRequest -> PullRequest -> Bool
 pr1 `approvedAfter` pr2 = case (mo1, mo2) of
-                          (Just order1, Just order2) -> order1 > order2
-                          _                          -> False
-  where
+  (Just order1, Just order2) -> order1 > order2
+  _ -> False
+ where
   mo1 = approvalOrder <$> approval pr1
   mo2 = approvalOrder <$> approval pr2
 
 isIntegrated :: IntegrationStatus -> Bool
-isIntegrated (Integrated _ _)   = True
-isIntegrated (Promote _ _)      = True
-isIntegrated (PromoteAndTag {}) = True
-isIntegrated _                  = False
+isIntegrated (Integrated _ _) = True
+isIntegrated (Promote _ _) = True
+isIntegrated (PromoteAndTag{}) = True
+isIntegrated _ = False
 
 -- | Returns whether an 'IntegrationStatus' is integrated with a build failure:
 --   @ Integrated _ (BuildFailed _) @
@@ -643,33 +667,36 @@ isFailedIntegrated _ = False
 --   without a build failure, i.e. build pending, started or succeeded.
 isUnfailedIntegrated :: IntegrationStatus -> Bool
 isUnfailedIntegrated (Integrated _ buildStatus) = case summarize buildStatus of
-                                                  BuildPending     -> True
-                                                  (BuildStarted _) -> True
-                                                  BuildSucceeded   -> True
-                                                  (BuildFailed _)  -> False
-isUnfailedIntegrated (Promote _ _ )     = True
-isUnfailedIntegrated (PromoteAndTag {}) = True
+  BuildPending -> True
+  (BuildStarted _) -> True
+  BuildSucceeded -> True
+  (BuildFailed _) -> False
+isUnfailedIntegrated (Promote _ _) = True
+isUnfailedIntegrated (PromoteAndTag{}) = True
 isUnfailedIntegrated _ = False
 
 -- | Returns whether a 'PullRequest' is integrated or conflicted speculatively.
 isIntegratedOrSpeculativelyConflicted :: PullRequest -> Bool
 isIntegratedOrSpeculativelyConflicted pr =
   case integrationStatus pr of
-  (Integrated _ _)                            -> True
-  (Conflicted base _) | base /= baseBranch pr -> True
-  _                                           -> False
+    (Integrated _ _) -> True
+    (Conflicted base _) | base /= baseBranch pr -> True
+    _ -> False
 
 summarize :: OutstandingChecks -> BuildStatus
 summarize (AnyCheck status) = status
 summarize (SpecificChecks statusChecks) =
-  let go :: [BuildStatus] -> BuildStatus
-      go checks = if
+  let
+    go :: [BuildStatus] -> BuildStatus
+    go checks =
+      if
         | all (== BuildSucceeded) checks -> BuildSucceeded
         | Just failure <- findFirst checks isBuildFailed -> failure
         | Just started <- findFirst checks isBuildStarted -> started
         | otherwise -> BuildPending
-      findFirst checks isConstr = asum (map isConstr checks)
-  in go $ map snd $ Map.toList statusChecks
+    findFirst checks isConstr = asum (map isConstr checks)
+  in
+    go $ map snd $ Map.toList statusChecks
 
 -- | Does the first build status supersedes the second?
 --
@@ -692,19 +719,19 @@ summarize (SpecificChecks statusChecks) =
 supersedes :: BuildStatus -> BuildStatus -> Bool
 supersedes newStatus oldStatus | sameStatus newStatus oldStatus = False
 supersedes (BuildFailed _) BuildSucceeded = True
-supersedes _               oldStatus      = not (isFinalStatus oldStatus)
+supersedes _ oldStatus = not (isFinalStatus oldStatus)
 
 isFinalStatus :: BuildStatus -> Bool
 isFinalStatus (BuildFailed _) = True
-isFinalStatus BuildSucceeded  = True
-isFinalStatus _               = False
+isFinalStatus BuildSucceeded = True
+isFinalStatus _ = False
 
 -- | Compares if two build statuses are the same
 --   while ignoring any URL arguments
 sameStatus :: BuildStatus -> BuildStatus -> Bool
 sameStatus BuildStarted{} BuildStarted{} = True
-sameStatus BuildFailed{}  BuildFailed{}  = True
-sameStatus status1        status2        = status1 == status2
+sameStatus BuildFailed{} BuildFailed{} = True
+sameStatus status1 status2 = status1 == status2
 
 -- | Total function for checking and returning whether the build status
 -- corresponds to check failure

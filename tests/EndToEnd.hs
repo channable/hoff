@@ -5,9 +5,9 @@
 -- you may not use this file except in compliance with the License.
 -- A copy of the License has been included in the root of the repository.
 
-import Test.Hspec (hspec)
 import EventLoopSpec (eventLoopSpec)
 import ServerSpec (serverSpec)
+import Test.Hspec (hspec)
 
 -- This test suite tests interaction of the system with the outside world, as
 -- opposed to its internals (there are unit tests for that). It is not a full

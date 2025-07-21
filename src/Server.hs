@@ -4,7 +4,6 @@
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
 -- A copy of the License has been included in the root of the repository.
-
 {-# LANGUAGE OverloadedStrings #-}
 
 module Server (buildServer) where
@@ -18,26 +17,26 @@ import Crypto.MAC.HMAC (HMAC (..), hmac)
 import Data.ByteString (ByteString)
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
-import Network.HTTP.Types (badRequest400, notFound404, noContent204, notImplemented501, serviceUnavailable503)
+import Network.HTTP.Types (badRequest400, noContent204, notFound404, notImplemented501, serviceUnavailable503)
 import Web.Scotty (ActionM, ScottyM, body, captureParam, get, header, jsonData, notFound, post, raw, scottyApp, setHeader, status, text)
-import Web.Scotty.Internal.Types (RoutePattern(Literal))
+import Web.Scotty.Internal.Types (RoutePattern (Literal))
 
-import qualified Data.Aeson as Aeson
-import qualified Data.ByteString.Base16 as Base16
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text as Text
-import qualified Data.Text.Lazy as LT
-import qualified Data.Text.Lazy.IO as LT
-import qualified Network.Wai as Wai
-import qualified Network.Wai.Handler.Warp as Warp
-import qualified Network.Wai.Handler.WarpTLS as Warp
+import Data.Aeson qualified as Aeson
+import Data.ByteString.Base16 qualified as Base16
+import Data.ByteString.Lazy qualified as LBS
+import Data.Text qualified as Text
+import Data.Text.Lazy qualified as LT
+import Data.Text.Lazy.IO qualified as LT
+import Network.Wai qualified as Wai
+import Network.Wai.Handler.Warp qualified as Warp
+import Network.Wai.Handler.WarpTLS qualified as Warp
 
 import Configuration (TlsConfiguration)
-import Project (ProjectInfo (ProjectInfo), ProjectState, Owner)
+import Project (Owner, ProjectInfo (ProjectInfo), ProjectState)
 
-import qualified Configuration as Config
-import qualified Github
-import qualified WebInterface
+import Configuration qualified as Config
+import Github qualified
+import WebInterface qualified
 
 -- Router for the web server.
 router
@@ -48,14 +47,14 @@ router
   -> (Owner -> IO [(ProjectInfo, ProjectState)])
   -> ScottyM ()
 router infos ghSecret serveEnqueueEvent getProjectState getOwnerState = do
-  get  "/"                 $ serveIndex infos
-  get  styleRoute          $ serveStyles
-  post "/hook/github"      $ withSignatureCheck ghSecret $ serveGithubWebhook serveEnqueueEvent
-  get  "/hook/github"      $ serveWebhookDocs
-  get  "/:owner"           $ serveWebInterfaceOwner getOwnerState
-  get  "/:owner/:repo"     $ serveWebInterfaceProject getProjectState
-  get  "/api/:owner/:repo" $ serveAPIproject getProjectState
-  notFound                 $ serveNotFound
+  get "/" $ serveIndex infos
+  get styleRoute $ serveStyles
+  post "/hook/github" $ withSignatureCheck ghSecret $ serveGithubWebhook serveEnqueueEvent
+  get "/hook/github" $ serveWebhookDocs
+  get "/:owner" $ serveWebInterfaceOwner getOwnerState
+  get "/:owner/:repo" $ serveWebInterfaceProject getProjectState
+  get "/api/:owner/:repo" $ serveAPIproject getProjectState
+  notFound $ serveNotFound
 
 styleRoute :: RoutePattern
 styleRoute = Literal $ LT.fromStrict WebInterface.stylesheetUrl
@@ -64,17 +63,19 @@ styleRoute = Literal $ LT.fromStrict WebInterface.stylesheetUrl
 -- the message, given the secret, and the actual message bytes.
 isSignatureValid :: Text -> Text -> ByteString -> Bool
 isSignatureValid secret hexDigest message =
-  let actualHmac   = hmac (encodeUtf8 secret) message :: HMAC SHA1
-      binaryDigest = Base16.decode $ encodeUtf8 hexDigest
-  in  case binaryDigest of
-        -- If the hexDigest was not hexadecimal, is was definitely not valid
-        Left _ -> False
-        Right x -> case digestFromByteString x of
-          -- The HMAC type implements a constant-time comparison.
-          Just expectedDigest -> (HMAC expectedDigest) == actualHmac
-          -- If the hexDigest was not a valid hexadecimally-encoded digest,
-          -- the signature was definitely not valid.
-          Nothing -> False
+  let
+    actualHmac = hmac (encodeUtf8 secret) message :: HMAC SHA1
+    binaryDigest = Base16.decode $ encodeUtf8 hexDigest
+  in
+    case binaryDigest of
+      -- If the hexDigest was not hexadecimal, is was definitely not valid
+      Left _ -> False
+      Right x -> case digestFromByteString x of
+        -- The HMAC type implements a constant-time comparison.
+        Just expectedDigest -> (HMAC expectedDigest) == actualHmac
+        -- If the hexDigest was not a valid hexadecimally-encoded digest,
+        -- the signature was definitely not valid.
+        Nothing -> False
 
 -- The X-Hub-Signature header value is prefixed with "sha1=", and then the
 -- digest in hexadecimal. Strip off that prefix, and ensure that it has the
@@ -82,9 +83,9 @@ isSignatureValid secret hexDigest message =
 extractHexDigest :: Text -> Maybe Text
 extractHexDigest value =
   let (prefix, hexDigest) = Text.splitAt 5 value
-  in case prefix of
-    "sha1=" -> Just hexDigest
-    _       -> Nothing
+  in  case prefix of
+        "sha1=" -> Just hexDigest
+        _ -> Nothing
 
 withSignatureCheck :: Text -> ActionM () -> ActionM ()
 withSignatureCheck secret bodyAction = do
@@ -127,27 +128,32 @@ serveGithubWebhook serveEnqueueEvent = do
     Just "ping" ->
       serveEnqueueEvent $ Github.Ping
     Just anEventName -> do
-      requestId <- header "X-GitHub-Hook-ID" >>= \mbRequestId ->
-        case mbRequestId of
-          Just requestId -> pure requestId
-          Nothing        -> pure "REQUEST_ID_MISSING"
+      requestId <-
+        header "X-GitHub-Hook-ID" >>= \mbRequestId ->
+          case mbRequestId of
+            Just requestId -> pure requestId
+            Nothing -> pure "REQUEST_ID_MISSING"
 
       -- Manually append "\n" to ensure line buffering for thread-safe logging.
-      liftIO $ LT.putStr $
-        "Ignored event: " <> anEventName <>
-        " - Request ID: " <> requestId <> "\n"
+      liftIO $
+        LT.putStr $
+          "Ignored event: "
+            <> anEventName
+            <> " - Request ID: "
+            <> requestId
+            <> "\n"
 
       -- Send a 204 (NoContent) to prevent GitHub interpreting it as an error.
       status noContent204
-
     Nothing -> do
       status notImplemented501
       text "hook ignored, the event type is not supported"
 
 -- Handles replying to the client when a GitHub webhook is received.
-serveTryEnqueueEvent :: (Github.WebhookEvent -> IO Bool)
-                     -> Github.WebhookEvent
-                     -> ActionM ()
+serveTryEnqueueEvent
+  :: (Github.WebhookEvent -> IO Bool)
+  -> Github.WebhookEvent
+  -> ActionM ()
 serveTryEnqueueEvent tryEnqueueEvent event = do
   -- Enqueue the event if the queue is not full. Don't block if the queue is
   -- full: instead we don't want to enqueue the event and tell the client to
@@ -188,7 +194,7 @@ serveWebInterfaceOwner getOwnerState = do
 serveWebInterfaceProject :: (ProjectInfo -> Maybe (IO ProjectState)) -> ActionM ()
 serveWebInterfaceProject getProjectState = do
   owner <- captureParam "owner"
-  repo  <- captureParam "repo"
+  repo <- captureParam "repo"
   let info = ProjectInfo owner repo
   case getProjectState info of
     Nothing -> do
@@ -200,11 +206,10 @@ serveWebInterfaceProject getProjectState = do
       let title = Text.concat [owner, "/", repo]
       raw $ WebInterface.renderPage title $ WebInterface.viewProject info state
 
-
 serveAPIproject :: (ProjectInfo -> Maybe (IO ProjectState)) -> ActionM ()
 serveAPIproject getProjectState = do
   owner <- captureParam "owner"
-  repo  <- captureParam "repo"
+  repo <- captureParam "repo"
   let info = ProjectInfo owner repo
   case getProjectState info of
     Nothing -> do
@@ -221,10 +226,10 @@ serveNotFound = do
   text "not found"
 
 warpSettings :: Int -> IO () -> Warp.Settings
-warpSettings port beforeMainLoop
-  = Warp.setPort port
-  $ Warp.setBeforeMainLoop beforeMainLoop
-  $ Warp.defaultSettings
+warpSettings port beforeMainLoop =
+  Warp.setPort port $
+    Warp.setBeforeMainLoop beforeMainLoop $
+      Warp.defaultSettings
 
 warpTlsSettings :: TlsConfiguration -> Warp.TLSSettings
 warpTlsSettings config =
@@ -233,10 +238,11 @@ warpTlsSettings config =
 -- Runs the a server with TLS if a TLS config was provided, or a normal http
 -- server otherwise. Behaves identical to Warp.runSettings after passing the
 -- TLS configuration.
-runServerMaybeTls :: Maybe TlsConfiguration
-                  -> Warp.Settings
-                  -> Wai.Application
-                  -> IO ()
+runServerMaybeTls
+  :: Maybe TlsConfiguration
+  -> Warp.Settings
+  -> Wai.Application
+  -> IO ()
 runServerMaybeTls maybeTlsConfig =
   case maybeTlsConfig of
     Just tlsConfig -> Warp.runTLS $ warpTlsSettings tlsConfig
@@ -247,19 +253,21 @@ runServerMaybeTls maybeTlsConfig =
 -- operations: (runServer, blockUntilReady). The first should be used to run
 -- the server, the second may be used to wait until the server is ready to
 -- serve requests.
-buildServer :: Int
-            -> Maybe TlsConfiguration
-            -> [ProjectInfo]
-            -> Text
-            -> (Github.WebhookEvent -> IO Bool)
-            -> (ProjectInfo -> Maybe (IO ProjectState))
-            -> (Owner -> IO [(ProjectInfo, ProjectState)])
-            -> IO (IO (), IO ())
+buildServer
+  :: Int
+  -> Maybe TlsConfiguration
+  -> [ProjectInfo]
+  -> Text
+  -> (Github.WebhookEvent -> IO Bool)
+  -> (ProjectInfo -> Maybe (IO ProjectState))
+  -> (Owner -> IO [(ProjectInfo, ProjectState)])
+  -> IO (IO (), IO ())
 buildServer port tlsConfig infos ghSecret tryEnqueueEvent getProjectState getOwnerState = do
   -- Create a semaphore that will be signalled when the server is ready.
   readySem <- atomically $ newTSem 0
-  let signalReady     = atomically $ signalTSem readySem
-      blockUntilReady = atomically $ waitTSem readySem
+  let
+    signalReady = atomically $ signalTSem readySem
+    blockUntilReady = atomically $ waitTSem readySem
 
   let
     -- Make Warp signal the semaphore when it is ready to serve requests.

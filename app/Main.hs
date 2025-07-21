@@ -4,7 +4,6 @@
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
 -- A copy of the License has been included in the root of the repository.
-
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main where
@@ -21,36 +20,49 @@ import GHC.Natural (Natural)
 import System.Exit (die)
 import System.IO (BufferMode (LineBuffering), hSetBuffering, stderr, stdout)
 
-import qualified Control.Concurrent.Async as Async
-import qualified Data.Text.Encoding as Text
-import qualified Data.Map.Strict as Map
-import qualified GitHub.Auth as Github3
-import qualified System.Directory as FileSystem
-import qualified Options.Applicative as Opts
+import Control.Concurrent.Async qualified as Async
+import Data.Map.Strict qualified as Map
+import Data.Text.Encoding qualified as Text
+import GitHub.Auth qualified as Github3
+import Options.Applicative qualified as Opts
+import System.Directory qualified as FileSystem
 
 import ClockTickLoop (clockTickLoop)
-import Configuration (ClockTickInterval (..), Configuration, MetricsConfiguration (metricsPort, metricsHost))
+import Configuration (ClockTickInterval (..), Configuration, MetricsConfiguration (metricsHost, metricsPort))
 import EventLoop (runGithubEventLoop, runLogicEventLoop)
 import MonadLoggerEffect (runLoggerStdout)
-import Project (ProjectInfo (ProjectInfo), Owner, ProjectState, emptyProjectState,
-                loadProjectState, saveProjectState, subMapByOwner)
+import Project (
+  Owner,
+  ProjectInfo (ProjectInfo),
+  ProjectState,
+  emptyProjectState,
+  loadProjectState,
+  saveProjectState,
+  subMapByOwner,
+ )
 import Server (buildServer)
 
-import qualified Metrics.Metrics as Metrics
-import Metrics.Server (runMetricsServer, MetricsServerConfig(MetricsServerConfig,
-                                          metricsConfigPort, metricsConfigHost))
+import Metrics.Metrics qualified as Metrics
+import Metrics.Server (
+  MetricsServerConfig (
+    MetricsServerConfig,
+    metricsConfigHost,
+    metricsConfigPort
+  ),
+  runMetricsServer,
+ )
 
-import qualified Paths_hoff (version)
+import Paths_hoff qualified (version)
 
-import qualified Configuration as Config
-import qualified Git
-import qualified Github
-import qualified GithubApi
-import qualified Logic
-import qualified Project
-import qualified Time
-import qualified Data.Text as Text
-import qualified Data.Set as Set
+import Configuration qualified as Config
+import Data.Set qualified as Set
+import Data.Text qualified as Text
+import Git qualified
+import Github qualified
+import GithubApi qualified
+import Logic qualified
+import Project qualified
+import Time qualified
 
 version :: String
 version = showVersion Paths_hoff.version
@@ -76,11 +88,14 @@ commandLineParser :: Opts.ParserInfo Options
 commandLineParser =
   let
     optConfigFilePath = Opts.argument Opts.str (Opts.metavar "<config-file>")
-    optReadOnly = Opts.switch $ Opts.long "read-only"
-                             <> Opts.help "Run in read-only mode"
-    optVersion = Opts.infoOption ("Hoff v" <> version)
-               $  Opts.long "version"
-               <> Opts.help "Displays version and exit"
+    optReadOnly =
+      Opts.switch $
+        Opts.long "read-only"
+          <> Opts.help "Run in read-only mode"
+    optVersion =
+      Opts.infoOption ("Hoff v" <> version) $
+        Opts.long "version"
+          <> Opts.help "Displays version and exit"
     opts = Options <$> optConfigFilePath <*> optReadOnly <* optVersion
     help = Opts.fullDesc <> Opts.header "A gatekeeper for your commits"
   in
@@ -90,7 +105,8 @@ loadConfigOrExit :: FilePath -> IO Configuration
 loadConfigOrExit fname = do
   exists <- FileSystem.doesFileExist fname
   unless exists $
-    die $ "Cannot load configuration: the file '" ++ fname ++ "' does not exist."
+    die $
+      "Cannot load configuration: the file '" ++ fname ++ "' does not exist."
   maybeConfig <- Config.loadConfiguration fname
   case maybeConfig of
     Right config -> return config
@@ -102,28 +118,35 @@ loadConfigOrExit fname = do
 initializeProjectState :: Project.MandatoryChecks -> FilePath -> IO ProjectState
 initializeProjectState mandatory fname = do
   exists <- FileSystem.doesFileExist fname
-  let setMandatoryChecks state = state { Project.mandatoryChecks = mandatory }
-  if exists then do
-    eitherState <- loadProjectState fname
-    case eitherState of
-      Right projectState -> do
-        putStrLn $ "Loaded project state from '" ++ fname ++ "'."
-        return (setMandatoryChecks projectState)
-      Left msg -> do
-        -- Fail loudly if something is wrong, and abort the program.
-        die $ "Failed to parse project state in '" ++ fname ++ "' with error " ++ msg ++ ".\n" ++
-              "Please repair or remove the file."
-  else do
-    putStrLn $ "File '" ++ fname ++ "' not found, starting with an empty state."
-    return (setMandatoryChecks emptyProjectState)
+  let setMandatoryChecks state = state{Project.mandatoryChecks = mandatory}
+  if exists
+    then do
+      eitherState <- loadProjectState fname
+      case eitherState of
+        Right projectState -> do
+          putStrLn $ "Loaded project state from '" ++ fname ++ "'."
+          return (setMandatoryChecks projectState)
+        Left msg -> do
+          -- Fail loudly if something is wrong, and abort the program.
+          die $
+            "Failed to parse project state in '"
+              ++ fname
+              ++ "' with error "
+              ++ msg
+              ++ ".\n"
+              ++ "Please repair or remove the file."
+    else do
+      putStrLn $ "File '" ++ fname ++ "' not found, starting with an empty state."
+      return (setMandatoryChecks emptyProjectState)
 
 main :: IO ()
 main = Opts.execParser commandLineParser >>= runMain
 
 getProjectInfo :: Config.ProjectConfiguration -> ProjectInfo
 getProjectInfo pconfig = ProjectInfo owner repository
-  where owner      = Config.owner pconfig
-        repository = Config.repository pconfig
+ where
+  owner = Config.owner pconfig
+  repository = Config.repository pconfig
 
 runMain :: Options -> IO ()
 runMain options = do
@@ -152,42 +175,48 @@ runMain options = do
   ghQueue <- Github.newEventQueue webhookQueueSize
 
   -- Each project is treated in isolation, containing their own queue and state.
-  let mandatoryChecksFromConfig projectConfig = Project.MandatoryChecks
-        $ Set.mapMonotonic Project.Check
-        $ maybe mempty Config.mandatory
-        $ Config.checks projectConfig
-  projectThreadState <- Map.fromList <$> forM (Config.projects config) (\pconfig -> do
-    -- Events do not stay in the webhook queue for long: they are converted into
-    -- logic events and put in the project queues, where the main event loop will
-    -- process them. This conversion process does not reject events, but it blocks
-    -- if the project queue is full (which will cause the webhook queue to fill
-    -- up, so the server will reject new events).
-    projectQueue <- Logic.newEventQueue projectQueueSize
+  let mandatoryChecksFromConfig projectConfig =
+        Project.MandatoryChecks $
+          Set.mapMonotonic Project.Check $
+            maybe mempty Config.mandatory $
+              Config.checks projectConfig
+  projectThreadState <-
+    Map.fromList
+      <$> forM
+        (Config.projects config)
+        ( \pconfig -> do
+            -- Events do not stay in the webhook queue for long: they are converted into
+            -- logic events and put in the project queues, where the main event loop will
+            -- process them. This conversion process does not reject events, but it blocks
+            -- if the project queue is full (which will cause the webhook queue to fill
+            -- up, so the server will reject new events).
+            projectQueue <- Logic.newEventQueue projectQueueSize
 
-    -- Restore the previous state from disk if possible, or start clean.
-    projectState <- initializeProjectState
-      (mandatoryChecksFromConfig pconfig)
-      (Config.stateFile pconfig)
+            -- Restore the previous state from disk if possible, or start clean.
+            projectState <-
+              initializeProjectState
+                (mandatoryChecksFromConfig pconfig)
+                (Config.stateFile pconfig)
 
-    -- Keep track of the most recent state for every project, so the webinterface
-    -- can use it to serve a status page.
-    stateVar <- Logic.newStateVar projectState
-    let initializationState = ProjectThreadData pconfig projectQueue stateVar
-    return (getProjectInfo pconfig, initializationState))
+            -- Keep track of the most recent state for every project, so the webinterface
+            -- can use it to serve a status page.
+            stateVar <- Logic.newStateVar projectState
+            let initializationState = ProjectThreadData pconfig projectQueue stateVar
+            return (getProjectInfo pconfig, initializationState)
+        )
 
   -- Define a function that enqueues an event in the right project queue.
-  let
-    enqueueEvent projectInfo event = do
-      -- Call the corresponding enqueue function if the project exists,
-      -- otherwise drop the event on the floor.
-      maybe (return ()) (\ threadState -> Logic.enqueueEvent (projectThreadQueue threadState) event) $
-        Map.lookup projectInfo projectThreadState
+  let enqueueEvent projectInfo event = do
+        -- Call the corresponding enqueue function if the project exists,
+        -- otherwise drop the event on the floor.
+        maybe (return ()) (\threadState -> Logic.enqueueEvent (projectThreadQueue threadState) event) $
+          Map.lookup projectInfo projectThreadState
 
   -- Start a worker thread to put the GitHub webhook events in the right queue.
   ghThread <- Async.async $ runStdoutLoggingT $ runGithubEventLoop ghQueue enqueueEvent
 
   -- Create a thread that will send a clock tick events with an interval. The default interval is 30 seconds.
-  let interval =  fromMaybe (ClockTickInterval 30) (Config.clockTickInterval config)
+  let interval = fromMaybe (ClockTickInterval 30) (Config.clockTickInterval config)
   timerThread <- Async.async $ clockTickLoop interval (map projectThreadQueue (Map.elems projectThreadState))
 
   -- Start a main event loop for every project.
@@ -201,7 +230,8 @@ runMain options = do
     ghTryEnqueue event = do
       result <- Github.tryEnqueueEvent ghQueue event
       unless result $
-        putStrLn $ "The GitHub queue is full, dropped the following webhook event: " <> show event
+        putStrLn $
+          "The GitHub queue is full, dropped the following webhook event: " <> show event
 
       pure result
 
@@ -213,11 +243,11 @@ runMain options = do
       Map.toList <$> mapM readProjectState (subMapByOwner owner projectThreadState)
 
   let
-    port      = Config.port config
+    port = Config.port config
     tlsConfig = Config.tls config
-    secret    = Config.secret config
+    secret = Config.secret config
     -- TODO: Do this in a cleaner way.
-    infos     = getProjectInfo <$> Config.projects config
+    infos = getProjectInfo <$> Config.projects config
   putStrLn $ "Listening for webhooks on port " ++ show port ++ "."
   runServer <- fst <$> buildServer port tlsConfig infos secret ghTryEnqueue getProjectState getOwnerState
   serverThread <- Async.async runServer
@@ -228,75 +258,79 @@ runMain options = do
   void $ Async.waitAny $ [serverThread, ghThread, timerThread] ++ metricsThread ++ projectThreads
 
 data ProjectThreadData = ProjectThreadData
-  { projectThreadConfig   :: Config.ProjectConfiguration
-  , projectThreadQueue    :: Logic.EventQueue
+  { projectThreadConfig :: Config.ProjectConfiguration
+  , projectThreadQueue :: Logic.EventQueue
   , projectThreadStateVar :: Logic.StateVar
   }
 
-projectThread :: Configuration
-         -> Options
-         -> Metrics.ProjectMetrics
-         -> ProjectThreadData
-         -> IO (Async.Async ())
+projectThread
+  :: Configuration
+  -> Options
+  -> Metrics.ProjectMetrics
+  -> ProjectThreadData
+  -> IO (Async.Async ())
 projectThread config options metrics projectThreadData = do
-    -- At startup, enqueue a synchronize event. This will bring the state in
-    -- sync with the current state of GitHub, accounting for any webhooks that
-    -- we missed while not running, or just to fill the state initially after
-    -- setting up a new project.
-    liftIO $ Logic.enqueueEvent projectQueue Logic.Synchronize
-    projectThreadState <- Logic.readStateVar $ projectThreadStateVar projectThreadData
-    -- Start a worker thread to run the main event loop for the project.
-    Async.async
-      $ void
-      $ runEff
-      $ runMetrics
-      $ runTime
-      $ runLoggerStdout
-      $ runGit
-      $ runGithub
-      $ runLogicEventLoop
-          (Config.trigger config)
-          projectConfig
-          (Config.mergeWindowExemption config)
-          (Config.featureFreezeWindow config)
-          (Config.timeouts config)
-          getNextEvent
-          publish
-          projectThreadState
-    where
-      -- When the event loop publishes the current project state, save it to
-      -- the configured file, and make the new state available to the
-      -- webinterface.
-      projectConfig = projectThreadConfig projectThreadData
-      projectQueue = projectThreadQueue projectThreadData
-      publish newState = do
-        liftIO $ saveProjectState (Config.stateFile projectConfig) newState
-        liftIO $ Logic.updateStateVar (projectThreadStateVar projectThreadData) newState
+  -- At startup, enqueue a synchronize event. This will bring the state in
+  -- sync with the current state of GitHub, accounting for any webhooks that
+  -- we missed while not running, or just to fill the state initially after
+  -- setting up a new project.
+  liftIO $ Logic.enqueueEvent projectQueue Logic.Synchronize
+  projectThreadState <- Logic.readStateVar $ projectThreadStateVar projectThreadData
+  -- Start a worker thread to run the main event loop for the project.
+  Async.async $
+    void $
+      runEff $
+        runMetrics $
+          runTime $
+            runLoggerStdout $
+              runGit $
+                runGithub $
+                  runLogicEventLoop
+                    (Config.trigger config)
+                    projectConfig
+                    (Config.mergeWindowExemption config)
+                    (Config.featureFreezeWindow config)
+                    (Config.timeouts config)
+                    getNextEvent
+                    publish
+                    projectThreadState
+ where
+  -- When the event loop publishes the current project state, save it to
+  -- the configured file, and make the new state available to the
+  -- webinterface.
+  projectConfig = projectThreadConfig projectThreadData
+  projectQueue = projectThreadQueue projectThreadData
+  publish newState = do
+    liftIO $ saveProjectState (Config.stateFile projectConfig) newState
+    liftIO $ Logic.updateStateVar (projectThreadStateVar projectThreadData) newState
 
-      -- When the event loop wants to get the next event, take one off the queue.
-      getNextEvent = liftIO $ Logic.dequeueEvent projectQueue
+  -- When the event loop wants to get the next event, take one off the queue.
+  getNextEvent = liftIO $ Logic.dequeueEvent projectQueue
 
-      -- In the production app, we interpret both Git actions and GitHub actions
-      -- to the real thing in IO. In the tests, when calling `runLogicEventLoop`
-      -- we could swap one or both of them out for a test implementation.
-      repoDir     = Config.checkout projectConfig
-      auth        = Github3.OAuth $ Text.encodeUtf8 $ Config.accessToken config
-      projectInfo = ProjectInfo (Config.owner projectConfig) (Config.repository projectConfig)
-      runGit = if readOnly options
-        then Git.runGitReadOnly (Config.user config) repoDir
-        else Git.runGit         (Config.user config) repoDir
-      runGithub = if readOnly options
-        then GithubApi.runGithubReadOnly auth projectInfo
-        else GithubApi.runGithub         auth projectInfo
-      runTime = Time.runTime
-      runMetrics = Metrics.runMetrics metrics $ Config.repository projectConfig
-
+  -- In the production app, we interpret both Git actions and GitHub actions
+  -- to the real thing in IO. In the tests, when calling `runLogicEventLoop`
+  -- we could swap one or both of them out for a test implementation.
+  repoDir = Config.checkout projectConfig
+  auth = Github3.OAuth $ Text.encodeUtf8 $ Config.accessToken config
+  projectInfo = ProjectInfo (Config.owner projectConfig) (Config.repository projectConfig)
+  runGit =
+    if readOnly options
+      then Git.runGitReadOnly (Config.user config) repoDir
+      else Git.runGit (Config.user config) repoDir
+  runGithub =
+    if readOnly options
+      then GithubApi.runGithubReadOnly auth projectInfo
+      else GithubApi.runGithub auth projectInfo
+  runTime = Time.runTime
+  runMetrics = Metrics.runMetrics metrics $ Config.repository projectConfig
 
 runMetricsThread :: Configuration -> IO [Async.Async ()]
 runMetricsThread configuration =
   forM (maybeToList $ Config.metricsConfig configuration) $
-  \metricsConf -> do
-    let servConfig = MetricsServerConfig
-                     { metricsConfigPort = metricsPort metricsConf
-                     , metricsConfigHost = fromString $ Text.unpack $ metricsHost metricsConf }
-    Async.async $ runMetricsServer servConfig
+    \metricsConf -> do
+      let servConfig =
+            MetricsServerConfig
+              { metricsConfigPort = metricsPort metricsConf
+              , metricsConfigHost = fromString $ Text.unpack $ metricsHost metricsConf
+              }
+      Async.async $ runMetricsServer servConfig
