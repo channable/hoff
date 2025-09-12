@@ -1,0 +1,12 @@
+# This file lists commits that can be helpful to ignore when running git-blame.
+# See: https://git-scm.com/docs/git-blame#Documentation/git-blame.txt---ignore-revs-fileltfilegt
+#
+# You can tell blame to always use this file with:
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# GitHub also picks it up automatically:
+# https://docs.github.com/en/repositories/working-with-files/using-files/viewing-and-understanding-files#ignore-commits-in-the-blame-view
+
+# Format with fourmolu
+c06b1b1b68d039ab853e8fd18b5d0f24bd911d1b
