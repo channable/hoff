@@ -8,10 +8,10 @@ pkgs, mkDerivation
 
 # Haskell packages
 , QuickCheck, aeson, aeson-pretty, blaze-html, blaze-markup, bytestring
-, containers, cryptonite, directory, effectful, extra, file-embed, filepath
+, containers, cryptonite, directory, Earley, effectful, extra, file-embed, filepath
 , generic-arbitrary, github, hspec, hspec-core, http-client, http-conduit
-, http-types, megaparsec, memory, monad-logger, optparse-applicative, process
-, process-extras, prometheus, prometheus-metrics-ghc, quickcheck-instances
+, http-types, megaparsec, memory, monad-logger, optparse-applicative, parser-combinators
+, process, process-extras, prometheus, prometheus-metrics-ghc, quickcheck-instances
 , scotty, stm, text, text-format, time, uuid, vector, wai
 , wai-middleware-prometheus, warp, warp-tls }:
 mkDerivation {
@@ -69,6 +69,7 @@ mkDerivation {
     containers
     cryptonite
     directory
+    Earley
     effectful
     extra
     file-embed
@@ -84,6 +85,7 @@ mkDerivation {
     memory
     monad-logger
     optparse-applicative
+    parser-combinators
     process
     process-extras
     prometheus
