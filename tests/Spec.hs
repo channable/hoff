@@ -2825,6 +2825,7 @@ main = hspec $ do
             , Project.pullRequestApprovalIndex = 1
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
+            , Project.paused = False
             }
         results = defaultResults{resultIntegrate = [Right (Sha "38e")]}
         actions = snd $ runActionCustom results $ Logic.proceedUntilFixedPoint state
@@ -2852,6 +2853,7 @@ main = hspec $ do
             , Project.pullRequestApprovalIndex = 1
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
+            , Project.paused = False
             }
         results =
           defaultResults
@@ -2886,6 +2888,7 @@ main = hspec $ do
             , Project.pullRequestApprovalIndex = 1
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
+            , Project.paused = False
             }
         -- Run 'proceedUntilFixedPoint', and pretend that pushes fail (because
         -- something was pushed in the mean time, for instance).
@@ -2931,6 +2934,7 @@ main = hspec $ do
             , Project.pullRequestApprovalIndex = 1
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
+            , Project.paused = False
             }
         -- Run 'proceedUntilFixedPoint', and pretend that pushes fail (because
         -- something was pushed in the mean time, for instance).
@@ -3048,6 +3052,7 @@ main = hspec $ do
             , Project.pullRequestApprovalIndex = 2
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
+            , Project.paused = False
             }
         -- Proceeding should pick the next pull request as candidate.
         results = defaultResults{resultIntegrate = [Right (Sha "38e")]}

@@ -264,6 +264,7 @@ data ProjectState = ProjectState
   , pullRequestApprovalIndex :: Int
   , mandatoryChecks :: MandatoryChecks
   , recentlyPromoted :: [PromotedPullRequest]
+  , paused :: Bool
   }
   deriving (Eq, Show, Generic)
 
@@ -341,6 +342,7 @@ emptyProjectState =
     , pullRequestApprovalIndex = 0
     , mandatoryChecks = mempty
     , recentlyPromoted = []
+    , paused = False
     }
 
 -- Inserts a new pull request into the project, with approval set to Nothing,

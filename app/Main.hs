@@ -249,7 +249,7 @@ runMain options = do
     -- TODO: Do this in a cleaner way.
     infos = getProjectInfo <$> Config.projects config
   putStrLn $ "Listening for webhooks on port " ++ show port ++ "."
-  runServer <- fst <$> buildServer port tlsConfig infos secret ghTryEnqueue getProjectState getOwnerState
+  runServer <- fst <$> buildServer port tlsConfig infos secret ghTryEnqueue enqueueEvent getProjectState getOwnerState
   serverThread <- Async.async runServer
   metricsThread <- runMetricsThread config
 

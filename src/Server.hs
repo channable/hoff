@@ -32,9 +32,11 @@ import Network.Wai.Handler.Warp qualified as Warp
 import Network.Wai.Handler.WarpTLS qualified as Warp
 
 import Configuration (TlsConfiguration)
+import Logic (Event (..))
 import Project (Owner, ProjectInfo (ProjectInfo), ProjectState)
 
 import Configuration qualified as Config
+import GHC.IO.Encoding ()
 import Github qualified
 import WebInterface qualified
 
@@ -43,10 +45,12 @@ router
   :: [ProjectInfo]
   -> Text
   -> (Github.WebhookEvent -> ActionM ())
+  -> ActionM ()
+  -> ActionM ()
   -> (ProjectInfo -> Maybe (IO ProjectState))
   -> (Owner -> IO [(ProjectInfo, ProjectState)])
   -> ScottyM ()
-router infos ghSecret serveEnqueueEvent getProjectState getOwnerState = do
+router infos ghSecret serveEnqueueEvent servePauseEvent serveResumeEvent getProjectState getOwnerState = do
   get "/" $ serveIndex infos
   get styleRoute $ serveStyles
   post "/hook/github" $ withSignatureCheck ghSecret $ serveGithubWebhook serveEnqueueEvent
@@ -54,6 +58,8 @@ router infos ghSecret serveEnqueueEvent getProjectState getOwnerState = do
   get "/:owner" $ serveWebInterfaceOwner getOwnerState
   get "/:owner/:repo" $ serveWebInterfaceProject getProjectState
   get "/api/:owner/:repo" $ serveAPIproject getProjectState
+  post "/pause/:owner/:repo" $ servePauseEvent
+  post "/resume/:owner/:repo" $ serveResumeEvent
   notFound $ serveNotFound
 
 styleRoute :: RoutePattern
@@ -220,6 +226,20 @@ serveAPIproject getProjectState = do
       setHeader "Content-Type" "application/json; charset=utf-8"
       raw $ Aeson.encode state
 
+servePause :: (ProjectInfo -> Event -> IO ()) -> ActionM ()
+servePause enqueueEvent1 = do
+  owner <- captureParam "owner"
+  repo <- captureParam "repo"
+  let info = ProjectInfo owner repo
+  liftIO $ enqueueEvent1 info Pause
+
+serveResume :: (ProjectInfo -> Event -> IO ()) -> ActionM ()
+serveResume enqueueEvent1 = do
+  owner <- captureParam "owner"
+  repo <- captureParam "repo"
+  let info = ProjectInfo owner repo
+  liftIO $ enqueueEvent1 info Resume
+
 serveNotFound :: ActionM ()
 serveNotFound = do
   status notFound404
@@ -259,10 +279,12 @@ buildServer
   -> [ProjectInfo]
   -> Text
   -> (Github.WebhookEvent -> IO Bool)
+  -- TODO: should probably also be a maybe or bool
+  -> (ProjectInfo -> Event -> IO ())
   -> (ProjectInfo -> Maybe (IO ProjectState))
   -> (Owner -> IO [(ProjectInfo, ProjectState)])
   -> IO (IO (), IO ())
-buildServer port tlsConfig infos ghSecret tryEnqueueEvent getProjectState getOwnerState = do
+buildServer port tlsConfig infos ghSecret tryEnqueueGithubEvent enqueueEvent1 getProjectState getOwnerState = do
   -- Create a semaphore that will be signalled when the server is ready.
   readySem <- atomically $ newTSem 0
   let
@@ -273,13 +295,19 @@ buildServer port tlsConfig infos ghSecret tryEnqueueEvent getProjectState getOwn
     -- Make Warp signal the semaphore when it is ready to serve requests.
     settings = warpSettings port signalReady
 
-    serveEnqueueEvent :: Github.WebhookEvent -> ActionM ()
-    serveEnqueueEvent = serveTryEnqueueEvent tryEnqueueEvent
+    serveEnqueueGithubEvent :: Github.WebhookEvent -> ActionM ()
+    serveEnqueueGithubEvent = serveTryEnqueueEvent tryEnqueueGithubEvent
+
+    servePauseEvent :: ActionM ()
+    servePauseEvent = servePause enqueueEvent1
+
+    serveResumeEvent :: ActionM ()
+    serveResumeEvent = serveResume enqueueEvent1
 
   -- Build the Scotty app, but do not start serving yet, as that would never
   -- return, so we wouldn't have the opportunity to return the 'blockUntilReady'
   -- function to the caller.
-  app <- scottyApp $ router infos ghSecret serveEnqueueEvent getProjectState getOwnerState
+  app <- scottyApp $ router infos ghSecret serveEnqueueGithubEvent servePauseEvent serveResumeEvent getProjectState getOwnerState
   let runServer = runServerMaybeTls tlsConfig settings app
 
   -- Return two IO actions: one that will run the server (and never return),

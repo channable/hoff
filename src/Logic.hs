@@ -92,7 +92,7 @@ import Project (
   MergeCommand (..),
   MergeWindow (..),
   Priority (..),
-  ProjectState,
+  ProjectState (..),
   PullRequest,
   PullRequestStatus (..),
   summarize,
@@ -346,6 +346,8 @@ data Event
     BuildStatusChanged Sha Context BuildStatus
   | Synchronize
   | ClockTick UTCTime
+  | Pause
+  | Resume
   deriving (Eq, Show)
 
 type EventQueue = TBQueue (Maybe Event)
@@ -417,6 +419,8 @@ handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow timeo
   PushPerformed branch sha -> handleTargetChanged branch sha
   Synchronize -> synchronizeState
   ClockTick currTime -> handleClockTickUpdate timeouts currTime
+  Pause -> handlePause
+  Resume -> handleResume
 
 handlePullRequestOpenedByUser
   :: forall es
@@ -625,6 +629,12 @@ handleClockTickUpdate timeouts currTime state = do
             if Time.addTime time (Config.promotionTimeout timeouts) < currTime
               then tryPromotePullRequest pr prId state'
               else pure state'
+
+handlePause :: Action :> es => ProjectState -> Eff es ProjectState
+handlePause state = pure state{paused = True}
+
+handleResume :: (Action :> es) => ProjectState -> Eff es ProjectState
+handleResume state = pure state{paused = False}
 
 -- Mark the pull request as approved, and leave a comment to acknowledge that.
 approvePullRequest :: PullRequestId -> Approval -> ProjectState -> Eff es ProjectState
