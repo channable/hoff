@@ -420,7 +420,7 @@ handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow timeo
   Synchronize -> synchronizeState
   ClockTick currTime -> handleClockTickUpdate timeouts currTime
   Pause -> handlePause
-  Resume -> handleResume
+  Resume -> handleResume timeouts
 
 handlePullRequestOpenedByUser
   :: forall es
@@ -482,54 +482,62 @@ handlePullRequestCommitChanged prId newSha state =
 
 -- | Try to push the final result of a pull request to the target branch.
 tryPromotePullRequest :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => PullRequest -> PullRequestId -> ProjectState -> Eff es ProjectState
-tryPromotePullRequest pullRequest prId state = do
-  pushResult <- case Pr.integrationStatus pullRequest of
-    -- If we only need to promote, we can just try pushing.
-    Pr.Promote _ sha -> tryPromote sha
-    -- If we also want to tag the PR we additionally need to handle the result of promoting and tagging.
-    -- Specifically, we need to leave a comment about the result of the tag.
-    Pr.PromoteAndTag _ sha@(Sha shaText) tagName tagMessage -> do
-      (tagResult, pushResult) <- tryPromoteWithTag sha tagName tagMessage
-      let
-        approval = fromJust $ Pr.approval pullRequest
-        Username approvedBy = approver approval
-        approvalKind = Pr.approvedFor approval
-      config <- getProjectConfig
-      when (pushResult == PushOk) $
-        leaveComment prId . (<>) ("@" <> approvedBy <> " ") $
-          case tagResult of
-            Left err -> "Sorry, I could not tag your PR. " <> err
-            Right (TagName t) -> do
-              let link = format "[{}](https://github.com/{}/{}/releases/tag/{})" (t, owner config, repository config, t)
-              "I tagged your PR with "
-                <> link
-                <> ". "
-                <> if Pr.needsDeploy approvalKind
-                  then "It is scheduled for autodeploy!"
-                  else Text.concat ["Please wait for the build of ", shaText, " to pass and don't forget to deploy it!"]
-      pure pushResult
-    _ -> error ""
-  case pushResult of
-    -- If the push worked, then this was the final stage of the pull request.
-    -- GitHub will mark the pull request as closed, and when we receive that
-    -- event, we delete the pull request from the state. Until then, reset
-    -- the integration candidate, so we proceed with the next pull request.
-    PushOk -> do
-      cleanupTestBranch prId
-      registerMergedPR
-      currTime <- getDateTime
-      pure $
-        Pr.updatePullRequests (unspeculateConflictsAfter pullRequest) $
-          Pr.updatePullRequests (unspeculateFailuresAfter pullRequest) $
-            Pr.addPromotedPullRequest pullRequest currTime $
-              Pr.setIntegrationStatus prId Promoted state
-    -- If something was pushed to the target branch while the candidate was
-    -- being tested, try to integrate again and hope that next time the push
-    -- succeeds.  We also cancel integrations in the merge train.
-    -- These should be automatically restarted when we 'proceed'.
-    PushRejected _why ->
-      tryIntegratePullRequest prId $
-        unintegrateAfter prId state
+tryPromotePullRequest pullRequest prId state =
+  let
+    approval = fromJust $ Pr.approval pullRequest
+    priority = Pr.approvalPriority approval
+  in
+    -- We don't promote during pauses, with the exception for high priority PRs. After resumption,
+    -- we retry all promotions
+    if paused state && priority == Normal
+      then pure state
+      else do
+        pushResult <- case Pr.integrationStatus pullRequest of
+          -- If we only need to promote, we can just try pushing.
+          Pr.Promote _ sha -> tryPromote sha
+          -- If we also want to tag the PR we additionally need to handle the result of promoting and tagging.
+          -- Specifically, we need to leave a comment about the result of the tag.
+          Pr.PromoteAndTag _ sha@(Sha shaText) tagName tagMessage -> do
+            (tagResult, pushResult) <- tryPromoteWithTag sha tagName tagMessage
+            let
+              Username approvedBy = approver approval
+              approvalKind = Pr.approvedFor approval
+            config <- getProjectConfig
+            when (pushResult == PushOk) $
+              leaveComment prId . (<>) ("@" <> approvedBy <> " ") $
+                case tagResult of
+                  Left err -> "Sorry, I could not tag your PR. " <> err
+                  Right (TagName t) -> do
+                    let link = format "[{}](https://github.com/{}/{}/releases/tag/{})" (t, owner config, repository config, t)
+                    "I tagged your PR with "
+                      <> link
+                      <> ". "
+                      <> if Pr.needsDeploy approvalKind
+                        then "It is scheduled for autodeploy!"
+                        else Text.concat ["Please wait for the build of ", shaText, " to pass and don't forget to deploy it!"]
+            pure pushResult
+          _ -> error ""
+        case pushResult of
+          -- If the push worked, then this was the final stage of the pull request.
+          -- GitHub will mark the pull request as closed, and when we receive that
+          -- event, we delete the pull request from the state. Until then, reset
+          -- the integration candidate, so we proceed with the next pull request.
+          PushOk -> do
+            cleanupTestBranch prId
+            registerMergedPR
+            currTime <- getDateTime
+            pure $
+              Pr.updatePullRequests (unspeculateConflictsAfter pullRequest) $
+                Pr.updatePullRequests (unspeculateFailuresAfter pullRequest) $
+                  Pr.addPromotedPullRequest pullRequest currTime $
+                    Pr.setIntegrationStatus prId Promoted state
+          -- If something was pushed to the target branch while the candidate was
+          -- being tested, try to integrate again and hope that next time the push
+          -- succeeds.  We also cancel integrations in the merge train.
+          -- These should be automatically restarted when we 'proceed'.
+          PushRejected _why ->
+            tryIntegratePullRequest prId $
+              unintegrateAfter prId state
 
 -- | Describe what caused the PR to close.
 prClosingMessage :: PRCloseCause -> Text
@@ -616,7 +624,10 @@ handleTargetChanged (BaseBranch baseBranch) sha state
 handleTargetChanged _ _ state = pure state
 
 handleClockTickUpdate :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Timeouts -> UTCTime -> ProjectState -> Eff es ProjectState
-handleClockTickUpdate timeouts currTime state = do
+handleClockTickUpdate = handleStalePromotions
+
+handleStalePromotions :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Timeouts -> UTCTime -> ProjectState -> Eff es ProjectState
+handleStalePromotions timeouts currTime state = do
   let prsToPromote = Pr.filterPullRequestsBy Pr.awaitingPromotion state
   state' <- foldM update state prsToPromote
   pure $ Pr.filterRecentlyPromoted ((<) currTime . flip Time.addTime (Config.rememberTimeout timeouts)) state'
@@ -633,8 +644,11 @@ handleClockTickUpdate timeouts currTime state = do
 handlePause :: Action :> es => ProjectState -> Eff es ProjectState
 handlePause state = pure state{paused = True}
 
-handleResume :: (Action :> es) => ProjectState -> Eff es ProjectState
-handleResume state = pure state{paused = False}
+-- set paused to false and handle stale promotions
+handleResume :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Timeouts -> ProjectState -> Eff es ProjectState
+handleResume timeouts state = do
+  currentTime <- getDateTime
+  handleStalePromotions timeouts currentTime (state{paused = False})
 
 -- Mark the pull request as approved, and leave a comment to acknowledge that.
 approvePullRequest :: PullRequestId -> Approval -> ProjectState -> Eff es ProjectState
