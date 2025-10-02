@@ -713,6 +713,7 @@ main = hspec $ do
                 , integrationStatus = Project.Integrated (Sha "b71") (Project.AnyCheck Project.BuildPending)
                 , integrationAttempts = []
                 , needsFeedback = False
+                , Project.pausedMessageSent = False
                 }
             )
           ,
@@ -727,6 +728,7 @@ main = hspec $ do
                 , integrationStatus = Project.Integrated (Sha "b73") (Project.AnyCheck Project.BuildPending)
                 , integrationAttempts = []
                 , needsFeedback = False
+                , Project.pausedMessageSent = False
                 }
             )
           ,
@@ -741,6 +743,7 @@ main = hspec $ do
                 , integrationStatus = Project.Integrated (Sha "b72") (Project.AnyCheck Project.BuildPending)
                 , integrationAttempts = []
                 , needsFeedback = False
+                , Project.pausedMessageSent = False
                 }
             )
           ]
@@ -2818,6 +2821,7 @@ main = hspec $ do
             , Project.integrationStatus = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
             , Project.integrationAttempts = []
             , Project.needsFeedback = False
+            , Project.pausedMessageSent = False
             }
         state =
           ProjectState
@@ -2846,6 +2850,7 @@ main = hspec $ do
             , Project.integrationStatus = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
             , Project.integrationAttempts = []
             , Project.needsFeedback = False
+            , Project.pausedMessageSent = False
             }
         state =
           ProjectState
@@ -2881,6 +2886,7 @@ main = hspec $ do
             , Project.integrationStatus = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
             , Project.integrationAttempts = []
             , Project.needsFeedback = False
+            , Project.pausedMessageSent = False
             }
         state =
           ProjectState
@@ -2927,6 +2933,7 @@ main = hspec $ do
             , Project.integrationStatus = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
             , Project.integrationAttempts = []
             , Project.needsFeedback = False
+            , Project.pausedMessageSent = False
             }
         state =
           ProjectState
@@ -3030,6 +3037,7 @@ main = hspec $ do
             , Project.integrationStatus = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
             , Project.integrationAttempts = []
             , Project.needsFeedback = False
+            , Project.pausedMessageSent = False
             }
         pullRequest2 =
           PullRequest
@@ -3042,6 +3050,7 @@ main = hspec $ do
             , Project.integrationStatus = Project.NotIntegrated
             , Project.integrationAttempts = []
             , Project.needsFeedback = False
+            , Project.pausedMessageSent = False
             }
         prMap = IntMap.fromList [(1, pullRequest1), (2, pullRequest2)]
         -- After a successful push, the state of pull request 1 will still be

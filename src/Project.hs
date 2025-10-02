@@ -256,6 +256,7 @@ data PullRequest = PullRequest
   , integrationStatus :: IntegrationStatus
   , integrationAttempts :: [Sha]
   , needsFeedback :: Bool
+  , pausedMessageSent :: Bool
   }
   deriving (Eq, Show, Generic)
 
@@ -368,6 +369,7 @@ insertPullRequest (PullRequestId n) prBranch bsBranch prSha prTitle prAuthor sta
           , integrationStatus = NotIntegrated
           , integrationAttempts = []
           , needsFeedback = False
+          , pausedMessageSent = False
           }
   in  state{pullRequests = IntMap.insert n pullRequest $ pullRequests state}
 
@@ -746,3 +748,9 @@ isBuildFailed _ = Nothing
 isBuildStarted :: BuildStatus -> Maybe BuildStatus
 isBuildStarted s@(BuildStarted _) = Just s
 isBuildStarted _ = Nothing
+
+pause :: ProjectState -> ProjectState
+pause state = state{paused = True}
+
+resume :: ProjectState -> ProjectState
+resume state = updatePullRequests (\pr -> pr{pausedMessageSent = False}) state{paused = False}

@@ -490,7 +490,14 @@ tryPromotePullRequest pullRequest prId state =
     -- We don't promote during pauses, with the exception for high priority PRs. After resumption,
     -- we retry all promotions
     if paused state && priority == Normal
-      then pure state
+      then do
+        config <- getProjectConfig
+        let message = "Your PR is ready to be merged into " <> Config.branch config <> ", but merging has been paused"
+        case Pr.lookupPullRequest prId state of
+          Just pr | not (Pr.pausedMessageSent pr) -> do
+            leaveComment prId message
+            return (Pr.updatePullRequest prId (\pr' -> pr'{Pr.pausedMessageSent = True}) state)
+          _ -> pure state
       else do
         pushResult <- case Pr.integrationStatus pullRequest of
           -- If we only need to promote, we can just try pushing.
@@ -648,7 +655,7 @@ handlePause state = pure state{paused = True}
 handleResume :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Timeouts -> ProjectState -> Eff es ProjectState
 handleResume timeouts state = do
   currentTime <- getDateTime
-  handleStalePromotions timeouts currentTime (state{paused = False})
+  handleStalePromotions timeouts currentTime (state{paused = False, pausedMessageSent = False})
 
 -- Mark the pull request as approved, and leave a comment to acknowledge that.
 approvePullRequest :: PullRequestId -> Approval -> ProjectState -> Eff es ProjectState
