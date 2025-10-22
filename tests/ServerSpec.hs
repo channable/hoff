@@ -35,6 +35,12 @@ import Network.HTTP.Simple qualified as Http
 import Server (buildServer)
 
 import Github qualified
+import Logic (
+  EventQueue,
+  enqueueEvent,
+  newEventQueue,
+ )
+import Logic qualified as Project
 import Project qualified
 
 -- Bring a tiny bit of sense into the Haskell string type madness.
@@ -116,16 +122,19 @@ isCommitStatusEvent event = case event of
   Github.CommitStatus _ -> True
   _ -> False
 
-withServer :: (Github.EventQueue -> IO ()) -> IO ()
+withServer :: (Github.EventQueue -> Logic.EventQueue -> IO ()) -> IO ()
 withServer body = do
-  -- Create an event queue with a capacity of 5 events.
+  -- Create a github and project event queue with a capacity of 5 events.
   ghQueue <- Github.newEventQueue 5
+  projectQueue <- Logic.newEventQueue 5
 
   let
     info = Project.ProjectInfo "deckard" "voight-kampff"
     tryEnqueue = Github.tryEnqueueEvent ghQueue
 
-    enqueueProjectQueue _ _ = pure ()
+    enqueueProjectQueue projectInfo event
+      | projectInfo == info = enqueueEvent projectQueue event
+      | otherwise = pure ()
 
     -- Fake the project state, always return the empty state,
     -- if the project exists.
@@ -144,7 +153,7 @@ withServer body = do
     buildServer testPort Nothing [info] testSecret tryEnqueue enqueueProjectQueue getProjectState getOwnerState
   withAsync runServer $ \_ -> do
     blockUntilReady
-    body ghQueue
+    body ghQueue projectQueue
   return ()
 
 serverSpec :: Spec
@@ -155,25 +164,25 @@ serverSpec = do
 
   describe "The webhook server" $ do
     it "serves something at the root" $
-      withServer $ \_ghQueue -> do
+      withServer $ \_ghQueue _projectQueue -> do
         response <- httpGet "/"
         let statusCode = Http.getResponseStatus response
         statusCode `shouldBe` ok200
 
     it "serves 'not found' at a non-existing url" $
-      withServer $ \_ghQueue -> do
+      withServer $ \_ghQueue _projectQueue -> do
         response <- httpGet "/bogus/url"
         let statusCode = Http.getResponseStatus response
         statusCode `shouldBe` notFound404
 
     it "responds with 'bad request' to a GET for a webhook url" $
-      withServer $ \_ghQueue -> do
+      withServer $ \_ghQueue _projectQueue -> do
         response <- httpGet "/hook/github"
         let statusCode = Http.getResponseStatus response
         statusCode `shouldBe` badRequest400
 
     it "accepts a pull_request webhook" $
-      withServer $ \ghQueue -> do
+      withServer $ \ghQueue _projectQueue -> do
         payload <- ByteString.Lazy.readFile "tests/data/pull-request-payload.json"
         response <- httpPostGithubEvent "/hook/github" "pull_request" payload
         event <- popQueue ghQueue
@@ -184,7 +193,7 @@ serverSpec = do
         event `shouldSatisfy` isPullRequestEvent
 
     it "accepts a push webhook" $
-      withServer $ \ghQueue -> do
+      withServer $ \ghQueue _projectQueue -> do
         payload <- ByteString.Lazy.readFile "tests/data/push-payload.json"
         response <- httpPostGithubEvent "/hook/github" "push" payload
         event <- popQueue ghQueue
@@ -195,7 +204,7 @@ serverSpec = do
         event `shouldSatisfy` isPushEvent
 
     it "accepts a (commit) status webhook" $
-      withServer $ \ghQueue -> do
+      withServer $ \ghQueue _projectQueue -> do
         payload <- ByteString.Lazy.readFile "tests/data/status-payload.json"
         response <- httpPostGithubEvent "/hook/github" "status" payload
         event <- popQueue ghQueue
@@ -206,7 +215,7 @@ serverSpec = do
         event `shouldSatisfy` isCommitStatusEvent
 
     it "serves 503 service unavailable when the queue is full" $
-      withServer $ \ghQueue -> do
+      withServer $ \ghQueue _projectQueue -> do
         payload <- ByteString.Lazy.readFile "tests/data/pull-request-payload.json"
 
         -- The first five responses should be accepted, which will fill up the
@@ -225,7 +234,7 @@ serverSpec = do
         Http.getResponseStatus resp7 `shouldBe` ok200
 
     it "requires an X-Hub-Signature header to be present for webhook calls" $
-      withServer $ \_ghQueue -> do
+      withServer $ \_ghQueue _projectQueue -> do
         let headers =
               [ (hContentType, "application/json")
               , (hGithubEvent, "pull_request")
@@ -238,7 +247,7 @@ serverSpec = do
         msg `shouldBe` "missing or malformed X-Hub-Signature header"
 
     it "requires an X-Hub-Signature header to be valid for webhook calls" $
-      withServer $ \_ghQueue -> do
+      withServer $ \_ghQueue _projectQueue -> do
         let headers =
               [ (hContentType, "application/json")
               , (hGithubEvent, "pull_request")
@@ -262,7 +271,7 @@ serverSpec = do
         msg' `shouldBe` "missing or malformed X-Hub-Signature header"
 
     it "continues serving after receiving an invalid webhook" $
-      withServer $ \ghQueue -> do
+      withServer $ \ghQueue _projectQueue -> do
         -- First send an invalid webhook with a bad payload.
         let badPayload = "this is definitely not valid json"
         badResponse <- httpPostGithubEvent "/hook/github" "status" badPayload
@@ -275,9 +284,25 @@ serverSpec = do
         event `shouldSatisfy` isCommitStatusEvent
 
     it "serves 204 no content for unknown webhooks" $
-      withServer $ \_ghQueue -> do
+      withServer $ \_ghQueue _projectQueue -> do
         payload <- ByteString.Lazy.readFile "tests/data/pull-request-payload.json"
         -- Send a webhook event with correct signature, but bogus event name.
         response <- httpPostGithubEvent "/hook/github" "launch_missiles" payload
         let status = Http.getResponseStatus response
         status `shouldBe` noContent204
+
+    it "pauses the train when asked to" $
+      withServer $ \_ghQueue projectQueue -> do
+        response <- httpPost "/pause/deckard/voight-kampff" [] ""
+        let status = Http.getResponseStatus response
+        status `shouldBe` ok200
+        event <- Project.dequeueEvent projectQueue
+        event `shouldBe` Just Project.Pause
+
+    it "unpauses the train when asked to" $
+      withServer $ \_ghQueue projectQueue -> do
+        response <- httpPost "/resume/deckard/voight-kampff" [] ""
+        let status = Http.getResponseStatus response
+        status `shouldBe` ok200
+        event <- Project.dequeueEvent projectQueue
+        event `shouldBe` Just Project.Resume

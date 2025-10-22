@@ -46,6 +46,8 @@ module Project (
   getQueuePosition,
   insertPullRequest,
   integrationSha,
+  pause,
+  resume,
   promotionSha,
   promotionTime,
   awaitingPromotion,

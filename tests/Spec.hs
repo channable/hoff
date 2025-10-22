@@ -355,6 +355,11 @@ handleEventTestFF = Logic.handleEvent testTriggerConfig testmergeWindowExemption
 handleEventsTest :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => [Event] -> ProjectState -> Eff es ProjectState
 handleEventsTest events state = foldlM (flip $ Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing testTimeouts) state events
 
+-- Handle events (advancing the state until a fixed point in between) and simulate their side
+-- effects. Set a timeout of 0 to make sure all actions are done immediately
+handleEventsTestNoTimeout :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => [Event] -> ProjectState -> Eff es ProjectState
+handleEventsTestNoTimeout events state = foldlM (flip $ Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing (Config.Timeouts (-1) (-1))) state events
+
 -- | Like 'classifiedPullRequests' but just with ids.
 -- This should match 'WebInterface.ClassifiedPullRequests'
 data ClassifiedPullRequestIds = ClassifiedPullRequestIds
@@ -6394,4 +6399,118 @@ main = hspec $ do
                    , ATryForcePush (Branch "snd") (Sha "2bc")
                    , ATryPromote (Sha "2bc")
                    , ACleanupTestBranch (PullRequestId 2)
+                   ]
+
+    it "stops merging when the queue is paused" $ do
+      let
+        state =
+          Project.insertPullRequest (PullRequestId 1) (Branch "fst") masterBranch (Sha "ab1") "First PR" (Username "tyrell") $
+            Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , BuildStatusChanged (Sha "1ab") "default" Project.BuildSucceeded
+          , Pause
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
+          ]
+        results =
+          defaultResults
+            { resultIntegrate =
+                [ Right (Sha "1ab")
+                ]
+            }
+        run = runActionCustom results
+        actions = snd $ run $ handleEventsTest events state
+      actions
+        `shouldBe` [ AIsReviewer "deckard"
+                   , ALeaveComment
+                      (PullRequestId 1)
+                      "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+                   , ATryIntegrate
+                      "Merge #1: First PR\n\n\
+                      \Approved-by: deckard\n\
+                      \Priority: Normal\n\
+                      \Auto-deploy: false\n"
+                      (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                      []
+                      False
+                   , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
+                   , ATryForcePush (Branch "fst") (Sha "1ab")
+                   , ALeaveComment (PullRequestId 1) "Your PR is ready to be merged into master, but merging has been paused"
+                   ]
+
+    it "continues merging when the queue is resumed" $ do
+      let
+        state =
+          Project.insertPullRequest (PullRequestId 1) (Branch "fst") masterBranch (Sha "ab1") "First PR" (Username "tyrell") $
+            Project.pause Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , BuildStatusChanged (Sha "1ab") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
+          , Resume
+          ]
+        results =
+          defaultResults
+            { resultIntegrate =
+                [ Right (Sha "1ab")
+                ]
+            }
+        run = runActionCustom results
+        actions = snd $ run $ handleEventsTestNoTimeout events state
+      actions
+        `shouldBe` [ AIsReviewer "deckard"
+                   , ALeaveComment
+                      (PullRequestId 1)
+                      "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+                   , ATryIntegrate
+                      "Merge #1: First PR\n\n\
+                      \Approved-by: deckard\n\
+                      \Priority: Normal\n\
+                      \Auto-deploy: false\n"
+                      (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                      []
+                      False
+                   , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
+                   , ATryForcePush (Branch "fst") (Sha "1ab")
+                   , ALeaveComment (PullRequestId 1) "Your PR is ready to be merged into master, but merging has been paused"
+                   , ATryPromote (Sha "1ab")
+                   , ACleanupTestBranch (PullRequestId 1)
+                   ]
+
+    it "lets prioritized PRs through when paused" $ do
+      let
+        state =
+          Project.insertPullRequest (PullRequestId 1) (Branch "fst") masterBranch (Sha "ab1") "First PR" (Username "tyrell") $
+            Project.pause Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge with priority"
+          , BuildStatusChanged (Sha "1ab") "default" Project.BuildSucceeded
+          , Pause
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
+          ]
+        results =
+          defaultResults
+            { resultIntegrate =
+                [ Right (Sha "1ab")
+                ]
+            }
+        run = runActionCustom results
+        actions = snd $ run $ handleEventsTest events state
+      actions
+        `shouldBe` [ AIsReviewer "deckard"
+                   , ALeaveComment
+                      (PullRequestId 1)
+                      "<!-- Hoff: ignore -->\nPull request approved for merge with high priority by @deckard, rebasing now."
+                   , ATryIntegrate
+                      "Merge #1: First PR\n\n\
+                      \Approved-by: deckard\n\
+                      \Priority: High\n\
+                      \Auto-deploy: false\n"
+                      (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                      []
+                      False
+                   , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
+                   , ATryForcePush (Branch "fst") (Sha "1ab")
+                   , ATryPromote (Sha "1ab")
+                   , ACleanupTestBranch (PullRequestId 1)
                    ]

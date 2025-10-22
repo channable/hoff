@@ -95,6 +95,8 @@ import Project (
   ProjectState (..),
   PullRequest,
   PullRequestStatus (..),
+  pause,
+  resume,
   summarize,
   supersedes,
  )
@@ -649,13 +651,13 @@ handleStalePromotions timeouts currTime state = do
               else pure state'
 
 handlePause :: Action :> es => ProjectState -> Eff es ProjectState
-handlePause state = pure state{paused = True}
+handlePause = pure . pause
 
 -- set paused to false and handle stale promotions
 handleResume :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Timeouts -> ProjectState -> Eff es ProjectState
 handleResume timeouts state = do
   currentTime <- getDateTime
-  handleStalePromotions timeouts currentTime (state{paused = False, pausedMessageSent = False})
+  handleStalePromotions timeouts currentTime (resume state)
 
 -- Mark the pull request as approved, and leave a comment to acknowledge that.
 approvePullRequest :: PullRequestId -> Approval -> ProjectState -> Eff es ProjectState
