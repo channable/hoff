@@ -22,6 +22,7 @@ module Logic (
   RetrieveEnvironment (..),
   dequeueEvent,
   enqueueEvent,
+  tryEnqueueEvent,
   enqueueStopSignal,
   ensureCloned,
   handleEvent,
@@ -36,7 +37,7 @@ module Logic (
 )
 where
 
-import Control.Concurrent.STM.TBQueue (TBQueue, newTBQueue, readTBQueue, writeTBQueue)
+import Control.Concurrent.STM.TBQueue (TBQueue, isFullTBQueue, newTBQueue, readTBQueue, writeTBQueue)
 import Control.Concurrent.STM.TMVar (TMVar, newTMVarIO, readTMVar, swapTMVar)
 import Control.Exception (assert)
 import Control.Monad (foldM, unless, void, when, (>=>))
@@ -362,6 +363,17 @@ newEventQueue capacity = atomically $ newTBQueue capacity
 -- Enqueues an event, blocks if the queue is full.
 enqueueEvent :: EventQueue -> Event -> IO ()
 enqueueEvent queue event = atomically $ writeTBQueue queue $ Just event
+
+-- Enqueues the event if the queue is not full. Returns whether the event has
+-- been enqueued. This function does not block.
+tryEnqueueEvent :: EventQueue -> Event -> IO Bool
+tryEnqueueEvent queue event = atomically $ do
+  isFull <- isFullTBQueue queue
+  if isFull
+    then return False
+    else -- Normally writeTBQueue would block if the queue is full, but at this point
+    -- we know that the queue is not full, so it will return immediately.
+      writeTBQueue queue (Just event) >> return True
 
 -- Signals the event loop to stop after processing all events
 -- currently in the queue.

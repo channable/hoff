@@ -37,7 +37,6 @@ import Server (buildServer)
 import Github qualified
 import Logic (
   EventQueue,
-  enqueueEvent,
   newEventQueue,
  )
 import Logic qualified as Project
@@ -133,8 +132,8 @@ withServer body = do
     tryEnqueue = Github.tryEnqueueEvent ghQueue
 
     enqueueProjectQueue projectInfo event
-      | projectInfo == info = enqueueEvent projectQueue event
-      | otherwise = pure ()
+      | projectInfo == info = Project.tryEnqueueEvent projectQueue event
+      | otherwise = return False
 
     -- Fake the project state, always return the empty state,
     -- if the project exists.

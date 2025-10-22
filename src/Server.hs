@@ -226,19 +226,32 @@ serveAPIproject getProjectState = do
       setHeader "Content-Type" "application/json; charset=utf-8"
       raw $ Aeson.encode state
 
-servePause :: (ProjectInfo -> Event -> IO ()) -> ActionM ()
-servePause enqueueEvent1 = do
+servePause :: (ProjectInfo -> Event -> IO Bool) -> ActionM ()
+servePause enqueueProjectEvent = do
   owner <- captureParam "owner"
   repo <- captureParam "repo"
   let info = ProjectInfo owner repo
-  liftIO $ enqueueEvent1 info Pause
 
-serveResume :: (ProjectInfo -> Event -> IO ()) -> ActionM ()
-serveResume enqueueEvent1 = do
+  enqueueSuccess <- liftIO $ enqueueProjectEvent info Pause
+
+  if enqueueSuccess
+    then text "OK"
+    else do
+      status serviceUnavailable503
+      text "error: action queue is full"
+
+serveResume :: (ProjectInfo -> Event -> IO Bool) -> ActionM ()
+serveResume enqueueProjectEvent = do
   owner <- captureParam "owner"
   repo <- captureParam "repo"
   let info = ProjectInfo owner repo
-  liftIO $ enqueueEvent1 info Resume
+  enqueueSuccess <- liftIO $ enqueueProjectEvent info Resume
+
+  if enqueueSuccess
+    then text "OK"
+    else do
+      status serviceUnavailable503
+      text "error: action queue is full"
 
 serveNotFound :: ActionM ()
 serveNotFound = do
@@ -279,12 +292,11 @@ buildServer
   -> [ProjectInfo]
   -> Text
   -> (Github.WebhookEvent -> IO Bool)
-  -- TODO: should probably also be a maybe or bool
-  -> (ProjectInfo -> Event -> IO ())
+  -> (ProjectInfo -> Event -> IO Bool)
   -> (ProjectInfo -> Maybe (IO ProjectState))
   -> (Owner -> IO [(ProjectInfo, ProjectState)])
   -> IO (IO (), IO ())
-buildServer port tlsConfig infos ghSecret tryEnqueueGithubEvent enqueueEvent1 getProjectState getOwnerState = do
+buildServer port tlsConfig infos ghSecret tryEnqueueGithubEvent tryEnqueueProjectEvent getProjectState getOwnerState = do
   -- Create a semaphore that will be signalled when the server is ready.
   readySem <- atomically $ newTSem 0
   let
@@ -299,10 +311,10 @@ buildServer port tlsConfig infos ghSecret tryEnqueueGithubEvent enqueueEvent1 ge
     serveEnqueueGithubEvent = serveTryEnqueueEvent tryEnqueueGithubEvent
 
     servePauseEvent :: ActionM ()
-    servePauseEvent = servePause enqueueEvent1
+    servePauseEvent = servePause tryEnqueueProjectEvent
 
     serveResumeEvent :: ActionM ()
-    serveResumeEvent = serveResume enqueueEvent1
+    serveResumeEvent = serveResume tryEnqueueProjectEvent
 
   -- Build the Scotty app, but do not start serving yet, as that would never
   -- return, so we wouldn't have the opportunity to return the 'blockUntilReady'
