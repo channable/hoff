@@ -49,8 +49,9 @@ router
   -> ActionM ()
   -> (ProjectInfo -> Maybe (IO ProjectState))
   -> (Owner -> IO [(ProjectInfo, ProjectState)])
+  -> IO Bool
   -> ScottyM ()
-router infos ghSecret serveEnqueueEvent servePauseEvent serveResumeEvent getProjectState getOwnerState = do
+router infos ghSecret serveEnqueueEvent servePauseEvent serveResumeEvent getProjectState getOwnerState getHealth = do
   get "/" $ serveIndex infos
   get styleRoute $ serveStyles
   post "/hook/github" $ withSignatureCheck ghSecret $ serveGithubWebhook serveEnqueueEvent
@@ -60,6 +61,7 @@ router infos ghSecret serveEnqueueEvent servePauseEvent serveResumeEvent getProj
   get "/api/:owner/:repo" $ serveAPIproject getProjectState
   post "/pause/:owner/:repo" $ servePauseEvent
   post "/resume/:owner/:repo" $ serveResumeEvent
+  get "/health" $ serveHealthCheck getHealth
   notFound $ serveNotFound
 
 styleRoute :: RoutePattern
@@ -253,6 +255,15 @@ serveResume enqueueProjectEvent = do
       status serviceUnavailable503
       text "error: action queue is full"
 
+serveHealthCheck :: IO Bool -> ActionM ()
+serveHealthCheck getHealth = do
+  healthy <- liftIO getHealth
+  if healthy
+    then text "OK"
+    else do
+      status serviceUnavailable503
+      text "One or more processing queues are at maximum capacity. Hoff might drop events"
+
 serveNotFound :: ActionM ()
 serveNotFound = do
   status notFound404
@@ -295,8 +306,9 @@ buildServer
   -> (ProjectInfo -> Event -> IO Bool)
   -> (ProjectInfo -> Maybe (IO ProjectState))
   -> (Owner -> IO [(ProjectInfo, ProjectState)])
+  -> IO Bool
   -> IO (IO (), IO ())
-buildServer port tlsConfig infos ghSecret tryEnqueueGithubEvent tryEnqueueProjectEvent getProjectState getOwnerState = do
+buildServer port tlsConfig infos ghSecret tryEnqueueGithubEvent tryEnqueueProjectEvent getProjectState getOwnerState getHealth = do
   -- Create a semaphore that will be signalled when the server is ready.
   readySem <- atomically $ newTSem 0
   let
@@ -319,7 +331,7 @@ buildServer port tlsConfig infos ghSecret tryEnqueueGithubEvent tryEnqueueProjec
   -- Build the Scotty app, but do not start serving yet, as that would never
   -- return, so we wouldn't have the opportunity to return the 'blockUntilReady'
   -- function to the caller.
-  app <- scottyApp $ router infos ghSecret serveEnqueueGithubEvent servePauseEvent serveResumeEvent getProjectState getOwnerState
+  app <- scottyApp $ router infos ghSecret serveEnqueueGithubEvent servePauseEvent serveResumeEvent getProjectState getOwnerState getHealth
   let runServer = runServerMaybeTls tlsConfig settings app
 
   -- Return two IO actions: one that will run the server (and never return),
