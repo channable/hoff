@@ -248,6 +248,13 @@ runMain options = do
     getOwnerState owner =
       Map.toList <$> mapM readProjectState (subMapByOwner owner projectThreadState)
 
+    checkHealth :: IO Bool
+    checkHealth = do
+      ghQueueFull <- atomically $ isFullTBQueue ghQueue
+      projectQueuesFull <- mapM (atomically . isFullTBQueue) $ fmap projectThreadQueue projectThreadState
+
+      return (ghQueueFull || or projectQueuesFull)
+
   let
     port = Config.port config
     tlsConfig = Config.tls config
@@ -255,7 +262,7 @@ runMain options = do
     -- TODO: Do this in a cleaner way.
     infos = getProjectInfo <$> Config.projects config
   putStrLn $ "Listening for webhooks on port " ++ show port ++ "."
-  runServer <- fst <$> buildServer port tlsConfig infos secret ghTryEnqueue tryEnqueueProjectEvent getProjectState getOwnerState
+  runServer <- fst <$> buildServer port tlsConfig infos secret ghTryEnqueue tryEnqueueProjectEvent getProjectState getOwnerState checkHealth
   serverThread <- Async.async runServer
   metricsThread <- runMetricsThread config
 
