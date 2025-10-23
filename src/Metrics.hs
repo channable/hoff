@@ -4,7 +4,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Metrics.Metrics (
+module Metrics (
   MetricsOperation (..),
   ProjectMetrics (..),
   runMetrics,

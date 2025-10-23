@@ -39,6 +39,11 @@ import Configuration qualified as Config
 import GHC.IO.Encoding ()
 import Github qualified
 import WebInterface qualified
+import Prometheus (exportMetricsAsText)
+import Data.Text.Lazy.Encoding (decodeUtf8)
+import Github qualified
+import Prometheus (exportMetricsAsText)
+import WebInterface qualified
 
 -- Router for the web server.
 router
@@ -56,12 +61,13 @@ router infos ghSecret serveEnqueueEvent servePauseEvent serveResumeEvent getProj
   get styleRoute $ serveStyles
   post "/hook/github" $ withSignatureCheck ghSecret $ serveGithubWebhook serveEnqueueEvent
   get "/hook/github" $ serveWebhookDocs
+  get "/health" $ serveHealthCheck getHealth
+  get "/metrics" $ serveMetrics
   get "/:owner" $ serveWebInterfaceOwner getOwnerState
   get "/:owner/:repo" $ serveWebInterfaceProject getProjectState
   get "/api/:owner/:repo" $ serveAPIproject getProjectState
   post "/pause/:owner/:repo" $ servePauseEvent
   post "/resume/:owner/:repo" $ serveResumeEvent
-  get "/health" $ serveHealthCheck getHealth
   notFound $ serveNotFound
 
 styleRoute :: RoutePattern
@@ -263,6 +269,12 @@ serveHealthCheck getHealth = do
     else do
       status serviceUnavailable503
       text "One or more processing queues are at maximum capacity. Hoff might drop events"
+
+serveMetrics :: ActionM ()
+serveMetrics = do
+  metricsText <- liftIO exportMetricsAsText
+
+  text $ decodeUtf8 metricsText
 
 serveNotFound :: ActionM ()
 serveNotFound = do

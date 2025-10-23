@@ -13,7 +13,7 @@ pkgs, mkDerivation
 , http-types, megaparsec, memory, monad-logger, optparse-applicative, process
 , process-extras, prometheus, prometheus-metrics-ghc, quickcheck-instances
 , scotty, stm, text, text-format, time, uuid, vector, wai
-, wai-middleware-prometheus, warp, warp-tls }:
+, warp, warp-tls }:
 mkDerivation {
   pname = "hoff";
   version = "0.38.0"; # please keep consistent with hoff.cabal
@@ -97,7 +97,6 @@ mkDerivation {
     uuid
     vector
     wai
-    wai-middleware-prometheus
     warp
     warp-tls
   ];
