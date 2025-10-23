@@ -41,7 +41,7 @@ import System.Directory qualified as FileSystem
 
 import Configuration (FeatureFreezeWindow, MergeWindowExemptionConfiguration (..), ProjectConfiguration, TriggerConfiguration, UserConfiguration)
 import Git (BaseBranch (..), Branch (..), RefSpec (refSpec), Sha (..))
-import Metrics.Metrics (MetricsOperation (..))
+import Metrics (MetricsOperation (..))
 import MonadLoggerEffect (MonadLoggerEffect (..))
 import Project (BuildStatus (..), IntegrationStatus (..), ProjectState, PullRequestId (..))
 

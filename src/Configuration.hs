@@ -16,7 +16,6 @@ module Configuration (
   TriggerConfiguration (..),
   UserConfiguration (..),
   MergeWindowExemptionConfiguration (..),
-  MetricsConfiguration (..),
   FeatureFreezeWindow (..),
   Timeouts (..),
   ClockTickInterval (..),
@@ -31,7 +30,6 @@ import Data.Set (Set)
 import Data.Text (Text)
 import Data.Time (DiffTime, UTCTime)
 import GHC.Generics
-import Network.Wai.Handler.Warp qualified as Warp
 import Prelude hiding (readFile)
 
 data ProjectConfiguration = ProjectConfiguration
@@ -93,12 +91,6 @@ data TlsConfiguration = TlsConfiguration
   }
   deriving (Generic, Show)
 
-data MetricsConfiguration = MetricsConfiguration
-  { metricsPort :: Warp.Port
-  , metricsHost :: Text
-  }
-  deriving (Generic, Show)
-
 newtype MergeWindowExemptionConfiguration = MergeWindowExemptionConfiguration [Text]
   deriving (Generic, Show)
 
@@ -134,8 +126,6 @@ data Configuration = Configuration
   , -- List of users that are exempted from the merge window. This is useful for
     -- bots that automatically merge low impact changes.
     mergeWindowExemption :: MergeWindowExemptionConfiguration
-  , -- Configuration for the Prometheus metrics server.
-    metricsConfig :: Maybe MetricsConfiguration
   , -- Feature freeze period in which only 'merge hotfix' commands are allowed
     featureFreezeWindow :: Maybe FeatureFreezeWindow
   , -- The timeouts for promoting an integrated pull request and remembering promoted pull requests
@@ -152,7 +142,6 @@ instance FromJSON TlsConfiguration
 instance FromJSON TriggerConfiguration
 instance FromJSON UserConfiguration
 instance FromJSON MergeWindowExemptionConfiguration
-instance FromJSON MetricsConfiguration
 instance FromJSON FeatureFreezeWindow
 instance FromJSON Timeouts
 instance FromJSON ClockTickInterval

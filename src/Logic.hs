@@ -80,7 +80,7 @@ import Git (
  )
 
 import GithubApi (GithubOperation)
-import Metrics.Metrics (MetricsOperation, increaseMergedPRTotal, updateTrainSizeGauge)
+import Metrics (MetricsOperation, increaseMergedPRTotal, updateTrainSizeGauge)
 import Parser (ParseResult (..), hoffIgnoreComment, isSuccess, parseMergeCommand, shouldIgnoreComment)
 import Project (
   Approval (..),
