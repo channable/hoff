@@ -78,6 +78,7 @@ import Types (PullRequestId (..), Username (..))
 
 import Project qualified
 
+import Control.Monad.Extra (when)
 import Paths_hoff (version)
 
 -- TODO: Minify this css at inclusion time.
@@ -234,6 +235,9 @@ classifiedPullRequests state =
 viewProjectQueues :: ProjectInfo -> ProjectState -> Html
 viewProjectQueues info state = do
   let ClassifiedPullRequests{..} = classifiedPullRequests state
+
+  when (Project.paused state) $ p "This train is paused"
+
   h2 "Building"
   if null building
     then p "There are no builds in progress at the moment."

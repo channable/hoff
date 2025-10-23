@@ -46,6 +46,8 @@ module Project (
   getQueuePosition,
   insertPullRequest,
   integrationSha,
+  pause,
+  resume,
   promotionSha,
   promotionTime,
   awaitingPromotion,
@@ -256,6 +258,7 @@ data PullRequest = PullRequest
   , integrationStatus :: IntegrationStatus
   , integrationAttempts :: [Sha]
   , needsFeedback :: Bool
+  , pausedMessageSent :: Bool
   }
   deriving (Eq, Show, Generic)
 
@@ -264,6 +267,7 @@ data ProjectState = ProjectState
   , pullRequestApprovalIndex :: Int
   , mandatoryChecks :: MandatoryChecks
   , recentlyPromoted :: [PromotedPullRequest]
+  , paused :: Bool
   }
   deriving (Eq, Show, Generic)
 
@@ -341,6 +345,7 @@ emptyProjectState =
     , pullRequestApprovalIndex = 0
     , mandatoryChecks = mempty
     , recentlyPromoted = []
+    , paused = False
     }
 
 -- Inserts a new pull request into the project, with approval set to Nothing,
@@ -366,6 +371,7 @@ insertPullRequest (PullRequestId n) prBranch bsBranch prSha prTitle prAuthor sta
           , integrationStatus = NotIntegrated
           , integrationAttempts = []
           , needsFeedback = False
+          , pausedMessageSent = False
           }
   in  state{pullRequests = IntMap.insert n pullRequest $ pullRequests state}
 
@@ -744,3 +750,9 @@ isBuildFailed _ = Nothing
 isBuildStarted :: BuildStatus -> Maybe BuildStatus
 isBuildStarted s@(BuildStarted _) = Just s
 isBuildStarted _ = Nothing
+
+pause :: ProjectState -> ProjectState
+pause state = state{paused = True}
+
+resume :: ProjectState -> ProjectState
+resume state = updatePullRequests (\pr -> pr{pausedMessageSent = False}) state{paused = False}

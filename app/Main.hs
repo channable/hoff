@@ -212,6 +212,12 @@ runMain options = do
         maybe (return ()) (\threadState -> Logic.enqueueEvent (projectThreadQueue threadState) event) $
           Map.lookup projectInfo projectThreadState
 
+  let tryEnqueueProjectEvent projectInfo event = do
+        -- Call the corresponding enqueue function if the project exists,
+        -- otherwise drop the event on the floor.
+        maybe (return False) (\threadState -> Logic.tryEnqueueEvent (projectThreadQueue threadState) event) $
+          Map.lookup projectInfo projectThreadState
+
   -- Start a worker thread to put the GitHub webhook events in the right queue.
   ghThread <- Async.async $ runStdoutLoggingT $ runGithubEventLoop ghQueue enqueueEvent
 
@@ -249,7 +255,7 @@ runMain options = do
     -- TODO: Do this in a cleaner way.
     infos = getProjectInfo <$> Config.projects config
   putStrLn $ "Listening for webhooks on port " ++ show port ++ "."
-  runServer <- fst <$> buildServer port tlsConfig infos secret ghTryEnqueue getProjectState getOwnerState
+  runServer <- fst <$> buildServer port tlsConfig infos secret ghTryEnqueue tryEnqueueProjectEvent getProjectState getOwnerState
   serverThread <- Async.async runServer
   metricsThread <- runMetricsThread config
 
