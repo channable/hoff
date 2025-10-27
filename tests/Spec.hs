@@ -6514,3 +6514,50 @@ main = hspec $ do
                    , ATryPromote (Sha "1ab")
                    , ACleanupTestBranch (PullRequestId 1)
                    ]
+
+    it "restarts when something gets pushes to master while paused" $ do
+      let
+        state =
+          Project.insertPullRequest (PullRequestId 1) (Branch "fst") masterBranch (Sha "ab1") "First PR" (Username "tyrell") $
+            Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , BuildStatusChanged (Sha "1ab") "default" Project.BuildSucceeded
+          , Pause
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
+          , PushPerformed (BaseBranch "refs/heads/master") (Sha "1c1")
+          ]
+        results =
+          defaultResults
+            { resultIntegrate =
+                [ Right (Sha "1ab")
+                , Right (Sha "1b3")
+                ]
+            }
+        run = runActionCustom results
+        actions = snd $ run $ handleEventsTest events state
+      actions
+        `shouldBe` [ AIsReviewer "deckard"
+                   , ALeaveComment
+                      (PullRequestId 1)
+                      "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+                   , ATryIntegrate
+                      "Merge #1: First PR\n\n\
+                      \Approved-by: deckard\n\
+                      \Priority: Normal\n\
+                      \Auto-deploy: false\n"
+                      (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                      []
+                      False
+                   , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
+                   , ATryForcePush (Branch "fst") (Sha "1ab")
+                   , ALeaveComment (PullRequestId 1) "Your PR is ready to be merged into master, but merging has been paused"
+                   , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
+                   , ATryIntegrate
+                      { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
+                      , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                      , mergeTrain = []
+                      , alwaysAddMergeCommit = False
+                      }
+                   , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b3, waiting for CI …"
+                   ]
