@@ -9,11 +9,12 @@
 module Main where
 
 import Control.Applicative ((<**>))
+import Control.Concurrent.STM (atomically)
+import Control.Concurrent.STM.TBQueue (isFullTBQueue)
 import Control.Monad (forM, unless, void)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Logger (runStdoutLoggingT)
-import Data.Maybe (fromMaybe, maybeToList)
-import Data.String (fromString)
+import Data.Maybe (fromMaybe)
 import Data.Version (showVersion)
 import Effectful (runEff)
 import GHC.Natural (Natural)
@@ -28,7 +29,7 @@ import Options.Applicative qualified as Opts
 import System.Directory qualified as FileSystem
 
 import ClockTickLoop (clockTickLoop)
-import Configuration (ClockTickInterval (..), Configuration, MetricsConfiguration (metricsHost, metricsPort))
+import Configuration (ClockTickInterval (..), Configuration)
 import EventLoop (runGithubEventLoop, runLogicEventLoop)
 import MonadLoggerEffect (runLoggerStdout)
 import Project (
@@ -42,21 +43,12 @@ import Project (
  )
 import Server (buildServer)
 
-import Metrics.Metrics qualified as Metrics
-import Metrics.Server (
-  MetricsServerConfig (
-    MetricsServerConfig,
-    metricsConfigHost,
-    metricsConfigPort
-  ),
-  runMetricsServer,
- )
+import Metrics qualified
 
 import Paths_hoff qualified (version)
 
 import Configuration qualified as Config
 import Data.Set qualified as Set
-import Data.Text qualified as Text
 import Git qualified
 import Github qualified
 import GithubApi qualified
@@ -248,6 +240,13 @@ runMain options = do
     getOwnerState owner =
       Map.toList <$> mapM readProjectState (subMapByOwner owner projectThreadState)
 
+    checkHealth :: IO Bool
+    checkHealth = do
+      ghQueueFull <- atomically $ isFullTBQueue ghQueue
+      projectQueuesFull <- mapM (atomically . isFullTBQueue) $ fmap projectThreadQueue projectThreadState
+
+      return $ not $ ghQueueFull || or projectQueuesFull
+
   let
     port = Config.port config
     tlsConfig = Config.tls config
@@ -255,13 +254,12 @@ runMain options = do
     -- TODO: Do this in a cleaner way.
     infos = getProjectInfo <$> Config.projects config
   putStrLn $ "Listening for webhooks on port " ++ show port ++ "."
-  runServer <- fst <$> buildServer port tlsConfig infos secret ghTryEnqueue tryEnqueueProjectEvent getProjectState getOwnerState
+  runServer <- fst <$> buildServer port tlsConfig infos secret ghTryEnqueue tryEnqueueProjectEvent getProjectState getOwnerState checkHealth
   serverThread <- Async.async runServer
-  metricsThread <- runMetricsThread config
 
   -- Note that a stop signal is never enqueued. The application just runs until
   -- until it is killed, or until any of the threads stop due to an exception.
-  void $ Async.waitAny $ [serverThread, ghThread, timerThread] ++ metricsThread ++ projectThreads
+  void $ Async.waitAny $ [serverThread, ghThread, timerThread] ++ projectThreads
 
 data ProjectThreadData = ProjectThreadData
   { projectThreadConfig :: Config.ProjectConfiguration
@@ -329,14 +327,3 @@ projectThread config options metrics projectThreadData = do
       else GithubApi.runGithub auth projectInfo
   runTime = Time.runTime
   runMetrics = Metrics.runMetrics metrics $ Config.repository projectConfig
-
-runMetricsThread :: Configuration -> IO [Async.Async ()]
-runMetricsThread configuration =
-  forM (maybeToList $ Config.metricsConfig configuration) $
-    \metricsConf -> do
-      let servConfig =
-            MetricsServerConfig
-              { metricsConfigPort = metricsPort metricsConf
-              , metricsConfigHost = fromString $ Text.unpack $ metricsHost metricsConf
-              }
-      Async.async $ runMetricsServer servConfig

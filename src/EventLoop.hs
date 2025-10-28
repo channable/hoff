@@ -37,7 +37,7 @@ import Git qualified
 import Github qualified
 import GithubApi qualified
 import Logic qualified
-import Metrics.Metrics qualified as Metrics
+import Metrics qualified
 import Project qualified
 
 eventFromPullRequestPayload :: PullRequestPayload -> Logic.Event

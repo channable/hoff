@@ -29,8 +29,7 @@ library
     Github
     GithubApi
     Logic
-    Metrics.Metrics
-    Metrics.Server
+    Metrics
     MonadLoggerEffect
     Parser
     Project
@@ -82,8 +81,11 @@ executable hoff
   default-language: GHC2021
   main-is:          Main.hs
   hs-source-dirs:   app
+
+  -- https://downloads.haskell.org/ghc/latest/docs/users_guide/runtime_control.html#rts-options-to-produce-runtime-statistics
   ghc-options:
     -Wall -Werror -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -with-rtsopts=-T
 
   build-depends:
     , async
@@ -95,6 +97,7 @@ executable hoff
     , hoff
     , monad-logger
     , optparse-applicative
+    , stm
     , text
 
   other-modules:    Paths_hoff
