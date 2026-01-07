@@ -98,6 +98,7 @@ testProjectConfig =
     , Config.deployEnvironments = Just ["staging", "production"]
     , Config.deploySubprojects = Just ["aaa", "bbb"]
     , Config.safeForFriday = Nothing
+    , Config.allowPlainMerge = Just True
     }
 
 testmergeWindowExemptionConfig :: Config.MergeWindowExemptionConfiguration

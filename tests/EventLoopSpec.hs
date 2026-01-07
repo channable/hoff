@@ -208,6 +208,7 @@ buildProjectConfig repoDir stateFile =
     , Config.deployEnvironments = Just ["staging", "production"]
     , Config.deploySubprojects = Nothing
     , Config.safeForFriday = Nothing
+    , Config.allowPlainMerge = Just True
     }
 
 -- Dummy user configuration used in test environment.

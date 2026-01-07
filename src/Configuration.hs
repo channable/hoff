@@ -43,6 +43,7 @@ data ProjectConfiguration = ProjectConfiguration
   , deployEnvironments :: Maybe [Text] -- The environments which the `deploy to <environment>` command should be enabled for
   , deploySubprojects :: Maybe [Text] -- The subprojects which the `deploy` command should be enabled for
   , safeForFriday :: Maybe Bool -- Whether it's safe to deploy this project on Friday without an "on Friday" check. default False
+  , allowPlainMerge :: Maybe Bool -- Whether to allow plain merges without explicitly saying the PR shouldn't be deployed. default True
   }
   deriving (Generic)
 

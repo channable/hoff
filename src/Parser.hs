@@ -239,16 +239,19 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
   -- messages megaparsec gives us, and the parser will instead error out in
   -- 'pCommandSuffix' which would be confusing.
   --
-  -- When the comment isn't folowed by @ and @ this is treated as a plain
+  -- When the comment isn't followed by @ and @ this is treated as a plain
   -- merge command.
   pMergeApproval :: Parser ApprovedFor
-  pMergeApproval = P.string' "merge" *> P.option Merge pMergeAnd
+  pMergeApproval = P.string' "merge" *> P.option Merge (pMergeWithoutDeploy <|> pMergeAnd)
 
   -- NOTE: As mentioned above, only the @ and @ part will backtrack. This is
   --       needed so a) the custom error message in pDeploy works and b) so
   --       'merge on friday' can be parsed correctly.
   pMergeAnd :: Parser ApprovedFor
   pMergeAnd = P.try (pSpace1 *> P.string' "and" *> pSpace1) *> (pTag <|> pDeploy)
+
+  pMergeWithoutDeploy :: Parser ApprovedFor
+  pMergeWithoutDeploy = P.try (pSpace1 *> P.string' "without" *> (MergeWithoutDeploy <$ (pSpace1 *> P.string' "deploying")))
 
   -- Parses @merge and tag@ commands.
   pTag :: Parser ApprovedFor
