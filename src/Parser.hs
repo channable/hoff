@@ -251,7 +251,7 @@ parseMergeCommand projectConfig triggerConfig = cvtParseResult . P.parse pCommen
   pMergeAnd = P.try (pSpace1 *> P.string' "and" *> pSpace1) *> (pTag <|> pDeploy)
 
   pMergeWithoutDeploy :: Parser ApprovedFor
-  pMergeWithoutDeploy = P.try (pSpace1 *> P.string' "without" *> (MergeWithoutDeploy <$ (pSpace1 *> P.string' "deploying")))
+  pMergeWithoutDeploy = P.try (pSpace1 *> P.string' "without" *> (MergeWithoutDeploy <$ (pSpace1 *> (P.string' "deploying" <|> P.string' "deploy"))))
 
   -- Parses @merge and tag@ commands.
   pTag :: Parser ApprovedFor

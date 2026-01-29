@@ -6629,3 +6629,29 @@ main = hspec $ do
                       False
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
                    ]
+
+    it "allows the 'merge without deploy' alias" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" Nothing "@bot merge without deploy"
+
+        results = defaultResults{resultIntegrate = [Right (Sha "def2345")]}
+        (_, actions) = runActionCustom results $ handleEventTest event state
+
+      actions
+        `shouldBe` [ AIsReviewer "deckard"
+                   , ALeaveComment
+                      prId
+                      "<!-- Hoff: ignore -->\nPull request approved for merge without deploying by @deckard, rebasing now."
+                   , ATryIntegrate
+                      "Merge #1: Untitled\n\n\
+                      \Approved-by: deckard\n\
+                      \Priority: Normal\n\
+                      \Auto-deploy: false\n"
+                      (prId, Branch "refs/pull/1/head", Sha "abc1234")
+                      []
+                      False
+                   , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
+                   ]
