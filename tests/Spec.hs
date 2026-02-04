@@ -98,6 +98,7 @@ testProjectConfig =
     , Config.deployEnvironments = Just ["staging", "production"]
     , Config.deploySubprojects = Just ["aaa", "bbb"]
     , Config.safeForFriday = Nothing
+    , Config.allowPlainMerge = Just True
     }
 
 testmergeWindowExemptionConfig :: Config.MergeWindowExemptionConfiguration
@@ -6560,4 +6561,97 @@ main = hspec $ do
                       , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b3, waiting for CI …"
+                   ]
+
+    it "disallows plain merge on a repo configured with ProjectConfiguration.allowPlainMerge=False" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" Nothing "@bot merge"
+
+        results = defaultResults{resultIntegrate = [Right (Sha "def2345")]}
+        (_, actions) = runActionCustom' results (testProjectConfig{Config.allowPlainMerge = Just False}) $ handleEventTest event state
+
+      actions
+        `shouldBe` [ AIsReviewer "deckard"
+                   , ALeaveComment prId "Your merge request has been denied because this project can be automatically deployed. Use 'merge without deploying' if you really don't want to deploy after merging."
+                   ]
+
+    it "allows merge without deploying on a repo configured with ProjectConfiguration.allowPlainMerge=False" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" Nothing "@bot merge without deploying"
+
+        results = defaultResults{resultIntegrate = [Right (Sha "def2345")]}
+        (_, actions) = runActionCustom' results (testProjectConfig{Config.allowPlainMerge = Just False}) $ handleEventTest event state
+
+      actions
+        `shouldBe` [ AIsReviewer "deckard"
+                   , ALeaveComment
+                      prId
+                      "<!-- Hoff: ignore -->\nPull request approved for merge without deploying by @deckard, rebasing now."
+                   , ATryIntegrate
+                      "Merge #1: Untitled\n\n\
+                      \Approved-by: deckard\n\
+                      \Priority: Normal\n\
+                      \Auto-deploy: false\n"
+                      (prId, Branch "refs/pull/1/head", Sha "abc1234")
+                      []
+                      False
+                   , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
+                   ]
+
+    it "allows merge without deploying on a repo configured with ProjectConfiguration.allowPlainMerge=True" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" Nothing "@bot merge without deploying"
+
+        results = defaultResults{resultIntegrate = [Right (Sha "def2345")]}
+        (_, actions) = runActionCustom results $ handleEventTest event state
+
+      actions
+        `shouldBe` [ AIsReviewer "deckard"
+                   , ALeaveComment
+                      prId
+                      "<!-- Hoff: ignore -->\nPull request approved for merge without deploying by @deckard, rebasing now."
+                   , ATryIntegrate
+                      "Merge #1: Untitled\n\n\
+                      \Approved-by: deckard\n\
+                      \Priority: Normal\n\
+                      \Auto-deploy: false\n"
+                      (prId, Branch "refs/pull/1/head", Sha "abc1234")
+                      []
+                      False
+                   , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
+                   ]
+
+    it "allows the 'merge without deploy' alias" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" Nothing "@bot merge without deploy"
+
+        results = defaultResults{resultIntegrate = [Right (Sha "def2345")]}
+        (_, actions) = runActionCustom results $ handleEventTest event state
+
+      actions
+        `shouldBe` [ AIsReviewer "deckard"
+                   , ALeaveComment
+                      prId
+                      "<!-- Hoff: ignore -->\nPull request approved for merge without deploying by @deckard, rebasing now."
+                   , ATryIntegrate
+                      "Merge #1: Untitled\n\n\
+                      \Approved-by: deckard\n\
+                      \Priority: Normal\n\
+                      \Auto-deploy: false\n"
+                      (prId, Branch "refs/pull/1/head", Sha "abc1234")
+                      []
+                      False
+                   , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
                    ]

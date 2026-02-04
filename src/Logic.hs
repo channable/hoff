@@ -719,6 +719,8 @@ handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId a
                   then isReviewer author
                   else pure False
 
+              let plainMergeAllowed = fromMaybe True (Config.allowPlainMerge projectConfig)
+
               dateTime <- getDateTime
 
               -- To guard against accidental merges we make use of a merge window.
@@ -738,6 +740,22 @@ handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId a
                 exempted (Username user) =
                   let (Config.MergeWindowExemptionConfiguration users) = mergeWindowExemption
                   in  elem user users
+
+                verifyMergeType :: MergeCommand -> Eff es ProjectState -> Eff es ProjectState
+                verifyMergeType (Approve Merge) action =
+                  if not plainMergeAllowed
+                    then do
+                      () <-
+                        leaveComment
+                          prId
+                          ( "Your merge request has been denied because \
+                            \this project can be automatically deployed. Use '"
+                              <> Pr.displayMergeCommand (Approve MergeWithoutDeploy)
+                              <> "' if you really don't want to deploy after merging."
+                          )
+                      pure state
+                    else action
+                verifyMergeType _ action = action
 
                 verifyMergeWindow :: MergeCommand -> MergeWindow -> Eff es ProjectState -> Eff es ProjectState
                 verifyMergeWindow _ _ action | exempted author = action
@@ -816,7 +834,7 @@ handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId a
                 -- Cases where the parse was successful
                 Success (command, mergeWindow, priority)
                   -- Author is a reviewer
-                  | isAllowed -> verifyMergeWindow command mergeWindow $ case command of
+                  | isAllowed -> verifyMergeType command $ verifyMergeWindow command mergeWindow $ case command of
                       Approve approval -> handleMergeRequested projectConfig prId author source state pr approval priority Nothing
                       Retry -> handleMergeRetry projectConfig prId author source priority state pr
                   -- Author is not a reviewer, so we ignore

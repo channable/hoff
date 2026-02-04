@@ -200,6 +200,7 @@ data DeploySubprojects
 -- This enumeration distinguishes these cases.
 data ApprovedFor
   = Merge
+  | MergeWithoutDeploy
   | MergeAndDeploy DeploySubprojects DeployEnvironment
   | MergeAndTag
   deriving (Eq, Show, Generic)
@@ -595,6 +596,7 @@ candidatePullRequests state =
 -- friday@ merge window suffix.
 displayMergeCommand :: MergeCommand -> Text
 displayMergeCommand (Approve Merge) = "merge"
+displayMergeCommand (Approve MergeWithoutDeploy) = "merge without deploying"
 displayMergeCommand (Approve (MergeAndDeploy subprojects (DeployEnvironment env))) =
   case subprojects of
     EntireProject -> format "merge and deploy to {}" [env]
@@ -612,11 +614,13 @@ alwaysAddMergeCommit = needsTag
 
 needsDeploy :: ApprovedFor -> Bool
 needsDeploy Merge = False
+needsDeploy MergeWithoutDeploy = False
 needsDeploy MergeAndDeploy{} = True
 needsDeploy MergeAndTag = False
 
 needsTag :: ApprovedFor -> Bool
 needsTag Merge = False
+needsTag MergeWithoutDeploy = False
 needsTag MergeAndDeploy{} = True
 needsTag MergeAndTag = True
 
