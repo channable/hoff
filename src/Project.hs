@@ -690,6 +690,8 @@ isIntegratedOrSpeculativelyConflicted :: PullRequest -> Bool
 isIntegratedOrSpeculativelyConflicted pr =
   case integrationStatus pr of
     (Integrated _ _) -> True
+    (Promote _ _) -> True
+    (PromoteAndTag{}) -> True
     (Conflicted base _) | base /= baseBranch pr -> True
     _ -> False
 

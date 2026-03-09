@@ -6516,6 +6516,74 @@ main = hspec $ do
                    , ACleanupTestBranch (PullRequestId 1)
                    ]
 
+    it "lets prioritized PRs through when paused, bypassing Promote PRs" $ do
+      let
+        state =
+          Project.insertPullRequest (PullRequestId 1) (Branch "fst") masterBranch (Sha "ab1") "First PR" (Username "tyrell") $
+            Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "tyrell") $
+              Project.pause Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
+          , Pause
+          , BuildStatusChanged (Sha "2bc") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 2) (Sha "2bc") -- this leads to a `Promote` PR
+          , CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge with priority"
+          , BuildStatusChanged (Sha "1ab") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
+          ]
+        results =
+          defaultResults
+            { resultIntegrate =
+                [ Right (Sha "2bc") -- first PR
+                , Right (Sha "1ab") -- second PR
+                , Right (Sha "2de") -- rebased on top of the prioritized PR
+                ]
+            }
+        run = runActionCustom results
+        actions = snd $ run $ handleEventsTest events state
+      actions
+        `shouldBe` [ AIsReviewer "deckard"
+                   , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+                   , ATryIntegrate
+                      "Merge #2: Second PR\n\n\
+                      \Approved-by: deckard\n\
+                      \Priority: Normal\n\
+                      \Auto-deploy: false\n"
+                      (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
+                      []
+                      False
+                   , ALeaveComment
+                      (PullRequestId 2)
+                      "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
+                   , ATryForcePush (Branch "snd") (Sha "2bc")
+                   , ALeaveComment (PullRequestId 2) "Your PR is ready to be merged into master, but merging has been paused"
+                   , AIsReviewer "deckard"
+                   , ALeaveComment
+                      (PullRequestId 1)
+                      "<!-- Hoff: ignore -->\nPull request approved for merge with high priority by @deckard, rebasing now."
+                   , ATryIntegrate
+                      "Merge #1: First PR\n\n\
+                      \Approved-by: deckard\n\
+                      \Priority: High\n\
+                      \Auto-deploy: false\n"
+                      (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                      []
+                      False
+                   , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
+                   , ATryIntegrate
+                      "Merge #2: Second PR\n\n\
+                      \Approved-by: deckard\n\
+                      \Priority: Normal\n\
+                      \Auto-deploy: false\n"
+                      (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
+                      [PullRequestId 1]
+                      False
+                   , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2de behind 1 other PR, waiting for CI …"
+                   , ATryForcePush (Branch "fst") (Sha "1ab")
+                   , ATryPromote (Sha "1ab")
+                   , ACleanupTestBranch (PullRequestId 1)
+                   ]
+
     it "restarts when something gets pushes to master while paused" $ do
       let
         state =
