@@ -22,6 +22,9 @@
 # some places (which we can't change).
 set -evo pipefail
 
+# Mount additional storage, which we use for the Nix store.
+sudo mount /dev/sdc1 /mnt
+
 # Install Nix. We install in single-user mode (--no-daemon) because the Nix
 # process can access the running SSH agent to fetch private Git repositories.
 curl -o install-nix https://releases.nixos.org/nix/nix-2.24.10/install
