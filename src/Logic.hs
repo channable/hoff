@@ -1379,7 +1379,7 @@ feedbackOnStatus (BaseBranch projectBaseBranchName) prId pr state = case Pr.clas
       CommentFeedback $
         format
           "Failed to rebase, please rebase manually using\n\n\
-          \    git fetch && git rebase --interactive --autosquash origin/{} {}"
+          \    git fetch && git rebase --interactive --autosquash --no-keep-empty origin/{} {}"
           [targetBranchName, prBranchName]
   -- The following is not actually shown to the user
   -- as it is never set with needsFeedback=True,

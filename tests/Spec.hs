@@ -602,7 +602,7 @@ main = hspec $ do
                    , ALeaveComment
                       (PullRequestId 1)
                       "<!-- Hoff: ignore -->\nFailed to rebase, please rebase manually using\n\n\
-                      \    git fetch && git rebase --interactive --autosquash origin/master p"
+                      \    git fetch && git rebase --interactive --autosquash --no-keep-empty origin/master p"
                    ]
 
     it "notifies approvers about queue position" $ do
@@ -3027,7 +3027,7 @@ main = hspec $ do
                    , ALeaveComment
                       (PullRequestId 1)
                       "<!-- Hoff: ignore -->\nFailed to rebase, please rebase manually using\n\n\
-                      \    git fetch && git rebase --interactive --autosquash origin/master n7"
+                      \    git fetch && git rebase --interactive --autosquash --no-keep-empty origin/master n7"
                    ]
 
     it "picks a new candidate from the queue after a successful push" $ do
@@ -4508,7 +4508,7 @@ main = hspec $ do
                      ALeaveComment
                       (PullRequestId 2)
                       "<!-- Hoff: ignore -->\nFailed to rebase, please rebase manually using\n\n\
-                      \    git fetch && git rebase --interactive --autosquash origin/master snd"
+                      \    git fetch && git rebase --interactive --autosquash --no-keep-empty origin/master snd"
                    ]
       classifiedPullRequestIds finalState
         `shouldBe` ClassifiedPullRequestIds

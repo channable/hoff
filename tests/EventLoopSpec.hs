@@ -78,6 +78,11 @@ callGit args = fmap (either (error . show) id) $ runEff $ fakeRunLogger $ Git.ca
 --
 --   c6 -- c7 -- c8 -- c7f <-------- fixup (pr 8)
 --
+--   c3 -- cEmpty                <-- empty (pr 9)
+--          \ (empty commit, no changeset)
+--           `-- cReal           <-- empty-then-real (pr 10)
+--                  (real commit on top of empty commit)
+--
 --
 -- The given clone action is called when the repository
 -- is only partially populated with:
@@ -97,6 +102,7 @@ populateRepository dir doClone =
     getHeadSha = Sha . Text.stripEnd <$> git ["rev-parse", "@"]
     -- Commits with the given message and returns the sha of the new commit.
     gitCommit message = git ["commit", "-m", message] >> getHeadSha
+    gitCommitEmpty message = git ["commit", "--allow-empty", "-m", message] >> getHeadSha
   in
     do
       gitInit
@@ -161,6 +167,16 @@ populateRepository dir doClone =
       -- just generate that message manually here.
       c7f <- gitCommit "fixup! c7: Elaborate on response"
 
+      -- Create a branch with an empty commit (no changeset).
+      gitBranch "empty" c3
+      cEmpty <- gitCommitEmpty "cEmpty: Initial plan"
+
+      -- Create a branch on top of the empty commit with a real commit.
+      gitBranch "empty-then-real" cEmpty
+      writeFile "plan.txt" "Here is the implemented plan."
+      gitAdd "plan.txt"
+      cReal <- gitCommit "cReal: Implemented plan"
+
       -- Switch to a branch that is not otherwise used. Because the repository
       -- is not bare, a push to a branch that we have checked out may fail, so
       -- we check out a branch that is never pushed to.
@@ -172,8 +188,10 @@ populateRepository dir doClone =
       gitSetRef "refs/pull/4/head" c4
       gitSetRef "refs/pull/6/head" c6
       gitSetRef "refs/pull/8/head" c7f
+      gitSetRef "refs/pull/9/head" cEmpty
+      gitSetRef "refs/pull/10/head" cReal
 
-      return [c0, c1, c2, c3, c3', c4, c5, c6, c7, c7f, c8]
+      return [c0, c1, c2, c3, c3', c4, c5, c6, c7, c7f, c8, cEmpty, cReal]
 
 -- Sets up two repositories: one with a few commits in the origin directory, and
 -- a clone of that in the repository directory. The clone ensures that the
@@ -435,7 +453,7 @@ eventLoopSpec = parallel $ do
     it "handles a fast-forwardable pull request" $ do
       (history, branches, _tagRefs, _tagAnns) <- withTestEnv' $ \shas runLoop _git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', c4, _c5, _c6, _c7, _c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', c4, _c5, _c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
           -- Note that at the remote, refs/pull/4/head points to c4.
           pr4 = PullRequestId 4
           branch = Branch "ahead"
@@ -463,12 +481,12 @@ eventLoopSpec = parallel $ do
       -- if there are no other PRs depending on it.
       -- The other branches should be left untouched.
       branches
-        `shouldMatchList` fmap Branch ["ahead", "intro", baseBranchName, "alternative", "fixup", "unused"]
+        `shouldMatchList` fmap Branch ["ahead", "intro", baseBranchName, "alternative", "fixup", "empty", "empty-then-real", "unused"]
 
     it "handles a fast-forwardable pull request from pull request description" $ do
       (history, branches, _tagRefs, _tagAnns) <- withTestEnv' $ \shas runLoop _git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', c4, _c5, _c6, _c7, _c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', c4, _c5, _c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
           -- Note that at the remote, refs/pull/4/head points to c4.
           pr4 = PullRequestId 4
           branch = Branch "ahead"
@@ -495,12 +513,12 @@ eventLoopSpec = parallel $ do
       -- if there are no other PRs depending on it.
       -- The other branches should be left untouched.
       branches
-        `shouldMatchList` fmap Branch ["ahead", "intro", baseBranchName, "alternative", "fixup", "unused"]
+        `shouldMatchList` fmap Branch ["ahead", "intro", baseBranchName, "alternative", "fixup", "empty", "empty-then-real", "unused"]
 
     it "keeps the integration test branch on a failing build" $ do
       (history, branches, _tagRefs, _tagAnns) <- withTestEnv' $ \shas runLoop _git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', c4, _c5, _c6, _c7, _c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', c4, _c5, _c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
           -- Note that at the remote, refs/pull/4/head points to c4.
           pr4 = PullRequestId 4
           branch = Branch "ahead"
@@ -513,7 +531,7 @@ eventLoopSpec = parallel $ do
             , Logic.BuildStatusChanged c4 "default" (BuildFailed Nothing)
             ]
       -- the build failed, so master's history is unchanged
-      -- ... and the integration/4 branch is kept for inpection of the CI build
+      -- ... and the integration/4 branch is kept for inspection of the CI build
       history
         `shouldBe` [ "* c3"
                    , "* c2"
@@ -521,12 +539,12 @@ eventLoopSpec = parallel $ do
                    , "* c0"
                    ]
       branches
-        `shouldMatchList` fmap Branch ["ahead", "intro", baseBranchName, "alternative", "fixup", "unused", "integration/4"]
+        `shouldMatchList` fmap Branch ["ahead", "intro", baseBranchName, "alternative", "fixup", "empty", "empty-then-real", "unused", "integration/4"]
 
     it "handles a fast-forwardable pull request with tag" $ do
       (history, _branches, tagRefs, tagAnns) <- withTestEnv' $ \shas runLoop _git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', c4, _c5, _c6, _c7, _c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', c4, _c5, _c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
           pr4 = PullRequestId 4
           branch = Branch "ahead"
 
@@ -598,7 +616,7 @@ eventLoopSpec = parallel $ do
     it "handles a fast-forwardable pull request with deploy" $ do
       (history, _branches, tagRefs, tagAnns) <- withTestEnv' $ \shas runLoop _git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', c4, _c5, _c6, _c7, _c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', c4, _c5, _c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
           pr4 = PullRequestId 4
           branch = Branch "ahead"
 
@@ -665,7 +683,7 @@ eventLoopSpec = parallel $ do
     it "handles a non-conflicting non-fast-forwardable pull request" $ do
       (history, branches, _tagRefs, _tagAnns) <- withTestEnv' $ \shas runLoop _git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, c6, _c7, _c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
           -- Note that at the remote, refs/pull/6/head points to c6.
           pr6 = PullRequestId 6
           branch = Branch "intro"
@@ -707,12 +725,12 @@ eventLoopSpec = parallel $ do
       -- if there are no other PRs depending on it.
       -- The other branches should be left untouched.
       branches
-        `shouldMatchList` fmap Branch ["ahead", "intro", baseBranchName, "alternative", "fixup", "unused"]
+        `shouldMatchList` fmap Branch ["ahead", "intro", baseBranchName, "alternative", "fixup", "empty", "empty-then-real", "unused"]
 
     it "handles a non-conflicting non-fast-forwardable pull request with tag" $ do
       (history, _branches, tagRefs, tagAnns) <- withTestEnv' $ \shas runLoop _git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, c6, _c7, _c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
           pr6 = PullRequestId 6
           branch = Branch "intro"
 
@@ -777,7 +795,7 @@ eventLoopSpec = parallel $ do
     it "handles a non-conflicting non-fast-forwardable pull request with deploy" $ do
       (history, _branches, tagRefs, tagAnns) <- withTestEnv' $ \shas runLoop _git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, c6, _c7, _c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
           pr6 = PullRequestId 6
           branch = Branch "intro"
 
@@ -842,7 +860,7 @@ eventLoopSpec = parallel $ do
     it "handles multiple pull requests" $ do
       history <- withTestEnv $ \shas runLoop _git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', c4, _c5, c6, _c7, _c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', c4, _c5, c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
           pr4 = PullRequestId 4
           pr6 = PullRequestId 6
           br4 = Branch "ahead"
@@ -897,7 +915,7 @@ eventLoopSpec = parallel $ do
     it "tags version consistently across multiple PRs" $ do
       (history, _branches, tagRefs, tagAnns) <- withTestEnv' $ \shas runLoop _git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', c4, _c5, c6, _c7, _c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', c4, _c5, c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
           pr4 = PullRequestId 4
           pr6 = PullRequestId 6
           br4 = Branch "ahead"
@@ -992,7 +1010,7 @@ eventLoopSpec = parallel $ do
     it "skips conflicted pull requests" $ do
       (history, branches, _tagRefs, _tagAnns) <- withTestEnv' $ \shas runLoop _git -> do
         let
-          [_c0, _c1, _c2, _c3, c3', c4, _c5, _c6, _c7, _c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, c3', c4, _c5, _c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
           pr3 = PullRequestId 3
           pr4 = PullRequestId 4
           br3 = Branch "alternative"
@@ -1039,7 +1057,7 @@ eventLoopSpec = parallel $ do
     it "restarts the sequence after a rejected push" $ do
       history <- withTestEnv $ \shas runLoop git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', c4, _c5, c6, _c7, _c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', c4, _c5, c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
           pr6 = PullRequestId 6
           branch = Branch "intro"
 
@@ -1102,7 +1120,7 @@ eventLoopSpec = parallel $ do
     it "pushes tags atomically (rejected push)" $ do
       (history, _branches, tagRefs, tagAnns) <- withTestEnv' $ \shas runLoop git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', c4, _c5, c6, _c7, _c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', c4, _c5, c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
           pr6 = PullRequestId 6
           branch = Branch "intro"
 
@@ -1185,7 +1203,7 @@ eventLoopSpec = parallel $ do
     it "pushes tags atomically (new tag appears)" $ do
       (history, _branches, tagRefs, tagAnns) <- withTestEnv' $ \shas runLoop git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', c4, _c5, c6, _c7, _c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', c4, _c5, c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
           pr6 = PullRequestId 6
           branch = Branch "intro"
 
@@ -1272,7 +1290,7 @@ eventLoopSpec = parallel $ do
     it "applies fixup commits during rebase, even if fast forward is possible" $ do
       history <- withTestEnv $ \shas runLoop _git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, _c6, _c7, c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, _c6, _c7, c7f, _c8, _cEmpty, _cReal] = shas
           pr8 = PullRequestId 8
           branch = Branch "fixup"
 
@@ -1314,7 +1332,7 @@ eventLoopSpec = parallel $ do
     it "applies fixup commits during rebase, also if a push happened" $ do
       history <- withTestEnv $ \shas runLoop git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', c4, _c5, _c6, _c7, c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', c4, _c5, _c6, _c7, c7f, _c8, _cEmpty, _cReal] = shas
           pr8 = PullRequestId 8
           branch = Branch "fixup"
 
@@ -1368,7 +1386,7 @@ eventLoopSpec = parallel $ do
     it "do not merge if there exist fixup commits that do not belong to any other commits" $ do
       history <- withTestEnv $ \shas runLoop git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, _c6, _c7, c7f, c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, _c6, _c7, c7f, c8, _cEmpty, _cReal] = shas
           pr8 = PullRequestId 8
           branch = Branch "fixup"
 
@@ -1412,7 +1430,7 @@ eventLoopSpec = parallel $ do
     it "detects empty rebases" $ do
       (history, branches, _tagRefs, _tagAnns) <- withTestEnv' $ \shas runLoop _git -> do
         let
-          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, c6, _c7, c7f, _c8] = shas
+          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, c6, _c7, c7f, _c8, _cEmpty, _cReal] = shas
           pr6 = PullRequestId 6
           pr8 = PullRequestId 8 -- PR#8 is built with 3 commits on top of PR#6
           branch6 = Branch "intro"
@@ -1461,4 +1479,77 @@ eventLoopSpec = parallel $ do
                    , "* c0"
                    ]
       branches
-        `shouldMatchList` fmap Branch ["ahead", "intro", baseBranchName, "alternative", "fixup", "unused"]
+        `shouldMatchList` fmap Branch ["ahead", "intro", baseBranchName, "alternative", "fixup", "empty", "empty-then-real", "unused"]
+
+    it "detects empty commits as empty rebases" $ do
+      -- A pull request consisting of a single empty commit (no changeset)
+      -- should be detected as an empty rebase and rejected. Without
+      -- --no-keep-empty on the rebase command, the empty commit would survive
+      -- the rebase and could be merged into master.
+      (history, _branches, _tagRefs, _tagAnns) <- withTestEnv' $ \shas runLoop _git -> do
+        let
+          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, _c6, _c7, _c7f, _c8, cEmpty, _cReal] = shas
+          pr9 = PullRequestId 9
+          branch = Branch "empty"
+
+        state <-
+          runLoop
+            Project.emptyProjectState
+            [ Logic.PullRequestOpened pr9 branch baseBranch cEmpty "Initial plan" "deckard" Nothing
+            , Logic.CommentAdded pr9 "rachael" Nothing "@bot merge"
+            ]
+
+        Project.unfailedIntegratedPullRequests state `shouldBe` []
+
+        let Just pullRequest = Project.lookupPullRequest pr9 state
+        Project.integrationStatus pullRequest
+          `shouldBe` Project.Conflicted baseBranch Git.EmptyRebase
+
+      -- Master should be unchanged, the empty commit should not have been merged.
+      history
+        `shouldBe` [ "* c3"
+                   , "* c2"
+                   , "* c1"
+                   , "* c0"
+                   ]
+
+    it "merges a real commit while dropping its preceding empty commit" $ do
+      -- A pull request with an empty commit followed by a real commit should
+      -- succeed: the empty commit is dropped by --no-keep-empty during the
+      -- rebase, but the real commit with actual changes survives and can be
+      -- merged into master.
+      (history, _branches, _tagRefs, _tagAnns) <- withTestEnv' $ \shas runLoop _git -> do
+        let
+          [_c0, _c1, _c2, _c3, _c3', _c4, _c5, _c6, _c7, _c7f, _c8, _cEmpty, cReal] = shas
+          pr10 = PullRequestId 10
+          branch = Branch "empty-then-real"
+
+        state <-
+          runLoop
+            Project.emptyProjectState
+            [ Logic.PullRequestOpened pr10 branch baseBranch cReal "Implemented plan" "deckard" Nothing
+            , Logic.CommentAdded pr10 "rachael" Nothing "@bot merge"
+            ]
+
+        -- The real commit should have been integrated successfully (the empty
+        -- commit is dropped, but the real one survives the rebase).
+        Project.unfailedIntegratedPullRequests state `shouldBe` [pr10]
+
+        let [rebasedSha] = integrationShas state
+
+        void $
+          runLoop
+            state
+            [ Logic.BuildStatusChanged rebasedSha "default" BuildSucceeded
+            , Logic.PullRequestCommitChanged (PullRequestId 10) rebasedSha
+            ]
+
+      -- The real commit should be merged into master, with the empty commit
+      -- dropped.
+      history
+        `shouldBe` [ "* cReal"
+                   , "* c3"
+                   , "* c2"
+                   , "* c1"
+                   , "* c0"
+                   ]

@@ -398,6 +398,7 @@ runGit userConfig repoDir =
             [ "rebase"
             , "--interactive"
             , "--autosquash"
+            , "--no-keep-empty"
             , refSpec remoteBranch
             , refSpec sha
             ]

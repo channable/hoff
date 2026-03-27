@@ -41,6 +41,9 @@ sudo rm -rf \
     /opt/firefox-esr \
     /opt/firefox-esr-prev \
     /usr/local/golang \
+    /mnt/docker.qcow2 \
+    /usr/lib/jvm \
+    /usr/local/lib/heroku \
     /var/lib/docker
 
 # Hotfix for Semaphore issue preventing installing Nix
