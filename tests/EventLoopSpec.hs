@@ -442,8 +442,7 @@ withTestEnv' body = do
 integrationShas :: ProjectState -> [Sha]
 integrationShas state =
   [ sha
-  | prId <- Project.unfailedIntegratedPullRequests state
-  , Just pr <- [Project.lookupPullRequest prId state]
+  | pr <- Project.unfailedIntegratedPullRequests state
   , Integrated sha _ <- [Project.integrationStatus pr]
   ]
 
@@ -1036,7 +1035,7 @@ eventLoopSpec = parallel $ do
 
         -- The second pull request should still be pending, awaiting the build
         -- result.
-        Project.unfailedIntegratedPullRequests state `shouldBe` [pr4]
+        map Project.pullRequestId (Project.unfailedIntegratedPullRequests state) `shouldBe` [pr4]
         let
           Just pullRequest4 = Project.lookupPullRequest pr4 state
           Integrated _ buildStatus = Project.integrationStatus pullRequest4
@@ -1443,7 +1442,7 @@ eventLoopSpec = parallel $ do
             , Logic.CommentAdded pr8 "rachael" Nothing "@bot merge"
             ]
 
-        Project.unfailedIntegratedPullRequests state `shouldBe` [pr8]
+        map Project.pullRequestId (Project.unfailedIntegratedPullRequests state) `shouldBe` [pr8]
 
         let [rebasedSha] = integrationShas state
 
@@ -1533,7 +1532,7 @@ eventLoopSpec = parallel $ do
 
         -- The real commit should have been integrated successfully (the empty
         -- commit is dropped, but the real one survives the rebase).
-        Project.unfailedIntegratedPullRequests state `shouldBe` [pr10]
+        map Project.pullRequestId (Project.unfailedIntegratedPullRequests state) `shouldBe` [pr10]
 
         let [rebasedSha] = integrationShas state
 

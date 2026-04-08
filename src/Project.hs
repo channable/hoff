@@ -250,7 +250,8 @@ data PromotedPullRequest = PromotedPullRequest
   deriving (Eq, Show, Generic)
 
 data PullRequest = PullRequest
-  { sha :: Sha
+  { pullRequestId :: PullRequestId
+  , sha :: Sha
   , branch :: Branch
   , baseBranch :: BaseBranch
   , title :: Text
@@ -363,7 +364,8 @@ insertPullRequest
 insertPullRequest (PullRequestId n) prBranch bsBranch prSha prTitle prAuthor state =
   let pullRequest =
         PullRequest
-          { sha = prSha
+          { pullRequestId = PullRequestId n
+          , sha = prSha
           , branch = prBranch
           , baseBranch = bsBranch
           , title = prTitle
@@ -464,41 +466,37 @@ classifyPullRequest pr = case approval pr of
 
 -- Classify every pull request into one status. Orders pull requests by id in
 -- ascending order.
-classifyPullRequests :: ProjectState -> [(PullRequestId, PullRequest, PullRequestStatus)]
-classifyPullRequests state = IntMap.foldMapWithKey aux (pullRequests state)
- where
-  aux i pr = [(PullRequestId i, pr, classifyPullRequest pr)]
+classifyPullRequests :: ProjectState -> [(PullRequest, PullRequestStatus)]
+classifyPullRequests state =
+  [(pr, classifyPullRequest pr) | pr <- IntMap.elems (pullRequests state)]
 
--- Returns the ids of the pull requests that satisfy the predicate, in ascending
--- order. The ids are sorted by the approval order, with not yet approved PRs
--- at the end of the list.
-filterPullRequestsBy :: (PullRequest -> Bool) -> ProjectState -> [PullRequestId]
+-- Returns the pull requests that satisfy the predicate, in ascending order. The PRs are sorted by
+-- the approval order, with not yet approved PRs at the end of the list.
+filterPullRequestsBy :: (PullRequest -> Bool) -> ProjectState -> [PullRequest]
 filterPullRequestsBy p =
-  fmap PullRequestId
-    . map fst
-    . sortBy comp
-    . IntMap.toList
-    . IntMap.filter p
+  sortBy comp
+    . filter p
+    . IntMap.elems
     . pullRequests
  where
   -- Compare the approval orders, prefer a Just over a Nothing
-  comp x y = comp' (approvalOrder <$> approval (snd x)) (approvalOrder <$> approval (snd y))
+  comp x y = comp' (approvalOrder <$> approval x) (approvalOrder <$> approval y)
   comp' Nothing Nothing = EQ
   comp' (Just _) Nothing = LT
   comp' Nothing (Just _) = GT
   comp' (Just n) (Just m) = compare n m
 
 -- Returns the pull requests that have been approved, in order of ascending id.
-approvedPullRequests :: ProjectState -> [PullRequestId]
+approvedPullRequests :: ProjectState -> [PullRequest]
 approvedPullRequests = filterPullRequestsBy $ isJust . approval
 
 -- Returns the number of pull requests that will be rebased and checked on CI
 -- before the PR with the given id will be rebased, in case no other pull
 -- requests get approved in the mean time (PRs with a lower id may skip ahead).
-getQueuePosition :: PullRequestId -> ProjectState -> Int
-getQueuePosition prIndex state =
+getQueuePosition :: PullRequest -> ProjectState -> Int
+getQueuePosition pr0 state =
   let
-    approvalNumber = maybe maxBound approvalOrder (lookupPullRequest prIndex state >>= approval)
+    approvalNumber = maybe maxBound approvalOrder (approval pr0)
     isEarlier pr = isQueued pr && maybe maxBound approvalOrder (approval pr) < approvalNumber
     queue = filterPullRequestsBy isEarlier state
     inProgress = filterPullRequestsBy isInProgress state
@@ -546,7 +544,7 @@ wasIntegrationAttemptFor commit pr = case integrationStatus pr of
   Integrated candidate _buildStatus -> commit `elem` (candidate : integrationAttempts pr)
   _ -> commit `elem` (integrationAttempts pr)
 
-integratedPullRequests :: ProjectState -> [PullRequestId]
+integratedPullRequests :: ProjectState -> [PullRequest]
 integratedPullRequests = filterPullRequestsBy $ isIntegrated . integrationStatus
 
 -- | Lists all PR ids that are speculative failures.
@@ -554,24 +552,20 @@ integratedPullRequests = filterPullRequestsBy $ isIntegrated . integrationStatus
 -- In other words, this lists all failed PRs
 -- that come after the first non-failing PR
 -- in approval order.
-speculativelyFailedPullRequests :: ProjectState -> [PullRequestId]
+speculativelyFailedPullRequests :: ProjectState -> [PullRequest]
 speculativelyFailedPullRequests state =
-  map fst $
-    filter (isFailedIntegrated . integrationStatus . snd) $
-      dropWhile
-        (not . isUnfailedIntegrated . integrationStatus . snd)
-        [ (pid, pr)
-        | pid <- integratedPullRequests state
-        , Just pr <- [lookupPullRequest pid state]
-        ]
+  filter (isFailedIntegrated . integrationStatus) $
+    dropWhile
+      (not . isUnfailedIntegrated . integrationStatus)
+      (integratedPullRequests state)
 
 -- | Lists all pull requests that were integrated and did not fail.
-unfailedIntegratedPullRequests :: ProjectState -> [PullRequestId]
+unfailedIntegratedPullRequests :: ProjectState -> [PullRequest]
 unfailedIntegratedPullRequests = filterPullRequestsBy $ isUnfailedIntegrated . integrationStatus
 
 -- | Lists all pull requests that were integrated, did not fail
 -- and that come before a given PR in approval order.
-unfailedIntegratedPullRequestsBefore :: PullRequest -> ProjectState -> [PullRequestId]
+unfailedIntegratedPullRequestsBefore :: PullRequest -> ProjectState -> [PullRequest]
 unfailedIntegratedPullRequestsBefore referencePullRequest = filterPullRequestsBy $
   \pr ->
     isUnfailedIntegrated (integrationStatus pr)
@@ -579,12 +573,12 @@ unfailedIntegratedPullRequestsBefore referencePullRequest = filterPullRequestsBy
 
 -- | Returns the pull requests that have not been integrated yet,
 --   in order of ascending id.
-unintegratedPullRequests :: ProjectState -> [PullRequestId]
+unintegratedPullRequests :: ProjectState -> [PullRequest]
 unintegratedPullRequests = filterPullRequestsBy $ (\x -> x == NotIntegrated || x == Outdated) . integrationStatus
 
 -- | Returns the pull requests that have been approved, but for which integration
 --   and building has not yet been attempted.
-candidatePullRequests :: ProjectState -> [PullRequestId]
+candidatePullRequests :: ProjectState -> [PullRequest]
 candidatePullRequests state =
   let
     approved = approvedPullRequests state

@@ -376,22 +376,13 @@ data ClassifiedPullRequestIds = ClassifiedPullRequestIds
 classifiedPullRequestIds :: ProjectState -> ClassifiedPullRequestIds
 classifiedPullRequestIds state =
   ClassifiedPullRequestIds
-    { building = fst3 <$> WebInterface.building prs
-    , failed = fst3 <$> WebInterface.failed prs
-    , approved = fst3 <$> WebInterface.approved prs
-    , awaiting = fst3 <$> WebInterface.awaiting prs
+    { building = Project.pullRequestId . fst <$> WebInterface.building prs
+    , failed = Project.pullRequestId . fst <$> WebInterface.failed prs
+    , approved = Project.pullRequestId . fst <$> WebInterface.approved prs
+    , awaiting = Project.pullRequestId . fst <$> WebInterface.awaiting prs
     }
  where
   prs = WebInterface.classifiedPullRequests state
-  fst3 (x, _, _) = x
-
--- Same as 'unfailedIntegratedPullRequests' but paired with the underlying objects.
-getIntegrationCandidates :: ProjectState -> [(PullRequestId, PullRequest)]
-getIntegrationCandidates state =
-  [ (pullRequestId, candidate)
-  | pullRequestId <- Project.unfailedIntegratedPullRequests state
-  , Just candidate <- [Project.lookupPullRequest pullRequestId state]
-  ]
 
 -- | Boilerplate for a test case where the parser returns an error.
 expectSimpleParseFailure
@@ -473,7 +464,7 @@ main = hspec $ do
         event = PullRequestClosed (PullRequestId 1)
         state = candidateState (PullRequestId 2) (Branch "p") masterBranch (Sha "a38") "franz" "deckard" (Sha "ed0")
         state' = fst $ runAction $ handleEventTest event state
-      Project.unfailedIntegratedPullRequests state' `shouldBe` [PullRequestId 2]
+      (map Project.pullRequestId $ Project.unfailedIntegratedPullRequests state') `shouldBe` [PullRequestId 2]
 
     it "loses approval after the PR commit has changed" $ do
       let
@@ -710,7 +701,8 @@ main = hspec $ do
           [
             ( 1
             , PullRequest
-                { sha = Sha "a38"
+                { pullRequestId = PullRequestId 1
+                , sha = Sha "a38"
                 , branch = Branch "p"
                 , baseBranch = BaseBranch "master"
                 , title = "Add Nexus 7 experiment"
@@ -725,7 +717,8 @@ main = hspec $ do
           ,
             ( 2
             , PullRequest
-                { sha = Sha "dec"
+                { pullRequestId = PullRequestId 2
+                , sha = Sha "dec"
                 , branch = Branch "s"
                 , baseBranch = BaseBranch "master"
                 , title = "Some PR"
@@ -740,7 +733,8 @@ main = hspec $ do
           ,
             ( 3
             , PullRequest
-                { sha = Sha "f16"
+                { pullRequestId = PullRequestId 3
+                , sha = Sha "f16"
                 , branch = Branch "s"
                 , baseBranch = BaseBranch "master"
                 , title = "Another PR"
@@ -819,7 +813,7 @@ main = hspec $ do
       -- The first pull request should be dropped, and a comment should be
       -- left indicating why. Then the second pull request should be at the
       -- front of the queue.
-      Project.unfailedIntegratedPullRequests state' `shouldBe` [PullRequestId 2]
+      (map Project.pullRequestId $ Project.unfailedIntegratedPullRequests state') `shouldBe` [PullRequestId 2]
       actions
         `shouldBe` [ AIsReviewer "deckard"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
@@ -2767,9 +2761,9 @@ main = hspec $ do
             , resultPush = [PushRejected "test"]
             }
         (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
-        [(prId, pullRequest)] = getIntegrationCandidates state'
+        [pullRequest] = Project.unfailedIntegratedPullRequests state'
       Project.integrationStatus pullRequest `shouldBe` Project.Integrated (Sha "38c") (Project.AnyCheck Project.BuildPending)
-      prId `shouldBe` PullRequestId 1
+      Project.pullRequestId pullRequest `shouldBe` PullRequestId 1
       actions
         `shouldBe` [ ATryIntegrate
                       "Merge #1: Untitled\n\nApproved-by: fred\nPriority: Normal\nAuto-deploy: false\n"
@@ -2796,9 +2790,9 @@ main = hspec $ do
             , resultPush = [PushRejected "test"]
             }
         (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
-        (prId, pullRequest) : _ = getIntegrationCandidates state'
+        (pullRequest : _) = Project.unfailedIntegratedPullRequests state'
       Project.integrationStatus pullRequest `shouldBe` Project.Integrated (Sha "38c") (Project.AnyCheck Project.BuildPending)
-      prId `shouldBe` PullRequestId 2
+      Project.pullRequestId pullRequest `shouldBe` PullRequestId 2
       actions
         `shouldBe` [ ATryIntegrate
                       "Merge #2: Another untitled\n\nApproved-by: fred\nPriority: Normal\nAuto-deploy: false\n"
@@ -2818,7 +2812,8 @@ main = hspec $ do
       let
         pullRequest =
           PullRequest
-            { Project.branch = Branch "results/rachael"
+            { Project.pullRequestId = PullRequestId 1
+            , Project.branch = Branch "results/rachael"
             , Project.baseBranch = masterBranch
             , Project.sha = Sha "f35"
             , Project.title = "Add my test results"
@@ -2847,7 +2842,8 @@ main = hspec $ do
       let
         pullRequest =
           PullRequest
-            { Project.branch = Branch "results/rachael"
+            { Project.pullRequestId = PullRequestId 1
+            , Project.branch = Branch "results/rachael"
             , Project.baseBranch = masterBranch
             , Project.sha = Sha "f35"
             , Project.title = "Add my test results"
@@ -2883,7 +2879,8 @@ main = hspec $ do
       let
         pullRequest =
           PullRequest
-            { Project.branch = Branch "results/rachael"
+            { Project.pullRequestId = PullRequestId 1
+            , Project.branch = Branch "results/rachael"
             , Project.baseBranch = masterBranch
             , Project.sha = Sha "f35"
             , Project.title = "Add my test results"
@@ -2910,7 +2907,7 @@ main = hspec $ do
             , resultPush = [PushRejected "test"]
             }
         (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
-        [(_, pullRequest')] = getIntegrationCandidates state'
+        [pullRequest'] = Project.unfailedIntegratedPullRequests state'
 
       Project.integrationStatus pullRequest' `shouldBe` Project.Integrated (Sha "38e") (Project.AnyCheck Project.BuildPending)
       Project.integrationAttempts pullRequest' `shouldBe` [Sha "38d"]
@@ -2930,7 +2927,8 @@ main = hspec $ do
       let
         pullRequest =
           PullRequest
-            { Project.branch = Branch "results/rachael"
+            { Project.pullRequestId = PullRequestId 1
+            , Project.branch = Branch "results/rachael"
             , Project.baseBranch = masterBranch
             , Project.sha = Sha "f35"
             , Project.title = "Add my test results"
@@ -2958,7 +2956,7 @@ main = hspec $ do
             , resultGetChangelog = [Just "changelog"]
             }
         (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
-        [(_, pullRequest')] = getIntegrationCandidates state'
+        [pullRequest'] = Project.unfailedIntegratedPullRequests state'
 
       Project.integrationStatus pullRequest' `shouldBe` Project.Integrated (Sha "38e") (Project.AnyCheck Project.BuildPending)
       Project.integrationAttempts pullRequest' `shouldBe` [Sha "38d"]
@@ -3034,7 +3032,8 @@ main = hspec $ do
       let
         pullRequest1 =
           PullRequest
-            { Project.branch = Branch "results/leon"
+            { Project.pullRequestId = PullRequestId 1
+            , Project.branch = Branch "results/leon"
             , Project.baseBranch = masterBranch
             , Project.sha = Sha "f35"
             , Project.title = "Add Leon test results"
@@ -3047,7 +3046,8 @@ main = hspec $ do
             }
         pullRequest2 =
           PullRequest
-            { Project.branch = Branch "results/rachael"
+            { Project.pullRequestId = PullRequestId 2
+            , Project.branch = Branch "results/rachael"
             , Project.baseBranch = masterBranch
             , Project.sha = Sha "f37"
             , Project.title = "Add my test results"

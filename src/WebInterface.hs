@@ -71,6 +71,7 @@ import Project (
   ProjectInfo,
   ProjectState,
   PullRequest (integrationStatus),
+  pullRequestId,
   speculativelyFailedPullRequests,
   summarize,
  )
@@ -207,7 +208,7 @@ data ClassifiedPullRequests = ClassifiedPullRequests
     , failed
     , approved
     , awaiting
-      :: [(PullRequestId, PullRequest, Project.PullRequestStatus)]
+      :: [(PullRequest, Project.PullRequestStatus)]
   }
   deriving (Eq, Show)
 
@@ -224,11 +225,11 @@ classifiedPullRequests state =
     }
  where
   allFailed = filterPrs prFailed
-  realFailed = filter (\(pid, _, _) -> pid `notElem` speculativelyFailedIds) allFailed
-  speculativelyFailed = filter (\(pid, _, _) -> pid `elem` speculativelyFailedIds) allFailed
-  speculativelyFailedIds = speculativelyFailedPullRequests state
-  sortPrs = sortOn (\(_, pr, _) -> approvalOrder <$> Project.approval pr)
-  filterPrs predicate = filter (\(_, _, status) -> predicate status) pullRequests
+  realFailed = filter (\(pr, _) -> pullRequestId pr `notElem` speculativelyFailedIds) allFailed
+  speculativelyFailed = filter (\(pr, _) -> pullRequestId pr `elem` speculativelyFailedIds) allFailed
+  speculativelyFailedIds = map pullRequestId $ speculativelyFailedPullRequests state
+  sortPrs = sortOn (\(pr, _) -> approvalOrder <$> Project.approval pr)
+  filterPrs predicate = filter (\(_, status) -> predicate status) pullRequests
   pullRequests = Project.classifyPullRequests state
 
 -- Render the html for the queues in a project, excluding the header and footer.
@@ -284,23 +285,23 @@ viewGroupedProjectQueues projects = do
     mapM_ (uncurry $ viewList' viewPullRequest) onlyAwaiting
  where
   viewList'
-    :: (ProjectInfo -> PullRequestId -> PullRequest -> Html)
+    :: (ProjectInfo -> PullRequest -> Html)
     -> ProjectInfo
-    -> [(PullRequestId, PullRequest, status)]
+    -> [(PullRequest, status)]
     -> Html
   viewList' view info prs = do
     h3 (toHtml $ Project.repository info)
-    forM_ prs $ \(prId, pr, _) -> p $ view info prId pr
+    forM_ prs $ \(pr, _) -> p $ view info pr
 
 -- Renders the contents of a list item with a link for a pull request.
-viewPullRequest :: ProjectInfo -> PullRequestId -> PullRequest -> Html
-viewPullRequest info pullRequestId pullRequest = do
-  a ! href (toValue $ pullRequestUrl info pullRequestId) $ toHtml $ Project.title pullRequest
-  span ! class_ "prId" $ toHtml $ prettyPullRequestId pullRequestId
+viewPullRequest :: ProjectInfo -> PullRequest -> Html
+viewPullRequest info pullRequest = do
+  a ! href (toValue $ pullRequestUrl info (pullRequestId pullRequest)) $ toHtml $ Project.title pullRequest
+  span ! class_ "prId" $ toHtml $ prettyPullRequestId (pullRequestId pullRequest)
 
-viewPullRequestWithApproval :: ProjectInfo -> PullRequestId -> PullRequest -> Html
-viewPullRequestWithApproval info prId pullRequest = do
-  viewPullRequest info prId pullRequest
+viewPullRequestWithApproval :: ProjectInfo -> PullRequest -> Html
+viewPullRequestWithApproval info pullRequest = do
+  viewPullRequest info pullRequest
   case Project.approval pullRequest of
     Just Approval{approver = Username username, approvedFor = approvalType, approvalRetriedBy = retriedBy} -> do
       span ! class_ "review" $ do
@@ -352,16 +353,16 @@ viewPullRequestWithApproval info prId pullRequest = do
     Nothing ->
       error $
         "Tried to render approval link for pull request "
-          ++ (show prId)
+          ++ show (pullRequestId pullRequest)
           ++ " which was not approved. This is a programming error."
 
 -- Render all pull requests in the list with the given view function.
 viewList
-  :: (ProjectInfo -> PullRequestId -> PullRequest -> Html)
+  :: (ProjectInfo -> PullRequest -> Html)
   -> ProjectInfo
-  -> [(PullRequestId, PullRequest, status)]
+  -> [(PullRequest, status)]
   -> Html
-viewList view info prs = forM_ prs $ \(prId, pr, _) -> p $ view info prId pr
+viewList view info prs = forM_ prs $ \(pr, _) -> p $ view info pr
 
 -- | Formats a pull request URL
 pullRequestUrl :: ProjectInfo -> PullRequestId -> Text
