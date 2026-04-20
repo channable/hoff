@@ -299,6 +299,9 @@ runActionResults =
           takeResultGetOpenPullRequests
         GetLatestVersion _ -> takeResultGetLatestVersion
         GetChangelog _ _ -> takeResultGetChangelog
+        IncreaseMergeAttemptedMetric -> pure ()
+        IncreasePriorityMergeAttemptedMetric -> pure ()
+        IncreasePriorityMergeMetric -> pure ()
         IncreaseMergeMetric -> pure ()
         UpdateTrainSizeMetric n -> do
           results <- State.get
