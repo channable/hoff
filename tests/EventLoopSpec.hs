@@ -274,8 +274,7 @@ fakeRunTime = interpret $ \_ -> \case
 fakeRunMetrics :: Eff (MetricsOperation : es) a -> Eff es a
 fakeRunMetrics = interpret $ \_ -> \case
   MergeBranch -> pure ()
-  MergeAttemptedBranch -> pure ()
-  PriorityMergeAttemptedBranch -> pure ()
+  MergeAttemptedBranch _ -> pure ()
   PriorityMergeBranch -> pure ()
   UpdateTrainSize _ -> pure ()
 

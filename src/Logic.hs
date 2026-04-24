@@ -83,7 +83,6 @@ import Metrics (
   MetricsOperation,
   increaseMergeAttemptedPRTotal,
   increaseMergedPRTotal,
-  increasePriorityMergeAttemptedPRTotal,
   increasePriorityMergedPRTotal,
   updateTrainSizeGauge,
  )
@@ -137,8 +136,7 @@ data Action :: Effect where
   GetOpenPullRequests :: Action m (Maybe IntSet)
   GetLatestVersion :: Sha -> Action m (Either TagName Integer)
   GetChangelog :: TagName -> Sha -> Action m (Maybe Text)
-  IncreaseMergeAttemptedMetric :: Action m ()
-  IncreasePriorityMergeAttemptedMetric :: Action m ()
+  IncreaseMergeAttemptedMetric :: Priority -> Action m ()
   IncreasePriorityMergeMetric :: Action m ()
   IncreaseMergeMetric :: Action m ()
   UpdateTrainSizeMetric :: Int -> Action m ()
@@ -234,11 +232,8 @@ getProjectConfig = send GetProjectConfig
 registerMergedPR :: Action :> es => Eff es ()
 registerMergedPR = send IncreaseMergeMetric
 
-registerMergeAttemptedPR :: Action :> es => Eff es ()
-registerMergeAttemptedPR = send IncreaseMergeAttemptedMetric
-
-registerPriorityMergeAttemptedPR :: Action :> es => Eff es ()
-registerPriorityMergeAttemptedPR = send IncreasePriorityMergeAttemptedMetric
+registerMergeAttemptedPR :: Action :> es => Priority -> Eff es ()
+registerMergeAttemptedPR priority = send $ IncreaseMergeAttemptedMetric priority
 
 registerPriorityMergedPR :: Action :> es => Eff es ()
 registerPriorityMergedPR = send IncreasePriorityMergeMetric
@@ -312,8 +307,10 @@ runAction config =
       maybe (Right 0) (\t -> maybeToEither t $ parseVersion t) <$> Git.lastTag sha
     GetChangelog prevTag curHead ->
       Git.shortlog (AsRefSpec prevTag) (AsRefSpec curHead)
-    IncreaseMergeAttemptedMetric -> increaseMergeAttemptedPRTotal
-    IncreasePriorityMergeAttemptedMetric -> increasePriorityMergeAttemptedPRTotal
+    IncreaseMergeAttemptedMetric priority ->
+      increaseMergeAttemptedPRTotal $ case priority of
+        Normal -> "normal"
+        High -> "high"
     IncreasePriorityMergeMetric -> increasePriorityMergedPRTotal
     IncreaseMergeMetric -> increaseMergedPRTotal
     UpdateTrainSizeMetric n -> updateTrainSizeGauge n
@@ -535,8 +532,7 @@ tryPromotePullRequest pullRequest state =
             return (Pr.updatePullRequest prId (\pr' -> pr'{Pr.pausedMessageSent = True}) state)
           _ -> pure state
       else do
-        registerMergeAttemptedPR
-        when (priority == High) registerPriorityMergeAttemptedPR
+        registerMergeAttemptedPR priority
         pushResult <- case Pr.integrationStatus pullRequest of
           -- If we only need to promote, we can just try pushing.
           Pr.Promote _ sha -> tryPromote sha

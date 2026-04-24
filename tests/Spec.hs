@@ -299,8 +299,7 @@ runActionResults =
           takeResultGetOpenPullRequests
         GetLatestVersion _ -> takeResultGetLatestVersion
         GetChangelog _ _ -> takeResultGetChangelog
-        IncreaseMergeAttemptedMetric -> pure ()
-        IncreasePriorityMergeAttemptedMetric -> pure ()
+        IncreaseMergeAttemptedMetric _ -> pure ()
         IncreasePriorityMergeMetric -> pure ()
         IncreaseMergeMetric -> pure ()
         UpdateTrainSizeMetric n -> do

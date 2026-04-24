@@ -9,7 +9,6 @@ module Metrics (
   ProjectMetrics (..),
   runMetrics,
   increaseMergeAttemptedPRTotal,
-  increasePriorityMergeAttemptedPRTotal,
   increasePriorityMergedPRTotal,
   increaseMergedPRTotal,
   updateTrainSizeGauge,
@@ -27,19 +26,18 @@ import Prometheus
 import Prometheus.Metric.GHC (ghcMetrics)
 
 type ProjectLabel = Text
+type PriorityLabel = Text
 
 data ProjectMetrics = ProjectMetrics
   { projectMetricsMergedPR :: Vector ProjectLabel Counter
-  , projectMetricsMergeAttemptedPR :: Vector ProjectLabel Counter
-  , projectMetricsPriorityMergeAttemptedPR :: Vector ProjectLabel Counter
+  , projectMetricsMergeAttemptedPR :: Vector (ProjectLabel, PriorityLabel) Counter
   , projectMetricsPriorityMergedPR :: Vector ProjectLabel Counter
   , projectMetricsMergeTrainSize :: Vector ProjectLabel Gauge
   }
 
 data MetricsOperation :: Effect where
   MergeBranch :: MetricsOperation m ()
-  MergeAttemptedBranch :: MetricsOperation m ()
-  PriorityMergeAttemptedBranch :: MetricsOperation m ()
+  MergeAttemptedBranch :: PriorityLabel -> MetricsOperation m ()
   PriorityMergeBranch :: MetricsOperation m ()
   UpdateTrainSize :: Int -> MetricsOperation m ()
 
@@ -48,11 +46,8 @@ type instance DispatchOf MetricsOperation = 'Dynamic
 increaseMergedPRTotal :: MetricsOperation :> es => Eff es ()
 increaseMergedPRTotal = send MergeBranch
 
-increaseMergeAttemptedPRTotal :: MetricsOperation :> es => Eff es ()
-increaseMergeAttemptedPRTotal = send MergeAttemptedBranch
-
-increasePriorityMergeAttemptedPRTotal :: MetricsOperation :> es => Eff es ()
-increasePriorityMergeAttemptedPRTotal = send PriorityMergeAttemptedBranch
+increaseMergeAttemptedPRTotal :: MetricsOperation :> es => PriorityLabel -> Eff es ()
+increaseMergeAttemptedPRTotal priority = send $ MergeAttemptedBranch priority
 
 increasePriorityMergedPRTotal :: MetricsOperation :> es => Eff es ()
 increasePriorityMergedPRTotal = send PriorityMergeBranch
@@ -75,14 +70,10 @@ runMetrics metrics label = interpret $ \_ -> \case
     void $
       liftIO $
         incProjectMergedPR metrics label
-  MergeAttemptedBranch ->
+  MergeAttemptedBranch priority ->
     void $
       liftIO $
-        incProjectMergeAttemptedPR metrics label
-  PriorityMergeAttemptedBranch ->
-    void $
-      liftIO $
-        incProjectPriorityMergeAttemptedPR metrics label
+        incProjectMergeAttemptedPR metrics label priority
   PriorityMergeBranch ->
     void $
       liftIO $
@@ -106,21 +97,11 @@ registerProjectMetrics =
       )
     <*> register
       ( vector
-          "project"
+          ("project", "priority")
           ( counter
               ( Info
                   "hoff_project_merge_attempted_pull_requests"
                   "Number of pull request merges attempted"
-              )
-          )
-      )
-    <*> register
-      ( vector
-          "project"
-          ( counter
-              ( Info
-                  "hoff_project_priority_merge_attempted_pull_requests"
-                  "Number of priority pull request merges attempted"
               )
           )
       )
@@ -149,13 +130,9 @@ incProjectMergedPR :: ProjectMetrics -> ProjectLabel -> IO ()
 incProjectMergedPR metrics project =
   withLabel (projectMetricsMergedPR metrics) project incCounter
 
-incProjectMergeAttemptedPR :: ProjectMetrics -> ProjectLabel -> IO ()
-incProjectMergeAttemptedPR metrics project =
-  withLabel (projectMetricsMergeAttemptedPR metrics) project incCounter
-
-incProjectPriorityMergeAttemptedPR :: ProjectMetrics -> ProjectLabel -> IO ()
-incProjectPriorityMergeAttemptedPR metrics project =
-  withLabel (projectMetricsPriorityMergeAttemptedPR metrics) project incCounter
+incProjectMergeAttemptedPR :: ProjectMetrics -> ProjectLabel -> PriorityLabel -> IO ()
+incProjectMergeAttemptedPR metrics project priority =
+  withLabel (projectMetricsMergeAttemptedPR metrics) (project, priority) incCounter
 
 incProjectPriorityMergedPR :: ProjectMetrics -> ProjectLabel -> IO ()
 incProjectPriorityMergedPR metrics project =
