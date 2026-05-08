@@ -83,7 +83,6 @@ import Metrics (
   MetricsOperation,
   increaseMergeAttemptedPRTotal,
   increaseMergedPRTotal,
-  increasePriorityMergedPRTotal,
   updateTrainSizeGauge,
  )
 import Parser (ParseResult (..), hoffIgnoreComment, isSuccess, parseMergeCommand, shouldIgnoreComment)
@@ -137,8 +136,7 @@ data Action :: Effect where
   GetLatestVersion :: Sha -> Action m (Either TagName Integer)
   GetChangelog :: TagName -> Sha -> Action m (Maybe Text)
   IncreaseMergeAttemptedMetric :: Priority -> Action m ()
-  IncreasePriorityMergeMetric :: Action m ()
-  IncreaseMergeMetric :: Action m ()
+  IncreaseMergeMetric :: Priority -> Action m ()
   UpdateTrainSizeMetric :: Int -> Action m ()
 
 type instance DispatchOf Action = 'Dynamic
@@ -229,14 +227,11 @@ getBaseBranch = send GetBaseBranch
 getProjectConfig :: RetrieveEnvironment :> es => Eff es ProjectConfiguration
 getProjectConfig = send GetProjectConfig
 
-registerMergedPR :: Action :> es => Eff es ()
-registerMergedPR = send IncreaseMergeMetric
+registerMergedPR :: Action :> es => Priority -> Eff es ()
+registerMergedPR priority = send $ IncreaseMergeMetric priority
 
 registerMergeAttemptedPR :: Action :> es => Priority -> Eff es ()
 registerMergeAttemptedPR priority = send $ IncreaseMergeAttemptedMetric priority
-
-registerPriorityMergedPR :: Action :> es => Eff es ()
-registerPriorityMergedPR = send IncreasePriorityMergeMetric
 
 triggerTrainSizeUpdate :: Action :> es => ProjectState -> Eff es ()
 triggerTrainSizeUpdate projectState = do
@@ -311,8 +306,10 @@ runAction config =
       increaseMergeAttemptedPRTotal $ case priority of
         Normal -> "normal"
         High -> "high"
-    IncreasePriorityMergeMetric -> increasePriorityMergedPRTotal
-    IncreaseMergeMetric -> increaseMergedPRTotal
+    IncreaseMergeMetric priority ->
+      increaseMergedPRTotal $ case priority of
+        Normal -> "normal"
+        High -> "high"
     UpdateTrainSizeMetric n -> updateTrainSizeGauge n
  where
   trainBranch :: [PullRequestId] -> Maybe Git.Branch
@@ -565,8 +562,7 @@ tryPromotePullRequest pullRequest state =
           -- the integration candidate, so we proceed with the next pull request.
           PushOk -> do
             cleanupTestBranch prId
-            registerMergedPR
-            when (priority == High) registerPriorityMergedPR
+            registerMergedPR priority
             currTime <- getDateTime
             pure $
               Pr.updatePullRequests (unspeculateConflictsAfter pullRequest) $

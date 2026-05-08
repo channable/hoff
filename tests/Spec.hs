@@ -300,8 +300,7 @@ runActionResults =
         GetLatestVersion _ -> takeResultGetLatestVersion
         GetChangelog _ _ -> takeResultGetChangelog
         IncreaseMergeAttemptedMetric _ -> pure ()
-        IncreasePriorityMergeMetric -> pure ()
-        IncreaseMergeMetric -> pure ()
+        IncreaseMergeMetric _ -> pure ()
         UpdateTrainSizeMetric n -> do
           results <- State.get
           State.put $ results{resultTrainSizeUpdates = n : resultTrainSizeUpdates results}

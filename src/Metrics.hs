@@ -9,7 +9,6 @@ module Metrics (
   ProjectMetrics (..),
   runMetrics,
   increaseMergeAttemptedPRTotal,
-  increasePriorityMergedPRTotal,
   increaseMergedPRTotal,
   updateTrainSizeGauge,
   registerGHCMetrics,
@@ -29,28 +28,23 @@ type ProjectLabel = Text
 type PriorityLabel = Text
 
 data ProjectMetrics = ProjectMetrics
-  { projectMetricsMergedPR :: Vector ProjectLabel Counter
+  { projectMetricsMergedPR :: Vector (ProjectLabel, PriorityLabel) Counter
   , projectMetricsMergeAttemptedPR :: Vector (ProjectLabel, PriorityLabel) Counter
-  , projectMetricsPriorityMergedPR :: Vector ProjectLabel Counter
   , projectMetricsMergeTrainSize :: Vector ProjectLabel Gauge
   }
 
 data MetricsOperation :: Effect where
-  MergeBranch :: MetricsOperation m ()
+  MergeBranch :: PriorityLabel -> MetricsOperation m ()
   MergeAttemptedBranch :: PriorityLabel -> MetricsOperation m ()
-  PriorityMergeBranch :: MetricsOperation m ()
   UpdateTrainSize :: Int -> MetricsOperation m ()
 
 type instance DispatchOf MetricsOperation = 'Dynamic
 
-increaseMergedPRTotal :: MetricsOperation :> es => Eff es ()
-increaseMergedPRTotal = send MergeBranch
+increaseMergedPRTotal :: MetricsOperation :> es => PriorityLabel -> Eff es ()
+increaseMergedPRTotal priority = send $ MergeBranch priority
 
 increaseMergeAttemptedPRTotal :: MetricsOperation :> es => PriorityLabel -> Eff es ()
 increaseMergeAttemptedPRTotal priority = send $ MergeAttemptedBranch priority
-
-increasePriorityMergedPRTotal :: MetricsOperation :> es => Eff es ()
-increasePriorityMergedPRTotal = send PriorityMergeBranch
 
 updateTrainSizeGauge :: MetricsOperation :> es => Int -> Eff es ()
 updateTrainSizeGauge n = send $ UpdateTrainSize n
@@ -66,18 +60,14 @@ runMetrics metrics label = interpret $ \_ -> \case
     void $
       liftIO $
         setProjectMetricMergeTrainSize metrics label n
-  MergeBranch ->
+  MergeBranch priority ->
     void $
       liftIO $
-        incProjectMergedPR metrics label
+        incProjectMergedPR metrics label priority
   MergeAttemptedBranch priority ->
     void $
       liftIO $
         incProjectMergeAttemptedPR metrics label priority
-  PriorityMergeBranch ->
-    void $
-      liftIO $
-        incProjectPriorityMergedPR metrics label
 
 registerGHCMetrics :: IO ()
 registerGHCMetrics = void $ register ghcMetrics
@@ -87,7 +77,7 @@ registerProjectMetrics =
   ProjectMetrics
     <$> register
       ( vector
-          "project"
+          ("project", "priority")
           ( counter
               ( Info
                   "hoff_project_merged_pull_requests"
@@ -108,16 +98,6 @@ registerProjectMetrics =
     <*> register
       ( vector
           "project"
-          ( counter
-              ( Info
-                  "hoff_project_priority_merged_pull_requests"
-                  "Number of merged priority pull requests"
-              )
-          )
-      )
-    <*> register
-      ( vector
-          "project"
           ( gauge
               ( Info
                   "hoff_project_merge_train_size"
@@ -126,17 +106,13 @@ registerProjectMetrics =
           )
       )
 
-incProjectMergedPR :: ProjectMetrics -> ProjectLabel -> IO ()
-incProjectMergedPR metrics project =
-  withLabel (projectMetricsMergedPR metrics) project incCounter
+incProjectMergedPR :: ProjectMetrics -> ProjectLabel -> PriorityLabel -> IO ()
+incProjectMergedPR metrics project priority =
+  withLabel (projectMetricsMergedPR metrics) (project, priority) incCounter
 
 incProjectMergeAttemptedPR :: ProjectMetrics -> ProjectLabel -> PriorityLabel -> IO ()
 incProjectMergeAttemptedPR metrics project priority =
   withLabel (projectMetricsMergeAttemptedPR metrics) (project, priority) incCounter
-
-incProjectPriorityMergedPR :: ProjectMetrics -> ProjectLabel -> IO ()
-incProjectPriorityMergedPR metrics project =
-  withLabel (projectMetricsPriorityMergedPR metrics) project incCounter
 
 setProjectMetricMergeTrainSize :: ProjectMetrics -> ProjectLabel -> Int -> IO ()
 setProjectMetricMergeTrainSize metrics project n =
