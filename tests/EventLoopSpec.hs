@@ -275,6 +275,7 @@ fakeRunMetrics :: Eff (MetricsOperation : es) a -> Eff es a
 fakeRunMetrics = interpret $ \_ -> \case
   MergeBranch _ -> pure ()
   MergeAttemptedBranch _ -> pure ()
+  MergeFailedBranch _ _ -> pure ()
   UpdateTrainSize _ -> pure ()
 
 fakeRunLogger :: Eff (MonadLoggerEffect : es) a -> Eff es a

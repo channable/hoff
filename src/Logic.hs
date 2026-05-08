@@ -82,6 +82,7 @@ import GithubApi (GithubOperation)
 import Metrics (
   MetricsOperation,
   increaseMergeAttemptedPRTotal,
+  increaseMergeFailedPRTotal,
   increaseMergedPRTotal,
   updateTrainSizeGauge,
  )
@@ -136,6 +137,7 @@ data Action :: Effect where
   GetLatestVersion :: Sha -> Action m (Either TagName Integer)
   GetChangelog :: TagName -> Sha -> Action m (Maybe Text)
   IncreaseMergeAttemptedMetric :: Priority -> Action m ()
+  IncreaseMergeFailedMetric :: Priority -> GitIntegrationFailure -> Action m ()
   IncreaseMergeMetric :: Priority -> Action m ()
   UpdateTrainSizeMetric :: Int -> Action m ()
 
@@ -233,6 +235,9 @@ registerMergedPR priority = send $ IncreaseMergeMetric priority
 registerMergeAttemptedPR :: Action :> es => Priority -> Eff es ()
 registerMergeAttemptedPR priority = send $ IncreaseMergeAttemptedMetric priority
 
+registerMergeFailedPR :: Action :> es => Priority -> GitIntegrationFailure -> Eff es ()
+registerMergeFailedPR priority reason = send $ IncreaseMergeFailedMetric priority reason
+
 triggerTrainSizeUpdate :: Action :> es => ProjectState -> Eff es ()
 triggerTrainSizeUpdate projectState = do
   let n = IntMap.size $ IntMap.filter Pr.isInProgress (Pr.pullRequests projectState)
@@ -306,6 +311,19 @@ runAction config =
       increaseMergeAttemptedPRTotal $ case priority of
         Normal -> "normal"
         High -> "high"
+    IncreaseMergeFailedMetric priority reason ->
+      increaseMergeFailedPRTotal
+        ( case priority of
+            Normal -> "normal"
+            High -> "high"
+        )
+        ( case reason of
+            MergeFailed -> "merge_failed"
+            RebaseFailed -> "rebase_failed"
+            WrongFixups -> "wrong_fixups"
+            EmptyRebase -> "empty_rebase"
+            FailedForcePush _ -> "failed_force_push"
+        )
     IncreaseMergeMetric priority ->
       increaseMergedPRTotal $ case priority of
         Normal -> "normal"
@@ -1192,11 +1210,12 @@ tryIntegratePullRequest pr state =
     do
       result <- tryIntegrate mergeMessage candidate (map Pr.pullRequestId train) $ Pr.alwaysAddMergeCommit approvalType
       case result of
-        Left (IntegrationFailure targetBranch reason) ->
+        Left (IntegrationFailure targetBranch reason) -> do
           -- If integrating failed, perform no further actions but do set the
           -- state to conflicted.
           -- If this is a speculative rebase, we wait before giving feedback.
           -- For WrongFixups, we can report issues right away.
+          registerMergeFailedPR priority reason
           pure $
             Pr.setIntegrationStatus prId (Conflicted targetBranch reason) $
               Pr.setNeedsFeedback prId (null train || reason == WrongFixups) state
