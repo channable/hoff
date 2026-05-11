@@ -14,6 +14,8 @@ module Metrics (
   updateTrainSizeGauge,
   registerGHCMetrics,
   registerProjectMetrics,
+  priorityLabelValue,
+  failReasonLabelValue,
 )
 where
 
@@ -24,6 +26,9 @@ import Effectful (Dispatch (Dynamic), DispatchOf, Eff, Effect, IOE, (:>))
 import Effectful.Dispatch.Dynamic (interpret, send)
 import Prometheus
 import Prometheus.Metric.GHC (ghcMetrics)
+
+import Git (GitIntegrationFailure (..))
+import Project (Priority (..))
 
 type ProjectLabel = Text
 type PriorityLabel = Text
@@ -52,6 +57,17 @@ increaseMergeAttemptedPRTotal priority = send $ MergeAttemptedBranch priority
 
 increaseMergeFailedPRTotal :: MetricsOperation :> es => PriorityLabel -> ReasonLabel -> Eff es ()
 increaseMergeFailedPRTotal priority reason = send $ MergeFailedBranch priority reason
+
+priorityLabelValue :: Priority -> PriorityLabel
+priorityLabelValue Normal = "normal"
+priorityLabelValue High = "high"
+
+failReasonLabelValue :: GitIntegrationFailure -> ReasonLabel
+failReasonLabelValue MergeFailed = "merge_failed"
+failReasonLabelValue RebaseFailed = "rebase_failed"
+failReasonLabelValue WrongFixups = "wrong_fixups"
+failReasonLabelValue EmptyRebase = "empty_rebase"
+failReasonLabelValue (FailedForcePush _) = "failed_force_push"
 
 updateTrainSizeGauge :: MetricsOperation :> es => Int -> Eff es ()
 updateTrainSizeGauge n = send $ UpdateTrainSize n

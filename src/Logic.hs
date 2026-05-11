@@ -81,9 +81,11 @@ import Git (
 import GithubApi (GithubOperation)
 import Metrics (
   MetricsOperation,
+  failReasonLabelValue,
   increaseMergeAttemptedPRTotal,
   increaseMergeFailedPRTotal,
   increaseMergedPRTotal,
+  priorityLabelValue,
   updateTrainSizeGauge,
  )
 import Parser (ParseResult (..), hoffIgnoreComment, isSuccess, parseMergeCommand, shouldIgnoreComment)
@@ -308,26 +310,13 @@ runAction config =
     GetChangelog prevTag curHead ->
       Git.shortlog (AsRefSpec prevTag) (AsRefSpec curHead)
     IncreaseMergeAttemptedMetric priority ->
-      increaseMergeAttemptedPRTotal $ case priority of
-        Normal -> "normal"
-        High -> "high"
+      increaseMergeAttemptedPRTotal $ priorityLabelValue priority
     IncreaseMergeFailedMetric priority reason ->
       increaseMergeFailedPRTotal
-        ( case priority of
-            Normal -> "normal"
-            High -> "high"
-        )
-        ( case reason of
-            MergeFailed -> "merge_failed"
-            RebaseFailed -> "rebase_failed"
-            WrongFixups -> "wrong_fixups"
-            EmptyRebase -> "empty_rebase"
-            FailedForcePush _ -> "failed_force_push"
-        )
+        (priorityLabelValue priority)
+        (failReasonLabelValue reason)
     IncreaseMergeMetric priority ->
-      increaseMergedPRTotal $ case priority of
-        Normal -> "normal"
-        High -> "high"
+      increaseMergedPRTotal $ priorityLabelValue priority
     UpdateTrainSizeMetric n -> updateTrainSizeGauge n
  where
   trainBranch :: [PullRequestId] -> Maybe Git.Branch
