@@ -79,7 +79,15 @@ import Git (
  )
 
 import GithubApi (GithubOperation)
-import Metrics (MetricsOperation, increaseMergedPRTotal, updateTrainSizeGauge)
+import Metrics (
+  MetricsOperation,
+  failReasonLabelValue,
+  increaseMergeAttemptedPRTotal,
+  increaseMergeFailedPRTotal,
+  increaseMergedPRTotal,
+  priorityLabelValue,
+  updateTrainSizeGauge,
+ )
 import Parser (ParseResult (..), hoffIgnoreComment, isSuccess, parseMergeCommand, shouldIgnoreComment)
 import Project (
   Approval (..),
@@ -130,7 +138,9 @@ data Action :: Effect where
   GetOpenPullRequests :: Action m (Maybe IntSet)
   GetLatestVersion :: Sha -> Action m (Either TagName Integer)
   GetChangelog :: TagName -> Sha -> Action m (Maybe Text)
-  IncreaseMergeMetric :: Action m ()
+  IncreaseMergeAttemptedMetric :: Priority -> Action m ()
+  IncreaseMergeFailedMetric :: Priority -> GitIntegrationFailure -> Action m ()
+  IncreaseMergeMetric :: Priority -> Action m ()
   UpdateTrainSizeMetric :: Int -> Action m ()
 
 type instance DispatchOf Action = 'Dynamic
@@ -221,8 +231,14 @@ getBaseBranch = send GetBaseBranch
 getProjectConfig :: RetrieveEnvironment :> es => Eff es ProjectConfiguration
 getProjectConfig = send GetProjectConfig
 
-registerMergedPR :: Action :> es => Eff es ()
-registerMergedPR = send IncreaseMergeMetric
+registerMergedPR :: Action :> es => Priority -> Eff es ()
+registerMergedPR priority = send $ IncreaseMergeMetric priority
+
+registerMergeAttemptedPR :: Action :> es => Priority -> Eff es ()
+registerMergeAttemptedPR priority = send $ IncreaseMergeAttemptedMetric priority
+
+registerMergeFailedPR :: Action :> es => Priority -> GitIntegrationFailure -> Eff es ()
+registerMergeFailedPR priority reason = send $ IncreaseMergeFailedMetric priority reason
 
 triggerTrainSizeUpdate :: Action :> es => ProjectState -> Eff es ()
 triggerTrainSizeUpdate projectState = do
@@ -293,7 +309,14 @@ runAction config =
       maybe (Right 0) (\t -> maybeToEither t $ parseVersion t) <$> Git.lastTag sha
     GetChangelog prevTag curHead ->
       Git.shortlog (AsRefSpec prevTag) (AsRefSpec curHead)
-    IncreaseMergeMetric -> increaseMergedPRTotal
+    IncreaseMergeAttemptedMetric priority ->
+      increaseMergeAttemptedPRTotal $ priorityLabelValue priority
+    IncreaseMergeFailedMetric priority reason ->
+      increaseMergeFailedPRTotal
+        (priorityLabelValue priority)
+        (failReasonLabelValue reason)
+    IncreaseMergeMetric priority ->
+      increaseMergedPRTotal $ priorityLabelValue priority
     UpdateTrainSizeMetric n -> updateTrainSizeGauge n
  where
   trainBranch :: [PullRequestId] -> Maybe Git.Branch
@@ -513,6 +536,7 @@ tryPromotePullRequest pullRequest state =
             return (Pr.updatePullRequest prId (\pr' -> pr'{Pr.pausedMessageSent = True}) state)
           _ -> pure state
       else do
+        registerMergeAttemptedPR priority
         pushResult <- case Pr.integrationStatus pullRequest of
           -- If we only need to promote, we can just try pushing.
           Pr.Promote _ sha -> tryPromote sha
@@ -545,7 +569,7 @@ tryPromotePullRequest pullRequest state =
           -- the integration candidate, so we proceed with the next pull request.
           PushOk -> do
             cleanupTestBranch prId
-            registerMergedPR
+            registerMergedPR priority
             currTime <- getDateTime
             pure $
               Pr.updatePullRequests (unspeculateConflictsAfter pullRequest) $
@@ -1175,11 +1199,12 @@ tryIntegratePullRequest pr state =
     do
       result <- tryIntegrate mergeMessage candidate (map Pr.pullRequestId train) $ Pr.alwaysAddMergeCommit approvalType
       case result of
-        Left (IntegrationFailure targetBranch reason) ->
+        Left (IntegrationFailure targetBranch reason) -> do
           -- If integrating failed, perform no further actions but do set the
           -- state to conflicted.
           -- If this is a speculative rebase, we wait before giving feedback.
           -- For WrongFixups, we can report issues right away.
+          registerMergeFailedPR priority reason
           pure $
             Pr.setIntegrationStatus prId (Conflicted targetBranch reason) $
               Pr.setNeedsFeedback prId (null train || reason == WrongFixups) state
