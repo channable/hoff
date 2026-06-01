@@ -22,8 +22,9 @@
 # some places (which we can't change).
 set -evo pipefail
 
-# Mount additional storage, which we use for the Nix store.
-sudo mount /dev/sdc1 /mnt
+# Mount additional storage, which we use for the Nix store instead of Docker storage
+DOCKER_DEV=$(findmnt --noheadings --output SOURCE /var/lib/docker)
+sudo mount "$DOCKER_DEV" /mnt
 
 # Install Nix. We install in single-user mode (--no-daemon) because the Nix
 # process can access the running SSH agent to fetch private Git repositories.
@@ -47,7 +48,7 @@ sudo rm -rf \
     /mnt/docker.qcow2 \
     /usr/lib/jvm \
     /usr/local/lib/heroku \
-    /var/lib/docker
+    /var/lib/docker/*
 
 # Hotfix for Semaphore issue preventing installing Nix
 unset LD_LIBRARY_PATH
