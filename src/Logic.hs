@@ -124,7 +124,6 @@ data Action :: Effect where
     :: { _mergeCommitMessage :: Text
        , _integrationCandidate :: (PullRequestId, Branch, Sha)
        , _train :: [PullRequestId]
-       , _alwaysAddMergeCommit :: Bool
        }
     -> Action m (Either IntegrationFailure Sha)
   TryForcePush :: Branch -> Sha -> Action m PushResult
@@ -171,10 +170,9 @@ tryIntegrate
   => Text
   -> (PullRequestId, Branch, Sha)
   -> [PullRequestId]
-  -> Bool
   -> Eff es (Either IntegrationFailure Sha)
-tryIntegrate mergeMessage candidate train alwaysAddMergeCommit =
-  send $ TryIntegrate mergeMessage candidate train alwaysAddMergeCommit
+tryIntegrate mergeMessage candidate train =
+  send $ TryIntegrate mergeMessage candidate train
 
 -- | Try to fast-forward the remote target branch (usually master) to the new sha.
 -- Before doing so, force-push that SHA to the pull request branch, and after
@@ -253,7 +251,7 @@ runAction
   -> Eff es a
 runAction config =
   interpret $ \_ -> \case
-    TryIntegrate message (pr, ref, sha) train alwaysAddMergeCommit -> do
+    TryIntegrate message (pr, ref, sha) train -> do
       ensureCloned config
 
       let targetBranch = fromMaybe (Git.Branch $ Config.branch config) (trainBranch train)
@@ -265,7 +263,6 @@ runAction config =
           sha
           (Git.toRemoteBranch targetBranch)
           (testBranch config pr)
-          alwaysAddMergeCommit
 
       case shaOrFailed of
         Left failure -> pure $ Left $ IntegrationFailure (Git.toBaseBranch targetBranch) failure
@@ -1197,7 +1194,7 @@ tryIntegratePullRequest pr state =
     train = takeWhile (\p -> Pr.pullRequestId p /= Pr.pullRequestId pr) $ Pr.unfailedIntegratedPullRequests state
   in
     do
-      result <- tryIntegrate mergeMessage candidate (map Pr.pullRequestId train) $ Pr.alwaysAddMergeCommit approvalType
+      result <- tryIntegrate mergeMessage candidate (map Pr.pullRequestId train)
       case result of
         Left (IntegrationFailure targetBranch reason) -> do
           -- If integrating failed, perform no further actions but do set the

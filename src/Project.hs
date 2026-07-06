@@ -55,7 +55,6 @@ module Project (
   loadProjectState,
   lookupPullRequest,
   saveProjectState,
-  alwaysAddMergeCommit,
   needsDeploy,
   isIntegratedOrSpeculativelyConflicted,
   needsTag,
@@ -599,12 +598,6 @@ displayMergeCommand (Approve (MergeAndDeploy subprojects (DeployEnvironment env)
       in  format "merge and deploy {} to {}" (subs, env)
 displayMergeCommand (Approve MergeAndTag) = "merge and tag"
 displayMergeCommand Retry = "retry"
-
--- | Whether the specified approval type requires a merge commit to be created.
--- This is currently the case if a tag is to be created, because the deployment
--- instructions are recorded in the merge commit's message.
-alwaysAddMergeCommit :: ApprovedFor -> Bool
-alwaysAddMergeCommit = needsTag
 
 needsDeploy :: ApprovedFor -> Bool
 needsDeploy Merge = False

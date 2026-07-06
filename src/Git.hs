@@ -580,8 +580,8 @@ runGitReadOnly userConfig repoDir = runGit userConfig repoDir . augmentedGitOper
 -- Fetches the target branch, rebases the candidate on top of the target branch,
 -- and if that was successful, force-pushes the resulting commits to the test
 -- branch.
-tryIntegrate :: GitOperation :> es => Text -> Branch -> Sha -> RemoteBranch -> Branch -> Bool -> Eff es (Either GitIntegrationFailure Sha)
-tryIntegrate message candidateRef candidateSha targetBranch testBranch alwaysAddMergeCommit = do
+tryIntegrate :: GitOperation :> es => Text -> Branch -> Sha -> RemoteBranch -> Branch -> Eff es (Either GitIntegrationFailure Sha)
+tryIntegrate message candidateRef candidateSha targetBranch testBranch = do
   -- Fetch the ref for the target commit that needs to be rebased, we might not
   -- have it yet. Although Git supports fetching single commits, GitHub does
   -- not, so we fetch the /refs/pull/:id/head ref that GitHub creates for every
@@ -608,10 +608,6 @@ tryIntegrate message candidateRef candidateSha targetBranch testBranch alwaysAdd
           -- After the rebase, we also do a (non-fast-forward) merge, to clarify
           -- that this is a single unit of change; a way to fake "chapters" in the
           -- history.
-          -- We only do this if there is more than one commit to integrate (so the
-          -- history stays linear for single-commit PRs) or the PR was approved for
-          -- merge and deploy (because we can't record the "Auto-deploy: true"
-          -- trailer otherwise).
           -- If not (i.e. the current master is the parent of the proposed commit
           -- and the approval type is not MergeAndDeploy) then we just take that
           -- commit as-is.
@@ -619,14 +615,11 @@ tryIntegrate message candidateRef candidateSha targetBranch testBranch alwaysAdd
           if hasOrphanFixups
             then pure $ Left WrongFixups
             else do
-              targetBranchSha <- checkout targetBranch
+              _ <- checkout targetBranch
               parentSha <- getParent sha
               newTip <- case parentSha of
                 Nothing -> pure $ Just sha
-                parent
-                  | alwaysAddMergeCommit -> merge sha message
-                  | parent == targetBranchSha -> pure $ Just sha
-                _moreThanOneCommitBehind -> merge sha message
+                _parent -> merge sha message
 
               -- If both the rebase, and the (potential) merge went well, push it to the
               -- testing branch so CI will build it.

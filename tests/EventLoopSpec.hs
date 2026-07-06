@@ -462,16 +462,26 @@ eventLoopSpec = parallel $ do
         -- Commit c4 is one commit ahead of master, so integrating it can be done
         -- with a fast-forward merge. Run the main event loop for these events
         -- and discard the final state by using 'void'.
-        void $
+        state <-
           runLoop
             Project.emptyProjectState
             [ Logic.PullRequestOpened pr4 branch baseBranch c4 "Add Leon test results" "deckard" Nothing
             , Logic.CommentAdded pr4 "rachael" Nothing "@bot merge"
-            , Logic.BuildStatusChanged c4 "default" BuildSucceeded
-            , Logic.PullRequestCommitChanged (PullRequestId 4) c4
+            ]
+
+        let [rebasedSha] = integrationShas state
+
+        void $
+          runLoop
+            state
+            [ Logic.BuildStatusChanged rebasedSha "default" BuildSucceeded
+            , Logic.PullRequestCommitChanged (PullRequestId 4) rebasedSha
             ]
       history
-        `shouldBe` [ "* c4"
+        `shouldBe` [ "*   Merge #4"
+                   , "|\\"
+                   , "| * c4"
+                   , "|/"
                    , "* c3"
                    , "* c2"
                    , "* c1"
@@ -495,15 +505,25 @@ eventLoopSpec = parallel $ do
         -- Commit c4 is one commit ahead of master, so integrating it can be done
         -- with a fast-forward merge. Run the main event loop for these events
         -- and discard the final state by using 'void'.
-        void $
+        state <-
           runLoop
             Project.emptyProjectState
             [ Logic.PullRequestOpened pr4 branch baseBranch c4 "Add Leon test results" "deckard" (Just "@bot merge")
-            , Logic.BuildStatusChanged c4 "default" BuildSucceeded
-            , Logic.PullRequestCommitChanged (PullRequestId 4) c4
+            ]
+
+        let [rebasedSha] = integrationShas state
+
+        void $
+          runLoop
+            state
+            [ Logic.BuildStatusChanged rebasedSha "default" BuildSucceeded
+            , Logic.PullRequestCommitChanged (PullRequestId 4) rebasedSha
             ]
       history
-        `shouldBe` [ "* c4"
+        `shouldBe` [ "*   Merge #4"
+                   , "|\\"
+                   , "| * c4"
+                   , "|/"
                    , "* c3"
                    , "* c2"
                    , "* c1"
@@ -901,7 +921,10 @@ eventLoopSpec = parallel $ do
             ]
 
       history
-        `shouldBe` [ "* c4"
+        `shouldBe` [ "*   Merge #4"
+                   , "|\\"
+                   , "| * c4"
+                   , "|/"
                    , "*   Merge #6"
                    , "|\\"
                    , "| * c6"
@@ -1548,7 +1571,10 @@ eventLoopSpec = parallel $ do
       -- The real commit should be merged into master, with the empty commit
       -- dropped.
       history
-        `shouldBe` [ "* cReal"
+        `shouldBe` [ "*   Merge #10"
+                   , "|\\"
+                   , "| * cReal"
+                   , "|/"
                    , "* c3"
                    , "* c2"
                    , "* c1"

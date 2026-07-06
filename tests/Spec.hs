@@ -136,7 +136,6 @@ data ActionFlat
       { mergeMessage :: Text
       , integrationCandidate :: (PullRequestId, Branch, Sha)
       , mergeTrain :: [PullRequestId]
-      , alwaysAddMergeCommit :: Bool
       }
   | ATryForcePush Branch Sha
   | ATryPromote Sha
@@ -267,8 +266,8 @@ runActionResults =
   let -- In the tests, only "deckard" is a reviewer.
       isReviewer username = elem username ["deckard", "bot"]
   in  interpret $ \_ -> \case
-        TryIntegrate msg candidate train alwaysAddMergeCommit' -> do
-          Writer.tell [ATryIntegrate msg candidate train alwaysAddMergeCommit']
+        TryIntegrate msg candidate train -> do
+          Writer.tell [ATryIntegrate msg candidate train]
           takeResultIntegrate
         TryForcePush prBranch headSha -> do
           Writer.tell [ATryForcePush prBranch headSha]
@@ -591,7 +590,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "a38")
                       []
-                      False
                    , ALeaveComment
                       (PullRequestId 1)
                       "<!-- Hoff: ignore -->\nFailed to rebase, please rebase manually using\n\n\
@@ -628,7 +626,6 @@ main = hspec $ do
                       "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "a38")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
@@ -636,7 +633,6 @@ main = hspec $ do
                       "Merge #2: Some PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "dec")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as c82 behind 1 other PR, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPull request approved for merge and deploy to staging by @deckard, waiting for rebase behind 2 pull requests."
@@ -644,7 +640,6 @@ main = hspec $ do
                       "Merge #3: Another PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "f16")
                       [PullRequestId 1, PullRequestId 2]
-                      True
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as d93 behind 2 other PRs, waiting for CI …"
                    ]
       classifiedPullRequestIds finalState
@@ -678,7 +673,6 @@ main = hspec $ do
                       "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "a38")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
@@ -686,7 +680,6 @@ main = hspec $ do
                       "Merge #3: Another PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "f16")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as b72 behind 1 other PR, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind 2 pull requests."
@@ -694,7 +687,6 @@ main = hspec $ do
                       "Merge #2: Some PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "dec")
                       [PullRequestId 1, PullRequestId 3]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as b73 behind 2 other PRs, waiting for CI …"
                    ]
       Project.pullRequestApprovalIndex state' `shouldBe` 3
@@ -772,7 +764,6 @@ main = hspec $ do
                       "Merge #2: Some PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "dec")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
@@ -780,7 +771,6 @@ main = hspec $ do
                       "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "a38")
                       [PullRequestId 2]
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nSpeculatively rebased as b72 behind 1 other PR, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind 2 pull requests."
@@ -788,7 +778,6 @@ main = hspec $ do
                       "Merge #3: Another PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "f16")
                       [PullRequestId 2, PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as b73 behind 2 other PRs, waiting for CI …"
                    ]
 
@@ -823,7 +812,6 @@ main = hspec $ do
                       "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "a38")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, waiting for rebase behind one pull request."
@@ -831,7 +819,6 @@ main = hspec $ do
                       "Merge #2: Some PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "dec")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as b72 behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "Abandoning this pull request because it was closed."
                    , ACleanupTestBranch (PullRequestId 1)
@@ -839,7 +826,6 @@ main = hspec $ do
                       "Merge #2: Some PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "dec")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as b73, waiting for CI …"
                    ]
       classifiedPullRequestIds state'
@@ -869,7 +855,6 @@ main = hspec $ do
                       "Merge #1: title\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (prId, Branch "refs/pull/1/head", Sha "e0f")
                       []
-                      False
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
                    ]
       classifiedPullRequestIds state'
@@ -903,7 +888,6 @@ main = hspec $ do
                       "Merge #1: title\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (prId, Branch "refs/pull/1/head", Sha "e0f")
                       []
-                      False
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI …"
                    , ALeaveComment prId "Abandoning this pull request because it was closed."
                    , ACleanupTestBranch (PullRequestId 1)
@@ -1111,7 +1095,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      True
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1135,7 +1118,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      True
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1174,7 +1156,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      True
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1195,7 +1176,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      True
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1216,7 +1196,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      True
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1240,7 +1219,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      True
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1264,7 +1242,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: aaa\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      True
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1288,7 +1265,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: aaa, bbb\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      True
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1312,7 +1288,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      True
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1336,7 +1311,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      True
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1360,7 +1334,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      True
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1384,7 +1357,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      True
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1408,7 +1380,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      False
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1432,7 +1403,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      False
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1459,7 +1429,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: bot\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      False
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1495,7 +1464,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (prId, Branch "refs/pull/1/head", Sha "abc1234")
                       , mergeTrain = []
-                      , alwaysAddMergeCommit = True
                       }
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
                    ]
@@ -1532,7 +1500,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                       , integrationCandidate = (prId, Branch "refs/pull/1/head", Sha "abc1234")
                       , mergeTrain = []
-                      , alwaysAddMergeCommit = True
                       }
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
                    ]
@@ -1569,7 +1536,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (prId, Branch "refs/pull/1/head", Sha "abc1234")
                       , mergeTrain = []
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
                    ]
@@ -1621,7 +1587,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (prId, Branch "refs/pull/1/head", Sha "abc1234")
                       , mergeTrain = []
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
                    ]
@@ -1676,7 +1641,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (prId, Branch "refs/pull/1/head", Sha "abc1234")
                       , mergeTrain = []
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
                    ]
@@ -1701,7 +1665,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                       , integrationCandidate = (prId, Branch "refs/pull/1/head", Sha "abc1234")
                       , mergeTrain = []
-                      , alwaysAddMergeCommit = True
                       }
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
                    ]
@@ -1729,7 +1692,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       , mergeTrain = []
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment
                       (PullRequestId 1)
@@ -1776,7 +1738,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
                    ]
 
@@ -1804,7 +1765,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
                    , ALeaveComment (PullRequestId 1) "Stopping integration because the PR changed after approval."
                    , ACleanupTestBranch (PullRequestId 1)
@@ -1834,7 +1794,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
                    , ALeaveComment (PullRequestId 1) "Stopping integration because the PR changed after approval."
                    , ACleanupTestBranch (PullRequestId 1)
@@ -1865,7 +1824,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      True
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1919,7 +1877,7 @@ main = hspec $ do
         actions
           `shouldBe` [ AIsReviewer (Username "bot")
                      , ALeaveComment prId approvalMessage
-                     , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: bot\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
+                     , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: bot\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") []
                      , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
                      , ALeaveComment prId "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                      , ATryForcePush (Branch "p") (Sha "def2345")
@@ -1947,7 +1905,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: staging\nDeploy-Subprojects: all\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      True
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \x2026"
                    ]
 
@@ -1983,7 +1940,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a")
                       []
-                      False
                    , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
@@ -1994,7 +1950,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a")
                       []
-                      False
                    , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b3, waiting for CI …"
                    , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    ]
@@ -2037,7 +1992,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    , AIsReviewer (Username "deckard")
@@ -2049,7 +2003,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b2 behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nThe [build failed :x:](example.com/1b2).\n\nIf this is the result of a flaky test, then tag me again with the `retry` command.  Otherwise, push a new commit and tag me again."
@@ -2060,7 +2013,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 3b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
                    , ATryIntegrate
@@ -2070,7 +2022,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 4b2, waiting for CI …"
                    ]
 
@@ -2120,7 +2071,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    , AIsReviewer (Username "deckard")
@@ -2132,7 +2082,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b2 behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
                    , AIsReviewer (Username "deckard")
@@ -2144,7 +2093,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ab3")
                       [PullRequestId 1, PullRequestId 2]
-                      False
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3b2 behind 2 other PRs, waiting for CI …"
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3b2) started."
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPush to master detected, rebasing again."
@@ -2157,7 +2105,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b3, waiting for CI …"
                    , ATryIntegrate
                       "Merge #2: ... Of the ...\n\n\
@@ -2166,7 +2113,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b3 behind 1 other PR, waiting for CI …"
                    , ATryIntegrate
                       "Merge #3: ... Performance\n\n\
@@ -2175,7 +2121,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ab3")
                       [PullRequestId 1, PullRequestId 2]
-                      False
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3b3 behind 2 other PRs, waiting for CI …"
                    ]
 
@@ -2227,7 +2172,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    , AIsReviewer (Username "deckard")
@@ -2239,7 +2183,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b2 behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
                    , AIsReviewer (Username "deckard")
@@ -2251,7 +2194,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ab3")
                       [PullRequestId 1, PullRequestId 2]
-                      False
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3b2 behind 2 other PRs, waiting for CI …"
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3b2) started."
                    , ATryForcePush (Branch "fst") (Sha "1b2")
@@ -2308,7 +2250,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    , AIsReviewer (Username "deckard")
@@ -2320,7 +2261,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b2 behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
                    , AIsReviewer (Username "deckard")
@@ -2332,7 +2272,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ab3")
                       [PullRequestId 1, PullRequestId 2]
-                      False
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3b2 behind 2 other PRs, waiting for CI …"
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3b2) started."
                    , ATryForcePush (Branch "fst") (Sha "1b2")
@@ -2381,7 +2320,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    , AIsReviewer (Username "deckard")
@@ -2393,7 +2331,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b2 behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
                    , ATryForcePush (Branch "fst") (Sha "1b2")
@@ -2407,7 +2344,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 2b3, waiting for CI …"
                    ]
 
@@ -2428,7 +2364,7 @@ main = hspec $ do
         actions
           `shouldBe` [ AIsReviewer (Username "deckard")
                      , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-                     , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
+                     , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") []
                      , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
                      , ALeaveComment prId "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                      , ATryForcePush (Branch "p") (Sha "def2345")
@@ -2451,7 +2387,7 @@ main = hspec $ do
         actions
           `shouldBe` [ AIsReviewer (Username "deckard")
                      , ALeaveComment prId "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-                     , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") [] False
+                     , ATryIntegrate "Merge #1: Untitled\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 1, Branch "refs/pull/1/head", Sha "abc1234") []
                      , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI \8230"
                      , ALeaveComment prId "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                      , ATryForcePush (Branch "p") (Sha "def2345")
@@ -2501,7 +2437,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    , ATryForcePush (Branch "fst") (Sha "1b2")
@@ -2517,7 +2452,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b2 behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
                    , ATryPromote (Sha "1b2")
@@ -2562,7 +2496,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    , ATryForcePush (Branch "fst") (Sha "1b2")
@@ -2574,7 +2507,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 2b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
                    , ATryForcePush (Branch "fst") (Sha "2b2")
@@ -2620,7 +2552,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    , ATryForcePush (Branch "fst") (Sha "1b2")
@@ -2632,7 +2563,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 2b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
                    , ATryForcePush (Branch "fst") (Sha "2b2")
@@ -2685,7 +2615,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    , AIsReviewer "deckard"
@@ -2700,7 +2629,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "ab2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2b2 behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2b2) started."
                    , ATryForcePush (Branch "fst") (Sha "1b2")
@@ -2743,7 +2671,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    , ATryForcePush (Branch "fst") (Sha "1b2")
@@ -2771,7 +2698,6 @@ main = hspec $ do
                       "Merge #1: Untitled\n\nApproved-by: fred\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "f34")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 38c, waiting for CI \x2026"
                    ]
     it "finds a new candidate with multiple PRs" $ do
@@ -2800,13 +2726,11 @@ main = hspec $ do
                       "Merge #2: Another untitled\n\nApproved-by: fred\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "g35")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 38c, waiting for CI \x2026"
                    , ATryIntegrate
                       "Merge #1: Untitled\n\nApproved-by: fred\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "f34")
                       [PullRequestId 2]
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nSpeculatively rebased as 49d behind 1 other PR, waiting for CI \x2026"
                    ]
 
@@ -2919,7 +2843,6 @@ main = hspec $ do
                       "Merge #1: Add my test results\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "f35")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 38e, waiting for CI \x2026"
                    ]
 
@@ -2968,7 +2891,6 @@ main = hspec $ do
                       "Merge #1: Add my test results\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "f35")
                       []
-                      True
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 38e, waiting for CI \x2026"
                    ]
 
@@ -3013,7 +2935,6 @@ main = hspec $ do
                       "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "a39")
                       []
-                      False
                    , -- The first rebase succeeds.
                      ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI \x2026"
                    , -- The first promotion attempt fails
@@ -3023,7 +2944,6 @@ main = hspec $ do
                       "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "a39")
                       []
-                      False
                    , ALeaveComment
                       (PullRequestId 1)
                       "<!-- Hoff: ignore -->\nFailed to rebase, please rebase manually using\n\n\
@@ -3080,7 +3000,6 @@ main = hspec $ do
                       "Merge #2: Add my test results\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "f37")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 38e, waiting for CI \x2026"
                    ]
 
@@ -3128,7 +3047,6 @@ main = hspec $ do
                       "Merge #1: Add Nexus 7 experiment\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "a39")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as b71, waiting for CI \x2026"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](https://status.example.com/b71) started."
                    , ALeaveComment
@@ -3482,7 +3400,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a")
                       []
-                      False
                    , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    ]
@@ -3522,7 +3439,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a")
                       []
-                      False
                    , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    , ALeaveComment
@@ -3568,7 +3484,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a")
                       []
-                      False
                    , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                    , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1b2) started."
                    , ATryForcePush (Branch "tth") (Sha "1b2")
@@ -3636,7 +3551,6 @@ main = hspec $ do
                         \Auto-deploy: false\n"
                         (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a")
                         []
-                        False
                      , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                      , AIsReviewer (Username "deckard")
                      , ALeaveComment
@@ -3650,7 +3564,6 @@ main = hspec $ do
                         \Auto-deploy: false\n"
                         (PullRequestId 13, Branch "refs/pull/13/head", Sha "13a")
                         [PullRequestId 12]
-                        False
                      , ALeaveComment (PullRequestId 13) "<!-- Hoff: ignore -->\nSpeculatively rebased as 1b3 behind 1 other PR, waiting for CI …"
                      , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
                      , ATryForcePush (Branch "tth") (Sha "1b2")
@@ -3708,7 +3621,6 @@ main = hspec $ do
                         \Auto-deploy: false\n"
                         (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a")
                         []
-                        False
                      , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                      , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
                      , ATryForcePush (Branch "tth") (Sha "1b2")
@@ -3763,7 +3675,6 @@ main = hspec $ do
                         \Auto-deploy: false\n"
                         (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a")
                         []
-                        False
                      , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                      , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
                      , ALeaveComment
@@ -3819,7 +3730,6 @@ main = hspec $ do
                         \Auto-deploy: false\n"
                         (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a")
                         []
-                        False
                      , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                      , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
                      ]
@@ -3871,7 +3781,6 @@ main = hspec $ do
                         \Auto-deploy: false\n"
                         (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a")
                         []
-                        False
                      , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                      , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
                      , ATryForcePush (Branch "tth") (Sha "1b2")
@@ -3926,7 +3835,6 @@ main = hspec $ do
                         \Auto-deploy: false\n"
                         (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a")
                         []
-                        False
                      , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                      , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
                      , ATryForcePush (Branch "tth") (Sha "1b2")
@@ -3978,7 +3886,6 @@ main = hspec $ do
                             \Auto-deploy: false\n"
                             (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a")
                             []
-                            False
                          , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI …"
                          , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/required/1b2) started."
                          , ALeaveComment
@@ -4039,7 +3946,7 @@ main = hspec $ do
         commonActions =
           [ AIsReviewer (Username "deckard")
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-          , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
+          , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") []
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI \8230"
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](url) started."
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nThe [build failed :x:](url).\n\nIf this is the result of a flaky test, then tag me again with the `retry` command.  Otherwise, push a new commit and tag me again."
@@ -4084,7 +3991,7 @@ main = hspec $ do
           [ AIsReviewer (Username "deckard")
           , ACleanupTestBranch (PullRequestId 12)
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard (retried by @deckard), rebasing now."
-          , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
+          , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") []
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 00f, waiting for CI …"
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](url2) started."
           , ATryForcePush (Branch "tth") (Sha "00f")
@@ -4114,7 +4021,7 @@ main = hspec $ do
           [ AIsReviewer (Username "deckard")
           , ACleanupTestBranch (PullRequestId 12)
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard (retried by @deckard), rebasing now."
-          , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
+          , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") []
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 00f, waiting for CI …"
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](url2) started."
           , ATryForcePush (Branch "tth") (Sha "00f")
@@ -4146,7 +4053,7 @@ main = hspec $ do
           [ AIsReviewer (Username "deckard")
           , ACleanupTestBranch (PullRequestId 12)
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard (retried by @deckard), rebasing now."
-          , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
+          , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") []
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 00f, waiting for CI …"
           , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](url2) started."
           , ATryForcePush (Branch "tth") (Sha "00f")
@@ -4170,7 +4077,7 @@ main = hspec $ do
           actions' =
             [ AIsReviewer (Username "deckard")
             , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
-            , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") [] False
+            , ATryIntegrate "Merge #12: Twelfth PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n" (PullRequestId 12, Branch "refs/pull/12/head", Sha "12a") []
             , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\nRebased as 1b2, waiting for CI \8230"
             , ALeaveComment (PullRequestId 12) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](url) started."
             , AIsReviewer (Username "deckard")
@@ -4239,7 +4146,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 19, Branch "refs/pull/19/head", Sha "19a")
                       []
-                      False
                    , ALeaveComment (PullRequestId 19) "<!-- Hoff: ignore -->\nRebased as a19, waiting for CI …"
                    , ALeaveComment
                       (PullRequestId 19)
@@ -4258,7 +4164,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 36, Branch "refs/pull/36/head", Sha "36b")
                       []
-                      False
                    , ALeaveComment (PullRequestId 36) "<!-- Hoff: ignore -->\nRebased as b36, waiting for CI …"
                    , ALeaveComment
                       (PullRequestId 36)
@@ -4378,7 +4283,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -4392,7 +4296,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2bc behind 1 other PR, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -4406,7 +4309,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                       [PullRequestId 1, PullRequestId 2]
-                      False
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3cd behind 2 other PRs, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "Stopping integration because the PR changed after approval."
                    , ACleanupTestBranch (PullRequestId 1)
@@ -4417,7 +4319,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 5bc, waiting for CI …"
                    , ATryIntegrate
                       "Merge #3: Third PR\n\n\
@@ -4426,7 +4327,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                       [PullRequestId 2]
-                      False
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 6cd behind 1 other PR, waiting for CI …"
                    ]
       classifiedPullRequestIds finalState
@@ -4472,7 +4372,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -4486,7 +4385,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , -- We could post a comment like this, but it would be confusing...
                      -- , ALeaveComment (PullRequestId 2) "Failed speculative rebase.  Waiting in the queue for a rebase on master."
                      AIsReviewer "deckard"
@@ -4501,7 +4399,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3cd behind 1 other PR, waiting for CI …"
                    , ATryForcePush (Branch "fst") (Sha "1ab")
                    , ATryPromote (Sha "1ab")
@@ -4556,7 +4453,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -4570,7 +4466,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , -- We could post a comment like this, but it would be confusing...
                      -- , ALeaveComment (PullRequestId 2) "Failed speculative rebase.  Waiting in the queue for a rebase on master."
                      AIsReviewer "deckard"
@@ -4585,7 +4480,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3cd behind 1 other PR, waiting for CI …"
                    , ALeaveComment
                       (PullRequestId 1)
@@ -4601,7 +4495,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 5bc, waiting for CI …"
                    , ATryIntegrate
                       "Merge #3: Third PR\n\n\
@@ -4610,7 +4503,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                       [PullRequestId 2]
-                      False
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 6cd behind 1 other PR, waiting for CI …"
                    ]
       classifiedPullRequestIds finalState
@@ -4652,7 +4544,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -4666,7 +4557,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment
                       (PullRequestId 2)
                       "<!-- Hoff: ignore -->\nPull request cannot be integrated\
@@ -4720,7 +4610,6 @@ main = hspec $ do
                         \Auto-deploy: false\n"
                         (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                         []
-                        False
                      , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                      , AIsReviewer "deckard"
                      , ALeaveComment
@@ -4734,7 +4623,6 @@ main = hspec $ do
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                         [PullRequestId 1]
-                        False
                      , ALeaveComment
                         (PullRequestId 2)
                         "<!-- Hoff: ignore -->\nPull request cannot be integrated\
@@ -4752,7 +4640,6 @@ main = hspec $ do
                         \Auto-deploy: false\n"
                         (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                         [PullRequestId 1]
-                        False
                      , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3cd behind 1 other PR, waiting for CI …"
                      , -- upon commit changed on PR#2, there is no reason to reintegrate PR#3
                        -- PR#2 is moved to the end of the train after a new merge command
@@ -4768,7 +4655,6 @@ main = hspec $ do
                         \Auto-deploy: false\n"
                         (PullRequestId 2, Branch "refs/pull/2/head", Sha "c2d")
                         [PullRequestId 1, PullRequestId 3]
-                        False
                      , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2bc behind 2 other PRs, waiting for CI …"
                      ]
         classifiedPullRequestIds finalState
@@ -4814,7 +4700,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -4828,7 +4713,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2cd behind 1 other PR, waiting for CI …"
                    , ATryForcePush (Branch "fst") (Sha "1ab")
                    , ATryPromote (Sha "1ab")
@@ -4874,7 +4758,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -4888,7 +4771,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2cd behind 1 other PR, waiting for CI …"
                    , ATryForcePush (Branch "fst") (Sha "1ab")
                    , ATryPromote (Sha "1ab")
@@ -4932,7 +4814,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -4946,7 +4827,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2cd behind 1 other PR, waiting for CI …"
                    , ALeaveComment
                       (PullRequestId 1)
@@ -4962,7 +4842,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 22e, waiting for CI …"
                    , ALeaveComment
                       (PullRequestId 2)
@@ -5014,7 +4893,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -5028,7 +4906,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2cd behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculative build failed :x:.  I will automatically retry after getting build results for #1."
                    , ALeaveComment
@@ -5045,7 +4922,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 22e, waiting for CI …"
                    , ALeaveComment
                       (PullRequestId 2)
@@ -5096,7 +4972,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -5110,7 +4985,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2cd behind 1 other PR, waiting for CI …"
                    , ATryForcePush (Branch "fst") (Sha "1ab")
                    , ATryPromote (Sha "1ab")
@@ -5157,7 +5031,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -5171,7 +5044,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2cd behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculative build failed :x:.  I will automatically retry after getting build results for #1."
                    , ATryForcePush (Branch "fst") (Sha "1ab")
@@ -5221,7 +5093,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -5235,7 +5106,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2cd behind 1 other PR, waiting for CI …"
                    , ALeaveComment
                       (PullRequestId 1)
@@ -5250,7 +5120,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 22e, waiting for CI …"
                    , ATryForcePush (Branch "snd") (Sha "22e")
                    , ATryPromote (Sha "22e")
@@ -5293,7 +5162,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -5307,7 +5175,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2cd behind 1 other PR, waiting for CI …"
                    , ALeaveComment
                       (PullRequestId 1)
@@ -5322,7 +5189,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 22e, waiting for CI …"
                    , ATryForcePush (Branch "snd") (Sha "22e")
                    , ATryPromote (Sha "22e")
@@ -5365,7 +5231,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -5379,7 +5244,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2cd behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "Abandoning this pull request because it was closed."
                    , ACleanupTestBranch (PullRequestId 1)
@@ -5390,7 +5254,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 22e, waiting for CI …"
                    , ATryForcePush (Branch "snd") (Sha "22e")
                    , ATryPromote (Sha "22e")
@@ -5466,7 +5329,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -5480,7 +5342,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2bc behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
                    , AIsReviewer "deckard"
@@ -5495,7 +5356,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                       [PullRequestId 1, PullRequestId 2]
-                      False
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3cd behind 2 other PRs, waiting for CI …"
                    , ATryForcePush (Branch "fst") (Sha "1ab")
                    , ATryPromote (Sha "1ab")
@@ -5580,7 +5440,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 9, Branch "refs/pull/9/head", Sha "ab9")
                       []
-                      False
                    , ALeaveComment (PullRequestId 9) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -5594,7 +5453,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 8, Branch "refs/pull/8/head", Sha "cd8")
                       [PullRequestId 9]
-                      False
                    , ALeaveComment (PullRequestId 8) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2bc behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 9) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
                    , AIsReviewer "deckard"
@@ -5609,7 +5467,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 7, Branch "refs/pull/7/head", Sha "ef7")
                       [PullRequestId 9, PullRequestId 8]
-                      False
                    , ALeaveComment (PullRequestId 7) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3cd behind 2 other PRs, waiting for CI …"
                    , ATryForcePush (Branch "nth") (Sha "1ab")
                    , ATryPromote (Sha "1ab")
@@ -5629,7 +5486,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 7, Branch "refs/pull/7/head", Sha "ef7")
                       []
-                      False
                    , ALeaveComment (PullRequestId 7) "<!-- Hoff: ignore -->\nRebased as 3ef, waiting for CI …"
                    , ALeaveComment (PullRequestId 7) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3ef) started."
                    , ATryForcePush (Branch "sth") (Sha "3ef")
@@ -5714,7 +5570,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -5728,7 +5583,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2bc behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
                    , AIsReviewer "deckard"
@@ -5743,7 +5597,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                       [PullRequestId 1, PullRequestId 2]
-                      False
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3cd behind 2 other PRs, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -5757,7 +5610,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 4, Branch "refs/pull/4/head", Sha "fe4")
                       [PullRequestId 1, PullRequestId 2, PullRequestId 3]
-                      False
                    , ALeaveComment (PullRequestId 4) "<!-- Hoff: ignore -->\nSpeculatively rebased as 4de behind 3 other PRs, waiting for CI …"
                    , ATryForcePush (Branch "fst") (Sha "1ab")
                    , ATryPromote (Sha "1ab")
@@ -5824,7 +5676,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       , mergeTrain = []
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer (Username "deckard")
@@ -5833,7 +5684,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       , mergeTrain = [PullRequestId 1]
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2bc behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
@@ -5845,14 +5695,12 @@ main = hspec $ do
                       { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       , mergeTrain = []
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
                    , ATryIntegrate
                       { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       , mergeTrain = [PullRequestId 2]
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nSpeculatively rebased as 4de behind 1 other PR, waiting for CI …"
                    , AIsReviewer (Username "deckard")
@@ -5861,7 +5709,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #3: Third PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                       , mergeTrain = [PullRequestId 2, PullRequestId 1]
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 5ef behind 2 other PRs, waiting for CI …"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3cd) started."
@@ -5911,7 +5758,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       , mergeTrain = []
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI \8230"
                    , AIsReviewer (Username "deckard")
@@ -5920,7 +5766,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       , mergeTrain = [PullRequestId 1]
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2bc behind 1 other PR, waiting for CI \8230"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
@@ -5972,7 +5817,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       , mergeTrain = []
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer (Username "deckard")
@@ -5981,7 +5825,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       , mergeTrain = [PullRequestId 1]
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2bc behind 1 other PR, waiting for CI …"
                    , AIsReviewer (Username "deckard")
@@ -5992,14 +5835,12 @@ main = hspec $ do
                       { mergeMessage = "Merge #2: Second PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       , mergeTrain = []
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
                    , ATryIntegrate
                       { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: true\nDeploy-Environment: production\nDeploy-Subprojects: all\n"
                       , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       , mergeTrain = [PullRequestId 2]
-                      , alwaysAddMergeCommit = True
                       }
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nSpeculatively rebased as 4de behind 1 other PR, waiting for CI …"
                    , ATryForcePush (Branch "snd") (Sha "3cd")
@@ -6063,7 +5904,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -6077,7 +5917,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2bc behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
                    , AIsReviewer "deckard"
@@ -6092,7 +5931,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                       []
-                      False
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
                    , ATryIntegrate
                       "Merge #1: First PR\n\n\
@@ -6101,7 +5939,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       [PullRequestId 3]
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nSpeculatively rebased as 1de behind 1 other PR, waiting for CI …"
                    , ATryIntegrate
                       "Merge #2: Second PR\n\n\
@@ -6110,7 +5947,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 3, PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2ef behind 2 other PRs, waiting for CI …"
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3cd) started."
                    , ATryForcePush (Branch "trd") (Sha "3cd")
@@ -6179,7 +6015,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , AIsReviewer "deckard"
                    , ALeaveComment
@@ -6193,7 +6028,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2bc behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
                    , AIsReviewer "deckard"
@@ -6210,7 +6044,6 @@ main = hspec $ do
                       \Deploy-Subprojects: all\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
                       []
-                      True
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nRebased as 3cd, waiting for CI …"
                    , ATryIntegrate
                       "Merge #1: First PR\n\n\
@@ -6219,7 +6052,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       [PullRequestId 3]
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nSpeculatively rebased as 1de behind 1 other PR, waiting for CI …"
                    , ATryIntegrate
                       "Merge #2: Second PR\n\n\
@@ -6228,7 +6060,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 3, PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2ef behind 2 other PRs, waiting for CI …"
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3cd) started."
                    , ATryForcePush (Branch "trd") (Sha "3cd")
@@ -6291,7 +6122,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nThe [build failed :x:](example.com/1ab).\n\nIf this is the result of a flaky test, then tag me again with the `retry` command.  Otherwise, push a new commit and tag me again."
@@ -6306,7 +6136,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
                    , AIsReviewer "deckard"
@@ -6321,7 +6150,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1cd, waiting for CI …"
                    , ATryIntegrate
                       "Merge #2: Second PR\n\n\
@@ -6330,7 +6158,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2de behind 1 other PR, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1cd) started."
                    , ATryForcePush (Branch "fst") (Sha "1cd")
@@ -6381,7 +6208,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1ab) started."
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nThe [build failed :x:](example.com/1ab).\n\nIf this is the result of a flaky test, then tag me again with the `retry` command.  Otherwise, push a new commit and tag me again."
@@ -6396,7 +6222,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       []
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/2bc) started."
                    , ATryForcePush (Branch "snd") (Sha "2bc")
@@ -6435,7 +6260,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , ATryForcePush (Branch "fst") (Sha "1ab")
                    , ALeaveComment (PullRequestId 1) "Your PR is ready to be merged into master, but merging has been paused"
@@ -6472,7 +6296,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , ATryForcePush (Branch "fst") (Sha "1ab")
                    , ALeaveComment (PullRequestId 1) "Your PR is ready to be merged into master, but merging has been paused"
@@ -6511,7 +6334,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , ATryForcePush (Branch "fst") (Sha "1ab")
                    , ATryPromote (Sha "1ab")
@@ -6553,7 +6375,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       []
-                      False
                    , ALeaveComment
                       (PullRequestId 2)
                       "<!-- Hoff: ignore -->\nRebased as 2bc, waiting for CI …"
@@ -6570,7 +6391,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , ATryIntegrate
                       "Merge #2: Second PR\n\n\
@@ -6579,7 +6399,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
                       [PullRequestId 1]
-                      False
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2de behind 1 other PR, waiting for CI …"
                    , ATryForcePush (Branch "fst") (Sha "1ab")
                    , ATryPromote (Sha "1ab")
@@ -6619,7 +6438,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       []
-                      False
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
                    , ATryForcePush (Branch "fst") (Sha "1ab")
                    , ALeaveComment (PullRequestId 1) "Your PR is ready to be merged into master, but merging has been paused"
@@ -6628,7 +6446,6 @@ main = hspec $ do
                       { mergeMessage = "Merge #1: First PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
                       , integrationCandidate = (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
                       , mergeTrain = []
-                      , alwaysAddMergeCommit = False
                       }
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1b3, waiting for CI …"
                    ]
@@ -6670,7 +6487,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (prId, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      False
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
                    ]
 
@@ -6696,7 +6512,6 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (prId, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      False
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
                    ]
 
@@ -6722,6 +6537,5 @@ main = hspec $ do
                       \Auto-deploy: false\n"
                       (prId, Branch "refs/pull/1/head", Sha "abc1234")
                       []
-                      False
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
                    ]
