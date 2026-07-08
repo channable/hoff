@@ -135,6 +135,7 @@ data Action :: Effect where
   IsReviewer :: Username -> Action m Bool
   GetPullRequest :: PullRequestId -> Action m (Maybe GithubApi.PullRequest)
   GetOpenPullRequests :: Action m (Maybe IntSet)
+  GetBuildStatus :: Sha -> Action m (Maybe [(Check, BuildStatus)])
   GetLatestVersion :: Sha -> Action m (Either TagName Integer)
   GetChangelog :: TagName -> Sha -> Action m (Maybe Text)
   IncreaseMergeAttemptedMetric :: Priority -> Action m ()
@@ -213,6 +214,9 @@ getPullRequest pr = send $ GetPullRequest pr
 
 getOpenPullRequests :: Action :> es => Eff es (Maybe IntSet)
 getOpenPullRequests = send GetOpenPullRequests
+
+getBuildStatus :: Action :> es => Sha -> Eff es (Maybe [(Check, BuildStatus)])
+getBuildStatus sha = send $ GetBuildStatus sha
 
 getLatestVersion :: Action :> es => Sha -> Eff es (Either TagName Integer)
 getLatestVersion sha = send $ GetLatestVersion sha
@@ -301,6 +305,8 @@ runAction config =
       GithubApi.getPullRequest pr
     GetOpenPullRequests -> do
       GithubApi.getOpenPullRequests
+    GetBuildStatus sha -> do
+      GithubApi.getBuildStatus sha
     GetLatestVersion sha -> do
       Git.fetchBranchWithTags $ Branch (Config.branch config)
       maybe (Right 0) (\t -> maybeToEither t $ parseVersion t) <$> Git.lastTag sha
@@ -980,11 +986,18 @@ handleBuildStatusChanged :: Sha -> Context -> BuildStatus -> ProjectState -> Eff
 handleBuildStatusChanged buildSha context newStatus state =
   pure $
     compose
-      [ unintegratePullRequestIfNeeded (Pr.pullRequestId pr)
-        . Pr.updatePullRequest (Pr.pullRequestId pr) setBuildStatus
+      [ handleBuildStatusChangedForPR context newStatus pr
       | pr <- Pr.filterPullRequestsBy shouldUpdate state
       ]
       state
+ where
+  shouldUpdate pr = case Pr.integrationStatus pr of
+    Integrated candidateSha _ -> candidateSha == buildSha
+    _ -> False
+
+handleBuildStatusChangedForPR :: Context -> BuildStatus -> PullRequest -> ProjectState -> ProjectState
+handleBuildStatusChangedForPR context newStatus pull state =
+  unintegratePullRequestIfNeeded (Pr.pullRequestId pull) . Pr.updatePullRequest (Pr.pullRequestId pull) setBuildStatus $ state
  where
   satisfiedCheck = contextSatisfiesChecks (Pr.mandatoryChecks state) context
   getNewStatus new old = if new `supersedes` old then new else old
@@ -995,13 +1008,9 @@ handleBuildStatusChanged buildSha context newStatus state =
       -- Ignore status updates that aren't relevant to the mandatory checks
       Nothing -> Pr.SpecificChecks checks
 
-  shouldUpdate pr = case Pr.integrationStatus pr of
-    Integrated candidateSha _ -> candidateSha == buildSha
-    _ -> False
-
   -- We need to do edge detection for failures on the summarized status of the
   -- pull request, as we only want to trigger unintegration once. The nature of
-  -- webhooks make arrival guarentees annoying to deal with, so we opt for
+  -- webhooks make arrival guarantees annoying to deal with, so we opt for
   -- only dealing with the first appearance of a status.
   unintegratePullRequestIfNeeded pid newState
     | Just oldPr <- Pr.lookupPullRequest pid state
@@ -1019,13 +1028,13 @@ handleBuildStatusChanged buildSha context newStatus state =
   -- Like unintegration, we also need edge detection to avoid commenting
   -- multiple times on the same PR.
   setBuildStatus pr
-    | Integrated _ oldStatus <- Pr.integrationStatus pr =
+    | Integrated sha oldStatus <- Pr.integrationStatus pr =
         let
           newStatus' = newStatusState oldStatus
           wasSuperseded = summarize newStatus' `supersedes` summarize oldStatus
         in
           pr
-            { Pr.integrationStatus = Integrated buildSha newStatus'
+            { Pr.integrationStatus = Integrated sha newStatus'
             , Pr.needsFeedback = case newStatus of
                 BuildStarted _ -> wasSuperseded
                 BuildFailed _ -> wasSuperseded
@@ -1079,7 +1088,22 @@ synchronizeState stateInitial =
       stateClosed <- foldM (flip handlePullRequestClosedByUser) stateInitial prsToClose
       -- Then get the details for all pull requests that are open on GitHub, but
       -- which are not yet in our state, and add them.
-      foldM insertMissingPr stateClosed prsToOpen
+      stateOpened <- foldM insertMissingPr stateClosed prsToOpen
+      -- Update the build status for all pull requests that are still open, based on the
+      -- latest build status for their commit SHA.
+      foldM updateBuildStatus stateOpened (IntMap.elems $ Pr.pullRequests stateOpened)
+
+updateBuildStatus :: Action :> es => ProjectState -> PullRequest -> Eff es ProjectState
+updateBuildStatus state pr =
+  case Pr.integrationStatus pr of
+    Integrated sha _ ->
+      getBuildStatus sha >>= \case
+        Nothing -> pure state
+        Just buildStatuses ->
+          pure $ foldr (\(Check check, buildStatus) -> handleBuildStatusChangedForPR (Git.Context check) buildStatus pr) state buildStatuses
+    _ -> do
+      -- If the PR is not integrated, we don't need to update its build status.
+      pure state
 
 -- | Determines if there is anything to do, and if there is, generates the right
 -- actions and updates the state accordingly.

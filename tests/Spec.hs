@@ -74,6 +74,7 @@ import WebInterface qualified
 import Data.Set qualified as Set
 import Data.Time qualified as T
 import Data.Time.Calendar.OrdinalDate qualified as T
+import Project (BuildStatus, Check)
 
 masterBranch :: BaseBranch
 masterBranch = BaseBranch "master"
@@ -146,6 +147,7 @@ data ActionFlat
   | ACleanupTestBranch PullRequestId
   | AGetPullRequest PullRequestId
   | AGetOpenPullRequests
+  | AGetBuildStatus Sha
   deriving (Eq, Show)
 
 -- Results to return from various operations during the tests. There is a
@@ -155,6 +157,7 @@ data Results = Results
   , resultPush :: [PushResult]
   , resultGetPullRequest :: [Maybe GithubApi.PullRequest]
   , resultGetOpenPullRequests :: [Maybe IntSet]
+  , resultGetBuildStatus :: [Maybe [(Check, BuildStatus)]]
   , resultGetLatestVersion :: [Either TagName Integer]
   , resultGetChangelog :: [Maybe Text]
   , resultGetDateTime :: [T.UTCTime]
@@ -168,9 +171,10 @@ defaultResults =
       resultIntegrate = repeat $ Left $ Logic.IntegrationFailure (BaseBranch "master") MergeFailed
     , -- Pretend that pushing is always successful.
       resultPush = repeat PushOk
-    , -- Pretend that these two calls to GitHub always fail.
+    , -- Pretend that these calls to GitHub always fail.
       resultGetPullRequest = repeat Nothing
     , resultGetOpenPullRequests = repeat Nothing
+    , resultGetBuildStatus = repeat Nothing
     , -- And pretend that latest version just grows incrementally
       resultGetLatestVersion = Right <$> [1 ..]
     , resultGetChangelog = repeat Nothing
@@ -220,6 +224,13 @@ takeResultGetOpenPullRequests =
     "resultGetOpenPullRequests"
     resultGetOpenPullRequests
     (\v res -> res{resultGetOpenPullRequests = v})
+
+takeResultGetBuildStatus :: (HasCallStack, State Results :> es) => Eff es (Maybe [(Check, BuildStatus)])
+takeResultGetBuildStatus =
+  takeFromList
+    "resultGetBuildStatus"
+    resultGetBuildStatus
+    (\v res -> res{resultGetBuildStatus = v})
 
 takeResultGetLatestVersion :: (HasCallStack, State Results :> es) => Eff es (Either TagName Integer)
 takeResultGetLatestVersion =
@@ -296,6 +307,9 @@ runActionResults =
         GetOpenPullRequests -> do
           Writer.tell [AGetOpenPullRequests]
           takeResultGetOpenPullRequests
+        GetBuildStatus sha -> do
+          Writer.tell [AGetBuildStatus sha]
+          takeResultGetBuildStatus
         GetLatestVersion _ -> takeResultGetLatestVersion
         GetChangelog _ _ -> takeResultGetChangelog
         IncreaseMergeAttemptedMetric _ -> pure ()
