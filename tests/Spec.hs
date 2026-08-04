@@ -114,7 +114,7 @@ testFeatureFreezeWindow =
       }
 
 testTimeouts :: Config.Timeouts
-testTimeouts = Config.Timeouts 600 600
+testTimeouts = Config.Timeouts 600 600 600
 
 -- Functions to prepare certain test states.
 
@@ -374,7 +374,7 @@ handleEventsTest events state = foldlM (flip $ Logic.handleEvent testTriggerConf
 -- Handle events (advancing the state until a fixed point in between) and simulate their side
 -- effects. Set a timeout of 0 to make sure all actions are done immediately
 handleEventsTestNoTimeout :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => [Event] -> ProjectState -> Eff es ProjectState
-handleEventsTestNoTimeout events state = foldlM (flip $ Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing (Config.Timeouts (-1) (-1))) state events
+handleEventsTestNoTimeout events state = foldlM (flip $ Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing (Config.Timeouts (-1) (-1) (-1))) state events
 
 -- | Like 'classifiedPullRequests' but just with ids.
 -- This should match 'WebInterface.ClassifiedPullRequests'
@@ -2771,6 +2771,7 @@ main = hspec $ do
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
             , Project.paused = False
+            , Project.lastSyncTime = testTime
             }
         results = defaultResults{resultIntegrate = [Right (Sha "38e")]}
         actions = snd $ runActionCustom results $ Logic.proceedUntilFixedPoint state
@@ -2801,6 +2802,7 @@ main = hspec $ do
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
             , Project.paused = False
+            , Project.lastSyncTime = testTime
             }
         results =
           defaultResults
@@ -2838,6 +2840,7 @@ main = hspec $ do
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
             , Project.paused = False
+            , Project.lastSyncTime = testTime
             }
         -- Run 'proceedUntilFixedPoint', and pretend that pushes fail (because
         -- something was pushed in the mean time, for instance).
@@ -2885,6 +2888,7 @@ main = hspec $ do
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
             , Project.paused = False
+            , Project.lastSyncTime = testTime
             }
         -- Run 'proceedUntilFixedPoint', and pretend that pushes fail (because
         -- something was pushed in the mean time, for instance).
@@ -3004,6 +3008,7 @@ main = hspec $ do
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
             , Project.paused = False
+            , Project.lastSyncTime = testTime
             }
         -- Proceeding should pick the next pull request as candidate.
         results = defaultResults{resultIntegrate = [Right (Sha "38e")]}

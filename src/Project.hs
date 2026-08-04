@@ -81,7 +81,7 @@ module Project (
 )
 where
 
-import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey)
+import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey, (.!=), (.:), (.:?))
 import Data.ByteString (readFile)
 import Data.ByteString.Lazy (writeFile)
 import Data.Foldable (asum)
@@ -107,7 +107,7 @@ import Data.IntMap.Strict qualified as IntMap
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 
-import Data.Time (UTCTime)
+import Data.Time (UTCTime(..))
 import Types (PullRequestId (..), ReactableId, Username)
 
 -- For any integrated sha, we either wait for the first check, or for
@@ -269,6 +269,7 @@ data ProjectState = ProjectState
   , mandatoryChecks :: MandatoryChecks
   , recentlyPromoted :: [PromotedPullRequest]
   , paused :: Bool
+  , lastSyncTime :: UTCTime
   }
   deriving (Eq, Show, Generic)
 
@@ -312,7 +313,17 @@ instance FromJSON DeploySubprojects
 instance FromJSON ApprovedFor
 instance FromJSON Approval
 instance FromJSON Priority
-instance FromJSON ProjectState
+
+instance FromJSON ProjectState where
+  parseJSON = Aeson.withObject "ProjectState" $ \o ->
+    ProjectState
+      <$> o .: "pullRequests"
+      <*> o .: "pullRequestApprovalIndex"
+      <*> o .: "mandatoryChecks"
+      <*> o .: "recentlyPromoted"
+      <*> o .: "paused"
+      <*> o .:? "lastSyncTime" .!= lastSyncTime emptyProjectState
+
 instance FromJSON PullRequest
 
 instance ToJSON PromotedPullRequest where toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
@@ -347,6 +358,7 @@ emptyProjectState =
     , mandatoryChecks = mempty
     , recentlyPromoted = []
     , paused = False
+    , lastSyncTime = UTCTime{utctDay = toEnum 0, utctDayTime = 0}
     }
 
 -- Inserts a new pull request into the project, with approval set to Nothing,

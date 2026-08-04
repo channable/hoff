@@ -98,6 +98,7 @@ newtype MergeWindowExemptionConfiguration = MergeWindowExemptionConfiguration [T
 data Timeouts = Timeouts
   { promotionTimeout :: DiffTime
   , rememberTimeout :: DiffTime
+  , syncTimeout :: DiffTime
   }
   deriving (Generic, Show)
 

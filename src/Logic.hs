@@ -672,7 +672,15 @@ handleTargetChanged (BaseBranch baseBranch) sha state
 handleTargetChanged _ _ state = pure state
 
 handleClockTickUpdate :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Timeouts -> UTCTime -> ProjectState -> Eff es ProjectState
-handleClockTickUpdate = handleStalePromotions
+handleClockTickUpdate timeouts currTime state = do
+  state' <- handleStalePromotions timeouts currTime state
+
+  if Time.addTime (lastSyncTime state') (Config.syncTimeout timeouts) < currTime
+    then do
+      state'' <-synchronizeState state'
+      currentTime <- getDateTime
+      return state''{lastSyncTime = currentTime}
+    else pure state'
 
 handleStalePromotions :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Timeouts -> UTCTime -> ProjectState -> Eff es ProjectState
 handleStalePromotions timeouts currTime state = do

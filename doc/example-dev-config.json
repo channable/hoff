@@ -38,6 +38,7 @@
   },
   "timeouts": {
     "promotionTimeout": 60,
-    "rememberTimeout": 600
+    "rememberTimeout": 600,
+    "syncTimeout": 600
   }
 }

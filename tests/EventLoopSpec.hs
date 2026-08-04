@@ -252,7 +252,7 @@ featureFreezeWindow :: Maybe FeatureFreezeWindow
 featureFreezeWindow = Nothing
 
 testTimeouts :: Config.Timeouts
-testTimeouts = Config.Timeouts 600 600
+testTimeouts = Config.Timeouts 600 600 600
 
 -- An interpreter for the GitHub API free monad that ignores most API calls, and
 -- provides fake inputs. We don't want to require a Github repository and API
