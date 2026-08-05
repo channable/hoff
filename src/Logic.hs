@@ -32,6 +32,7 @@ module Logic (
   readStateVar,
   runAction,
   runRetrieveEnvironment,
+  synchronizeState,
   tryIntegratePullRequest,
   updateStateVar,
 )
@@ -677,7 +678,7 @@ handleClockTickUpdate timeouts currTime state = do
 
   if Time.addTime (lastSyncTime state') (Config.syncTimeout timeouts) < currTime
     then do
-      state'' <-synchronizeState state'
+      state'' <- synchronizeState state'
       currentTime <- getDateTime
       return state''{lastSyncTime = currentTime}
     else pure state'
@@ -1062,7 +1063,10 @@ contextSatisfiesChecks (Pr.MandatoryChecks checks) (Git.Context context) =
   in  go (Set.toList checks)
 
 -- Query the GitHub API to resolve inconsistencies between our state and GitHub.
-synchronizeState :: Action :> es => ProjectState -> Eff es ProjectState
+synchronizeState
+  :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
+  => ProjectState
+  -> Eff es ProjectState
 synchronizeState stateInitial =
   getOpenPullRequests >>= \case
     -- If we fail to obtain the currently open pull requests from GitHub, then
@@ -1075,6 +1079,7 @@ synchronizeState stateInitial =
         toList = fmap PullRequestId . IntSet.toList
         prsToClose = toList $ IntSet.difference internalOpenPrIds externalOpenPrIds
         prsToOpen = toList $ IntSet.difference externalOpenPrIds internalOpenPrIds
+        prsToSync = toList $ IntSet.intersection internalOpenPrIds externalOpenPrIds
 
         insertMissingPr state pr =
           getPullRequest pr >>= \case
@@ -1097,9 +1102,28 @@ synchronizeState stateInitial =
       -- Then get the details for all pull requests that are open on GitHub, but
       -- which are not yet in our state, and add them.
       stateOpened <- foldM insertMissingPr stateClosed prsToOpen
+      -- Refresh commit SHAs of pull requests to make sure we complete pending promotions after a
+      -- successful force-push.
+      stateSynced <- foldM syncPullRequestSha stateOpened prsToSync
       -- Update the build status for all pull requests that are still open, based on the
       -- latest build status for their commit SHA.
-      foldM updateBuildStatus stateOpened (IntMap.elems $ Pr.pullRequests stateOpened)
+      foldM updateBuildStatus stateSynced (IntMap.elems $ Pr.pullRequests stateSynced)
+
+syncPullRequestSha
+  :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
+  => ProjectState
+  -> PullRequestId
+  -> Eff es ProjectState
+syncPullRequestSha state pr =
+  getPullRequest pr >>= \case
+    -- On error, keep current state for this pull request.
+    Nothing -> pure state
+    Just details ->
+      case Pr.lookupPullRequest pr state of
+        Just localPr
+          | Pr.sha localPr /= GithubApi.sha details ->
+              handlePullRequestCommitChanged pr (GithubApi.sha details) state
+        _ -> pure state
 
 updateBuildStatus :: Action :> es => ProjectState -> PullRequest -> Eff es ProjectState
 updateBuildStatus state pr =
