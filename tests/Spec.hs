@@ -18,7 +18,6 @@ import Data.ByteString.Lazy (readFile)
 import Data.Either (isRight)
 import Data.Foldable (foldlM, for_)
 import Data.Function ((&))
-import Data.IntSet (IntSet)
 import Data.List (group)
 import Data.Maybe (fromJust, isNothing)
 import Data.Text (Text, pack)
@@ -32,7 +31,6 @@ import Test.Hspec
 import Prelude hiding (readFile)
 
 import Data.IntMap.Strict qualified as IntMap
-import Data.IntSet qualified as IntSet
 import Data.UUID.V4 qualified as Uuid
 import Effectful.State.Static.Local qualified as State
 import Effectful.Writer.Static.Local qualified as Writer
@@ -60,6 +58,8 @@ import Project (
   PullRequest (PullRequest),
  )
 import ProjectSpec (projectSpec)
+import Sync (syncSpec)
+import TestSetup (fakeRunTime, testProjectConfig, testTime, testTimeouts, testTriggerConfig)
 import Time (TimeOperation)
 import Types (CommentId (..), PullRequestId (..), ReactableId (..), Username (..))
 
@@ -74,33 +74,9 @@ import WebInterface qualified
 import Data.Set qualified as Set
 import Data.Time qualified as T
 import Data.Time.Calendar.OrdinalDate qualified as T
-import Project (BuildStatus, Check)
 
 masterBranch :: BaseBranch
 masterBranch = BaseBranch "master"
-
--- Trigger config used throughout these tests.
-testTriggerConfig :: Config.TriggerConfiguration
-testTriggerConfig =
-  Config.TriggerConfiguration
-    { Config.commentPrefix = "@bot"
-    }
-
-testProjectConfig :: Config.ProjectConfiguration
-testProjectConfig =
-  Config.ProjectConfiguration
-    { Config.owner = "peter"
-    , Config.repository = "rep"
-    , Config.branch = "master"
-    , Config.testBranch = "testing"
-    , Config.checkout = "/var/lib/hoff/checkouts/peter/rep"
-    , Config.stateFile = "/var/lib/hoff/state/peter/rep.json"
-    , Config.checks = Just (Config.ChecksConfiguration mempty)
-    , Config.deployEnvironments = Just ["staging", "production"]
-    , Config.deploySubprojects = Just ["aaa", "bbb"]
-    , Config.safeForFriday = Nothing
-    , Config.allowPlainMerge = Just True
-    }
 
 testmergeWindowExemptionConfig :: Config.MergeWindowExemptionConfiguration
 testmergeWindowExemptionConfig = Config.MergeWindowExemptionConfiguration ["bot"]
@@ -113,15 +89,12 @@ testFeatureFreezeWindow =
       , end = T.UTCTime (T.fromMondayStartWeek 2021 2 7) (T.secondsToDiffTime 0)
       }
 
-testTimeouts :: Config.Timeouts
-testTimeouts = Config.Timeouts 600 600 600
-
 -- Functions to prepare certain test states.
 
 singlePullRequestState :: PullRequestId -> Branch -> BaseBranch -> Sha -> Username -> ProjectState
 singlePullRequestState pr prBranch baseBranch prSha prAuthor =
   let event = PullRequestOpened pr prBranch baseBranch prSha "Untitled" prAuthor Nothing
-  in  fst $ runAction $ handleEventTest event Project.emptyProjectState
+  in  fst $ runAction $ handleEventTest event Project.emptyProjectState{Project.lastSyncTime = testTime}
 
 candidateState
   :: PullRequestId -> Branch -> BaseBranch -> Sha -> Username -> Username -> Sha -> ProjectState
@@ -155,9 +128,6 @@ data ActionFlat
 data Results = Results
   { resultIntegrate :: [Either IntegrationFailure Sha]
   , resultPush :: [PushResult]
-  , resultGetPullRequest :: [Maybe GithubApi.PullRequest]
-  , resultGetOpenPullRequests :: [Maybe IntSet]
-  , resultGetBuildStatus :: [Maybe [(Check, BuildStatus)]]
   , resultGetLatestVersion :: [Either TagName Integer]
   , resultGetChangelog :: [Maybe Text]
   , resultGetDateTime :: [T.UTCTime]
@@ -171,10 +141,6 @@ defaultResults =
       resultIntegrate = repeat $ Left $ Logic.IntegrationFailure (BaseBranch "master") MergeFailed
     , -- Pretend that pushing is always successful.
       resultPush = repeat PushOk
-    , -- Pretend that these calls to GitHub always fail.
-      resultGetPullRequest = repeat Nothing
-    , resultGetOpenPullRequests = repeat Nothing
-    , resultGetBuildStatus = repeat Nothing
     , -- And pretend that latest version just grows incrementally
       resultGetLatestVersion = Right <$> [1 ..]
     , resultGetChangelog = repeat Nothing
@@ -210,27 +176,6 @@ takeResultPush =
     "resultPush"
     resultPush
     (\v res -> res{resultPush = v})
-
-takeResultGetPullRequest :: (HasCallStack, State Results :> es) => Eff es (Maybe GithubApi.PullRequest)
-takeResultGetPullRequest =
-  takeFromList
-    "resultGetPullRequest"
-    resultGetPullRequest
-    (\v res -> res{resultGetPullRequest = v})
-
-takeResultGetOpenPullRequests :: (HasCallStack, State Results :> es) => Eff es (Maybe IntSet)
-takeResultGetOpenPullRequests =
-  takeFromList
-    "resultGetOpenPullRequests"
-    resultGetOpenPullRequests
-    (\v res -> res{resultGetOpenPullRequests = v})
-
-takeResultGetBuildStatus :: (HasCallStack, State Results :> es) => Eff es (Maybe [(Check, BuildStatus)])
-takeResultGetBuildStatus =
-  takeFromList
-    "resultGetBuildStatus"
-    resultGetBuildStatus
-    (\v res -> res{resultGetBuildStatus = v})
 
 takeResultGetLatestVersion :: (HasCallStack, State Results :> es) => Eff es (Either TagName Integer)
 takeResultGetLatestVersion =
@@ -303,13 +248,13 @@ runActionResults =
           pure $ isReviewer username
         GetPullRequest pr -> do
           Writer.tell [AGetPullRequest pr]
-          takeResultGetPullRequest
+          pure Nothing
         GetOpenPullRequests -> do
           Writer.tell [AGetOpenPullRequests]
-          takeResultGetOpenPullRequests
+          pure Nothing
         GetBuildStatus sha -> do
           Writer.tell [AGetBuildStatus sha]
-          takeResultGetBuildStatus
+          pure Nothing
         GetLatestVersion _ -> takeResultGetLatestVersion
         GetChangelog _ _ -> takeResultGetChangelog
         IncreaseMergeAttemptedMetric _ -> pure ()
@@ -319,13 +264,6 @@ runActionResults =
           results <- State.get
           State.put $ results{resultTrainSizeUpdates = n : resultTrainSizeUpdates results}
           pure ()
-
-testTime :: T.UTCTime
-testTime = T.UTCTime (T.fromMondayStartWeek 2021 2 1) (T.secondsToDiffTime 0)
-
-fakeRunTime :: Eff (TimeOperation : es) a -> Eff es a
-fakeRunTime = interpret $ \_ -> \case
-  Time.GetDateTime -> pure $ testTime
 
 runActionEff
   :: (State Results :> es, Writer [ActionFlat] :> es)
@@ -426,6 +364,7 @@ main :: IO ()
 main = hspec $ do
   parserSpec
   projectSpec
+  syncSpec
   describe "Logic.handleEvent" $ do
     it "handles PullRequestOpened" $ do
       let
@@ -923,92 +862,6 @@ main = hspec $ do
       -- We expect no changes to the state, and in particular, no side effects.
       state `shouldBe` Project.emptyProjectState
       actions `shouldBe` []
-
-    it "checks whether pull requests are still open on synchronize" $ do
-      let
-        state = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "b7332ba") "tyrell"
-        results =
-          defaultResults
-            { resultGetOpenPullRequests = [Just $ IntSet.singleton 1]
-            }
-        (state', actions) = runActionCustom results $ handleEventTest Synchronize state
-      -- Pull request 1 is open, so the state should not have changed.
-      state' `shouldBe` state
-      -- We should have queried GitHub about open pull requests.
-      actions `shouldBe` [AGetOpenPullRequests]
-
-    it "closes pull requests that are no longer open on synchronize" $ do
-      let
-        state = singlePullRequestState (PullRequestId 10) (Branch "p") masterBranch (Sha "b7332ba") "tyrell"
-        results =
-          defaultResults
-            { resultGetOpenPullRequests = [Just $ IntSet.empty]
-            }
-        (state', actions) = runActionCustom results $ handleEventTest Synchronize state
-      -- No pull requests are open on GitHub, so synchronize should have removed
-      -- the single initial PR.
-      state' `shouldBe` Project.emptyProjectState
-      actions `shouldBe` [AGetOpenPullRequests]
-
-    it "does not modify the state on an error during synchronize" $ do
-      let
-        state = singlePullRequestState (PullRequestId 19) (Branch "p") masterBranch (Sha "b7332ba") "tyrell"
-        -- Set up some custom results where we simulate that the GitHub API fails.
-        results =
-          defaultResults
-            { resultGetOpenPullRequests = [Nothing]
-            }
-        (state', actions) = runActionCustom results $ handleEventTest Synchronize state
-      -- We should not have modified anything on error.
-      state' `shouldBe` state
-      actions `shouldBe` [AGetOpenPullRequests]
-
-    it "adds missing pull requests during synchronize" $ do
-      let
-        state = Project.emptyProjectState
-        results =
-          defaultResults
-            { resultGetOpenPullRequests = [Just $ IntSet.singleton 17]
-            , resultGetPullRequest =
-                [ Just $
-                    GithubApi.PullRequest
-                      { GithubApi.sha = Sha "7faa52318"
-                      , GithubApi.branch = Branch "nexus-7"
-                      , GithubApi.baseBranch = masterBranch
-                      , GithubApi.title = "Add Nexus 7 experiment"
-                      , GithubApi.author = Username "tyrell"
-                      }
-                ]
-            }
-        (state', actions) = runActionCustom results $ handleEventTest Synchronize state
-        Just pr17 = Project.lookupPullRequest (PullRequestId 17) state'
-
-      -- PR 17 should have been added, with the details defined above.
-      Project.title pr17 `shouldBe` "Add Nexus 7 experiment"
-      Project.author pr17 `shouldBe` Username "tyrell"
-      Project.branch pr17 `shouldBe` Branch "nexus-7"
-      Project.sha pr17 `shouldBe` Sha "7faa52318"
-
-      -- Approval and integration status should be set to their initial values,
-      -- we do not go back and scan for approval comments on missing PRs.
-      Project.approval pr17 `shouldBe` Nothing
-      Project.integrationStatus pr17 `shouldBe` Project.NotIntegrated
-      Project.integrationAttempts pr17 `shouldBe` []
-      actions `shouldBe` [AGetOpenPullRequests, AGetPullRequest (PullRequestId 17)]
-
-    it "does not query details of existing pull requests on synchronize" $ do
-      let
-        state = singlePullRequestState (PullRequestId 19) (Branch "p") masterBranch (Sha "b7332ba") "tyrell"
-        results =
-          defaultResults
-            { resultGetOpenPullRequests = [Just $ IntSet.singleton 19]
-            }
-        actions = snd $ runActionCustom results $ handleEventTest Synchronize state
-
-      -- We should only obtain pull request details for pull requests that were
-      -- missing. In this case, PR 19 was already present, so we should not have
-      -- obtained its details.
-      actions `shouldBe` [AGetOpenPullRequests]
 
     it "stores the comment ID of a 'merge' command" $ do
       let
@@ -2310,7 +2163,7 @@ main = hspec $ do
               (Sha "ab2")
               "... Of the ..."
               (Username "dewey")
-            $ Project.emptyProjectState
+            $ Project.emptyProjectState{Project.lastSyncTime = testTime}
         events =
           [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")
@@ -2663,7 +2516,7 @@ main = hspec $ do
             (Sha "ab1")
             "Improvements..."
             (Username "huey")
-            $ Project.emptyProjectState
+            $ Project.emptyProjectState{Project.lastSyncTime = testTime}
         events =
           [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
           , BuildStatusChanged (Sha "1b2") "default" (Project.BuildStarted "example.com/1b2")

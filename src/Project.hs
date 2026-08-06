@@ -107,7 +107,7 @@ import Data.IntMap.Strict qualified as IntMap
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 
-import Data.Time (UTCTime(..))
+import Data.Time (UTCTime (..))
 import Types (PullRequestId (..), ReactableId, Username)
 
 -- For any integrated sha, we either wait for the first check, or for
