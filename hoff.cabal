@@ -110,6 +110,8 @@ test-suite spec
   other-modules:
     ParserSpec
     ProjectSpec
+    Sync
+    TestSetup
 
   hs-source-dirs:   tests
   ghc-options:      -Wall -Werror

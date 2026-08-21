@@ -18,6 +18,7 @@ module GithubApi (
   ReactionContent (..),
   getOpenPullRequests,
   getPullRequest,
+  getBuildStatus,
   hasPushAccess,
   leaveComment,
   addReaction,
@@ -43,6 +44,7 @@ import GitHub.Endpoints.Issues.Comments qualified as Github3
 import GitHub.Endpoints.PullRequests qualified as Github3
 import GitHub.Endpoints.Reactions qualified as Github3
 import GitHub.Endpoints.Repos.Collaborators qualified as Github3
+import GitHub.Endpoints.Repos.Statuses qualified as Github3
 import GitHub.Request qualified as Github3
 import Network.HTTP.Client qualified as Http
 import Network.HTTP.Types.Status qualified as Http
@@ -50,9 +52,10 @@ import Network.HTTP.Types.Status qualified as Http
 import Format (format)
 import Git (BaseBranch (..), Branch (..), Sha (..))
 import MonadLoggerEffect (MonadLoggerEffect)
-import Project (ProjectInfo)
+import Project (BuildStatus (..), Check (..), ProjectInfo)
 import Types (CommentId (..), PullRequestId (..), ReactableId (..), Username (..))
 
+import Data.Maybe (fromMaybe)
 import Project qualified
 
 -- A stripped-down version of the `Github3.PullRequest` type, with only the
@@ -71,6 +74,7 @@ data GithubOperation :: Effect where
   HasPushAccess :: Username -> GithubOperation m Bool
   GetPullRequest :: PullRequestId -> GithubOperation m (Maybe PullRequest)
   GetOpenPullRequests :: GithubOperation m (Maybe IntSet)
+  GetBuildStatus :: Sha -> GithubOperation m (Maybe [(Check, BuildStatus)])
 
 type instance DispatchOf GithubOperation = 'Dynamic
 
@@ -88,6 +92,9 @@ getPullRequest pr = send $ GetPullRequest pr
 
 getOpenPullRequests :: GithubOperation :> es => Eff es (Maybe IntSet)
 getOpenPullRequests = send GetOpenPullRequests
+
+getBuildStatus :: GithubOperation :> es => Sha -> Eff es (Maybe [(Check, BuildStatus)])
+getBuildStatus sha = send $ GetBuildStatus sha
 
 isPermissionToPush :: Github3.CollaboratorPermission -> Bool
 isPermissionToPush perm = case perm of
@@ -218,6 +225,41 @@ runGithub auth projectInfo =
             $
               foldMap (IntSet.singleton . Github3.unIssueNumber . Github3.simplePullRequestNumber) $
                 prs
+    GetBuildStatus sha -> do
+      logDebugN $ format "Getting build status for {} in {}." (show sha, projectInfo)
+
+      let unSha (Sha sha') = sha'
+
+      result <-
+        liftIO $
+          Github3.github auth $
+            Github3.statusesForR
+              (Github3.N $ Project.owner projectInfo)
+              (Github3.N $ Project.repository projectInfo)
+              (Github3.N $ unSha sha)
+              Github3.FetchAll
+      case result of
+        Left err -> do
+          logWarnN $ format "Failed to retrieve build status for {} in {}: {}" (show sha, projectInfo, show err)
+          pure Nothing
+        Right statuses -> do
+          logDebugN $ format "Got {} build statuses for {} in {}." (Vector.length statuses, show sha, projectInfo)
+          pure $ Just $ map toBuildStatus $ Vector.toList statuses
+
+toBuildStatus :: Github3.Status -> (Check, BuildStatus)
+toBuildStatus status =
+  -- Note: the `context` field is supposed to be a string according the GitHub API documentation.
+  -- Because the library types it as Maybe, we set a default value in the case it is Nothing. This
+  -- should not happen in practice.
+  let
+    check = Check $ fromMaybe "default" $ Github3.statusContext status
+    buildStatus = case Github3.statusState status of
+      Github3.StatusError -> BuildFailed (Github3.getUrl <$> Github3.statusTargetUrl status)
+      Github3.StatusFailure -> BuildFailed (Github3.getUrl <$> Github3.statusTargetUrl status)
+      Github3.StatusPending -> BuildPending
+      Github3.StatusSuccess -> BuildSucceeded
+  in
+    (check, buildStatus)
 
 -- Like runGithub, but does not execute operations that have side effects, in
 -- the sense of being observable by Github users. We will still make requests
@@ -235,6 +277,7 @@ runGithubReadOnly auth projectInfo = runGithub auth projectInfo . augmentedGithu
     HasPushAccess username -> send $ HasPushAccess username
     GetPullRequest pullRequestId -> send $ GetPullRequest pullRequestId
     GetOpenPullRequests -> send GetOpenPullRequests
+    GetBuildStatus sha -> send $ GetBuildStatus sha
     -- These operations have side effects, we fake them.
     LeaveComment pr body ->
       logInfoN $ format "Would have posted comment on {}: {}" (show pr, body)

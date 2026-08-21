@@ -252,7 +252,7 @@ featureFreezeWindow :: Maybe FeatureFreezeWindow
 featureFreezeWindow = Nothing
 
 testTimeouts :: Config.Timeouts
-testTimeouts = Config.Timeouts 600 600
+testTimeouts = Config.Timeouts 600 600 600
 
 -- An interpreter for the GitHub API free monad that ignores most API calls, and
 -- provides fake inputs. We don't want to require a Github repository and API
@@ -263,9 +263,10 @@ fakeRunGithub = interpret $ \_ -> \case
   GithubApi.LeaveComment _pr _body -> pure ()
   GithubApi.AddReaction _reactable _reaction -> pure ()
   GithubApi.HasPushAccess username -> pure $ username `elem` ["rachael", "deckard"]
-  -- Pretend that these two GitHub API calls always fail in these tests.
+  -- Pretend that these GitHub API calls always fail in these tests.
   GithubApi.GetPullRequest _pr -> pure Nothing
   GithubApi.GetOpenPullRequests -> pure Nothing
+  GithubApi.GetBuildStatus _sha -> pure Nothing
 
 fakeRunTime :: Eff (Time.TimeOperation : es) a -> Eff es a
 fakeRunTime = interpret $ \_ -> \case
