@@ -5719,7 +5719,7 @@ main = hspec $ do
                    , ATryPromote (Sha "3cd")
                    , ACleanupTestBranch (PullRequestId 2)
                    , ATryForcePush (Branch "fst") (Sha "4de")
-                   , ATryPromoteWithTag (Sha "4de") (TagName "v2") (TagMessage "v2 (autodeploy)\n\nchangelog")
+                   , ATryPromoteWithTag (Sha "4de") (TagName "v2") (TagMessage "v2 (autodeploy)\n\nchangelog\n")
                    , ALeaveComment (PullRequestId 1) "@deckard I tagged your PR with [v2](https://github.com/peter/rep/releases/tag/v2). It is scheduled for autodeploy!"
                    , ACleanupTestBranch (PullRequestId 1)
                    ]
@@ -5935,7 +5935,7 @@ main = hspec $ do
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2ef behind 2 other PRs, waiting for CI …"
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/3cd) started."
                    , ATryForcePush (Branch "trd") (Sha "3cd")
-                   , ATryPromoteWithTag (Sha "3cd") (TagName "v2") (TagMessage "v2 (autodeploy)\n\nchangelog")
+                   , ATryPromoteWithTag (Sha "3cd") (TagName "v2") (TagMessage "v2 (autodeploy)\n\nchangelog\n")
                    , ALeaveComment (PullRequestId 3) "@deckard I tagged your PR with [v2](https://github.com/peter/rep/releases/tag/v2). It is scheduled for autodeploy!"
                    , ACleanupTestBranch (PullRequestId 3)
                    , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\n[CI job :yellow_circle:](example.com/1de) started."
