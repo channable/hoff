@@ -10,10 +10,11 @@ pkgs, mkDerivation
 , QuickCheck, aeson, aeson-pretty, blaze-html, blaze-markup, bytestring
 , containers, cryptonite, directory, effectful, extra, file-embed, filepath
 , generic-arbitrary, github, hspec, hspec-core, http-client, http-conduit
-, http-types, megaparsec, memory, monad-logger, optparse-applicative, process
-, process-extras, prometheus, prometheus-metrics-ghc, quickcheck-instances
+, http-types, megaparsec, memory, monad-logger, optparse-applicative, parser-combinators
+, process, process-extras, prometheus, prometheus-metrics-ghc, quickcheck-instances
 , scotty, stm, text, text-format, time, uuid, vector, wai
-, wai-middleware-prometheus, warp, warp-tls }:
+, wai-middleware-prometheus, warp, warp-tls
+}:
 mkDerivation {
   pname = "hoff";
   version = "0.43.0"; # please keep consistent with hoff.cabal
@@ -84,6 +85,7 @@ mkDerivation {
     memory
     monad-logger
     optparse-applicative
+    parser-combinators
     process
     process-extras
     prometheus
