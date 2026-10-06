@@ -32,6 +32,7 @@ library
     Metrics
     MonadLoggerEffect
     Parser
+    Parser2
     Project
     Server
     Time
@@ -49,6 +50,7 @@ library
     , containers
     , cryptonite
     , directory
+    , Earley
     , effectful
     , extra
     , file-embed
@@ -59,6 +61,7 @@ library
     , megaparsec
     , memory
     , monad-logger
+    , parser-combinators
     , process
     , process-extras
     , prometheus-client
