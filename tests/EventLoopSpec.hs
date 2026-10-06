@@ -66,7 +66,7 @@ baseBranch = BaseBranch baseBranchName
 -- Git failed. Uses a discarding logger but will `error` with the exit code and
 -- stderr contents if it crashes.
 callGit :: [String] -> IO Text
-callGit args = fmap (either (error . show) id) $ runEff $ fakeRunLogger $ Git.callGit userConfig args
+callGit args = fmap (either (error . show) id) $ runEff $ fakeRunLogger $ Git.callGit userConfig args ""
 
 -- | Populates the repository with the following history:
 --

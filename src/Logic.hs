@@ -1538,9 +1538,13 @@ versionToTag v = TagName $ toStrict $ B.toLazyText $ B.singleton 'v' <> B.decima
 
 messageForTag :: TagName -> ApprovedFor -> Text -> TagMessage
 messageForTag (TagName tagName) tagOrDeploy changelog =
-  TagMessage $ tagName <> mark <> "\n\n" <> changelog
+  TagMessage $ tagName <> mark <> "\n\n" <> truncatedChangelog
  where
   mark = if Pr.needsDeploy tagOrDeploy then " (autodeploy)" else ""
+  -- Truncate changelog to 100 lines to avoid creating overly long tag messages.
+  changelogLines = Text.lines changelog
+  truncatedLines = take 100 changelogLines
+  truncatedChangelog = Text.unlines truncatedLines
 
 pullRequestIdToText :: PullRequestId -> Text
 pullRequestIdToText (PullRequestId prid) = Text.pack $ show prid

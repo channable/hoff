@@ -298,13 +298,13 @@ callGit
   :: (IOE :> es, MonadLoggerEffect :> es)
   => UserConfiguration
   -> [String]
+  -> Text
   -> Eff es (Either (ExitCode, Text) Text)
-callGit userConfig args = do
+callGit userConfig args stdinContent = do
   currentEnv <- liftIO getEnvironment
   let
     commandText = Text.concat $ intersperse " " $ fmap Text.pack args
     logMessage = Text.append "executing git " commandText
-    stdinContent = ""
     process =
       (Process.proc "git" args)
         { -- Prepend GIT_EDITOR to the environment and set it to "true".
@@ -342,7 +342,10 @@ runGit userConfig repoDir =
   let
     -- Pass the -C /path/to/checkout option to Git, to run operations in the
     -- repository without having to change the working directory.
-    callGitInRepo args = callGit userConfig $ ["-C", repoDir] ++ args
+    callGitInRepo args = callGitInRepoWithStdin args ""
+
+    -- Version of callGitInRepo that accepts stdin content
+    callGitInRepoWithStdin args stdin = callGit userConfig (["-C", repoDir] ++ args) stdin
 
     getHead :: Eff es (Maybe Sha)
     getHead = do
@@ -475,6 +478,7 @@ runGit userConfig repoDir =
             , Text.unpack url
             , repoDir
             ]
+            ""
         case result of
           Left (_, message) -> do
             logWarnN $ "git clone failed. Reason: " <> message
@@ -502,7 +506,7 @@ runGit userConfig repoDir =
             pure Nothing
           Right changelog -> pure $ Just changelog
       Tag sha t (TagMessage m) -> do
-        result <- callGitInRepo ["tag", "-a", refSpec t, "-m", Text.unpack m, refSpec sha]
+        result <- callGitInRepoWithStdin ["tag", "-a", "-F", "-", refSpec t, refSpec sha] m
         case result of
           Left (_, message) -> do
             logWarnN $ "git tag failed. Reason: " <> message
