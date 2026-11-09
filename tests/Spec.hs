@@ -100,7 +100,7 @@ candidateState
   :: PullRequestId -> Branch -> BaseBranch -> Sha -> Username -> Username -> Sha -> ProjectState
 candidateState pr prBranch baseBranch prSha prAuthor approvedBy candidateSha =
   Project.setIntegrationStatus pr (Project.Integrated candidateSha (Project.AnyCheck Project.BuildPending)) $
-    Project.setApproval pr (Just (Approval approvedBy Nothing Project.Merge 0 Nothing Normal)) $
+    Project.addApproval pr (Approval approvedBy Nothing Project.Merge Nothing Normal) $
       singlePullRequestState pr prBranch baseBranch prSha prAuthor
 
 -- Types and functions to mock running an action without actually doing anything.
@@ -386,7 +386,7 @@ main = hspec $ do
       let pr = fromJust $ Project.lookupPullRequest prId state
       Project.sha pr `shouldBe` Sha "e0f"
       Project.author pr `shouldBe` "deckard"
-      Project.approval pr `shouldBe` Just (Approval "deckard" (Just $ OnPullRequest prId) Project.Merge 0 Nothing Normal)
+      Project.approval pr `shouldBe` Just (Approval "deckard" (Just $ OnPullRequest prId) Project.Merge Nothing Normal)
 
     it "handles PullRequestClosed" $ do
       let
@@ -424,17 +424,17 @@ main = hspec $ do
       let
         event = PullRequestCommitChanged (PullRequestId 1) (Sha "def")
         state0 = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "abc") "alice"
-        state1 = Project.setApproval (PullRequestId 1) (Just (Approval "hatter" Nothing Project.Merge 0 Nothing Normal)) state0
+        state1 = Project.addApproval (PullRequestId 1) (Approval "hatter" Nothing Project.Merge Nothing Normal) state0
         state2 = fst $ runAction $ handleEventTest event state1
         pr1 = fromJust $ Project.lookupPullRequest (PullRequestId 1) state1
         pr2 = fromJust $ Project.lookupPullRequest (PullRequestId 1) state2
-      Project.approval pr1 `shouldBe` Just (Approval "hatter" Nothing Project.Merge 0 Nothing Normal)
+      Project.approval pr1 `shouldBe` Just (Approval "hatter" Nothing Project.Merge Nothing Normal)
       Project.approval pr2 `shouldBe` Nothing
 
     it "does not lose approval after the PR commit has changed due to a push we caused" $ do
       let
         state0 = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "abc") "alice"
-        state1 = Project.setApproval (PullRequestId 1) (Just (Approval "hatter" Nothing Project.Merge 0 Nothing Normal)) state0
+        state1 = Project.addApproval (PullRequestId 1) (Approval "hatter" Nothing Project.Merge Nothing Normal) state0
         state2 = Project.setIntegrationStatus (PullRequestId 1) (Project.Integrated (Sha "dc0") (Project.AnyCheck Project.BuildPending)) state1
         state3 = Project.setIntegrationStatus (PullRequestId 1) (Project.Integrated (Sha "dc1") (Project.AnyCheck Project.BuildPending)) state2
         event = PullRequestCommitChanged (PullRequestId 1) (Sha "dc0")
@@ -454,7 +454,7 @@ main = hspec $ do
         state2 = fst $ runAction $ handleEventTest newPush state1
         prAt1 = fromJust $ Project.lookupPullRequest (PullRequestId 1) state1
         prAt2 = fromJust $ Project.lookupPullRequest (PullRequestId 1) state2
-      Project.approval prAt1 `shouldBe` Just (Approval "deckard" Nothing Project.Merge 0 Nothing Normal)
+      Project.approval prAt1 `shouldBe` Just (Approval "deckard" Nothing Project.Merge Nothing Normal)
       Project.integrationStatus prAt1 `shouldBe` Project.Integrated (Sha "bcd") (Project.AnyCheck Project.BuildPending)
       Project.approval prAt2 `shouldBe` Nothing
       Project.integrationStatus prAt2 `shouldBe` Project.NotIntegrated
@@ -465,13 +465,13 @@ main = hspec $ do
         -- lose the approval status.
         event = PullRequestCommitChanged (PullRequestId 1) (Sha "000")
         state0 = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "000") "cindy"
-        state1 = Project.setApproval (PullRequestId 1) (Just (Approval "daniel" Nothing Project.Merge 0 Nothing Normal)) state0
+        state1 = Project.addApproval (PullRequestId 1) (Approval "daniel" Nothing Project.Merge Nothing Normal) state0
         (state2, _actions) = runAction $ Logic.proceedUntilFixedPoint state1
         (state3, actions) = runAction $ handleEventTest event state2
         prAt3 = fromJust $ Project.lookupPullRequest (PullRequestId 1) state3
       state3 `shouldBe` state2
       actions `shouldBe` []
-      Project.approval prAt3 `shouldBe` Just (Approval "daniel" Nothing Project.Merge 0 Nothing Normal)
+      Project.approval prAt3 `shouldBe` Just (Approval "daniel" Nothing Project.Merge Nothing Normal)
 
     it "sets approval after a stamp from a reviewer" $ do
       let
@@ -480,7 +480,7 @@ main = hspec $ do
         event = CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
         state' = fst $ runAction $ handleEventTest event state
         pr = fromJust $ Project.lookupPullRequest (PullRequestId 1) state'
-      Project.approval pr `shouldBe` Just (Approval "deckard" Nothing Project.Merge 0 Nothing Normal)
+      Project.approval pr `shouldBe` Just (Approval "deckard" Nothing Project.Merge Nothing Normal)
 
     it "does not set approval after a stamp from a non-reviewer" $ do
       let
@@ -642,7 +642,7 @@ main = hspec $ do
                       [PullRequestId 1, PullRequestId 3]
                    , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as b73 behind 2 other PRs, waiting for CI …"
                    ]
-      Project.pullRequestApprovalIndex state' `shouldBe` 3
+      Project.mergeTrain state' `shouldBe` [PullRequestId 1, PullRequestId 3, PullRequestId 2]
       Project.pullRequests state'
         `shouldBe` IntMap.fromList
           [
@@ -654,7 +654,7 @@ main = hspec $ do
                 , baseBranch = BaseBranch "master"
                 , title = "Add Nexus 7 experiment"
                 , author = Username "tyrell"
-                , approval = Just (Approval (Username "deckard") Nothing Project.Merge 0 Nothing Normal)
+                , approval = Just (Approval (Username "deckard") Nothing Project.Merge Nothing Normal)
                 , integrationStatus = Project.Integrated (Sha "b71") (Project.AnyCheck Project.BuildPending)
                 , integrationAttempts = []
                 , needsFeedback = False
@@ -670,7 +670,7 @@ main = hspec $ do
                 , baseBranch = BaseBranch "master"
                 , title = "Some PR"
                 , author = Username "rachael"
-                , approval = Just (Approval (Username "deckard") Nothing Project.Merge 2 Nothing Normal)
+                , approval = Just (Approval (Username "deckard") Nothing Project.Merge Nothing Normal)
                 , integrationStatus = Project.Integrated (Sha "b73") (Project.AnyCheck Project.BuildPending)
                 , integrationAttempts = []
                 , needsFeedback = False
@@ -686,7 +686,7 @@ main = hspec $ do
                 , baseBranch = BaseBranch "master"
                 , title = "Another PR"
                 , author = Username "rachael"
-                , approval = Just (Approval (Username "deckard") Nothing Project.Merge 1 Nothing Normal)
+                , approval = Just (Approval (Username "deckard") Nothing Project.Merge Nothing Normal)
                 , integrationStatus = Project.Integrated (Sha "b72") (Project.AnyCheck Project.BuildPending)
                 , integrationAttempts = []
                 , needsFeedback = False
@@ -966,7 +966,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") Nothing Normal))
 
     it "recognizes 'merge and deploy to <environment>' commands as the proper ApprovedFor value" $ do
       let
@@ -989,7 +989,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy EntireProject $ DeployEnvironment "production") 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy EntireProject $ DeployEnvironment "production") Nothing Normal))
 
     -- There is no default environment to deploy to when no deployment
     -- environments have been configured. Earlier versions would silently ignore
@@ -1090,7 +1090,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") Nothing Normal))
 
     it "allows 'merge and deploy <subproject> to <environment>'" $ do
       let
@@ -1113,7 +1113,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy (OnlySubprojects ["aaa"]) $ DeployEnvironment "production") 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy (OnlySubprojects ["aaa"]) $ DeployEnvironment "production") Nothing Normal))
 
     it "allows 'merge and deploy <subproject list> to <environment>'" $ do
       let
@@ -1136,7 +1136,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy (OnlySubprojects ["aaa", "bbb"]) $ DeployEnvironment "production") 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy (OnlySubprojects ["aaa", "bbb"]) $ DeployEnvironment "production") Nothing Normal))
 
     it "recognizes 'merge and tag' command" $ do
       let
@@ -1159,7 +1159,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.MergeAndTag 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.MergeAndTag Nothing Normal))
 
     it "recognizes 'merge and  tag' command" $ do
       let
@@ -1182,7 +1182,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.MergeAndTag 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.MergeAndTag Nothing Normal))
 
     it "recognizes 'merge  and tag' command" $ do
       let
@@ -1205,7 +1205,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.MergeAndTag 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.MergeAndTag Nothing Normal))
 
     it "recognizes 'merge and tag on friday' command" $ do
       let
@@ -1228,7 +1228,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.MergeAndTag 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.MergeAndTag Nothing Normal))
 
     it "recognizes 'merge' command" $ do
       let
@@ -1251,7 +1251,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.Merge 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.Merge Nothing Normal))
 
     it "recognizes 'merge on Friday' command" $ do
       let
@@ -1274,7 +1274,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.Merge 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.Merge Nothing Normal))
 
     it "notifies when command not recognized" $
       expectSimpleParseFailure "@bot mergre" "<!-- Hoff: ignore -->\nUnknown or invalid command found:\n\n    comment:1:6:\n      |\n    1 | @bot mergre\n      |      ^^^^^\n    unexpected \"mergr\"\n    expecting \"merge\", \"retry\", or white space\n[Basic usage is explained here.](https://github.com/channable/hoff/blob/master/readme.md#using-hoff)"
@@ -1459,7 +1459,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.Merge 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.Merge Nothing Normal))
 
     it "refuses 'merge' (without hotfix) during a feature freeze period" $ do
       let
@@ -1513,7 +1513,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.Merge 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.Merge Nothing Normal))
 
     it "accepts 'merge hotfix deploy to production as hotfix' during a feature freeze period" $ do
       let
@@ -1537,7 +1537,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy EntireProject $ DeployEnvironment "production") 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy EntireProject $ DeployEnvironment "production") Nothing Normal))
 
     it "refuses to merge an empty rebase" $ do
       let
@@ -1695,7 +1695,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") Nothing Normal))
 
     -- For ergonomics' sake, the command can be part of a sentence that ends
     -- with one or more punctuation characters, but only if the line ends after
@@ -1776,7 +1776,7 @@ main = hspec $ do
                    ]
 
       fromJust (Project.lookupPullRequest prId state')
-        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") 0 Nothing Normal))
+        `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing (Project.MergeAndDeploy EntireProject $ DeployEnvironment "staging") Nothing Normal))
 
     it "restarts when pushed to master" $ do
       let
@@ -2549,7 +2549,7 @@ main = hspec $ do
     it "finds a new candidate" $ do
       let
         state =
-          Project.setApproval (PullRequestId 1) (Just (Approval "fred" Nothing Project.Merge 0 Nothing Normal)) $
+          Project.addApproval (PullRequestId 1) (Approval "fred" Nothing Project.Merge Nothing Normal) $
             singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "f34") "sally"
         results =
           defaultResults
@@ -2570,8 +2570,8 @@ main = hspec $ do
     it "finds a new candidate with multiple PRs" $ do
       let
         state =
-          Project.setApproval (PullRequestId 2) (Just (Approval "fred" Nothing Project.Merge 0 Nothing Normal)) $
-            Project.setApproval (PullRequestId 1) (Just (Approval "fred" Nothing Project.Merge 1 Nothing Normal)) $
+          Project.addApproval (PullRequestId 1) (Approval "fred" Nothing Project.Merge Nothing Normal) $
+            Project.addApproval (PullRequestId 2) (Approval "fred" Nothing Project.Merge Nothing Normal) $
               fst $
                 runAction $
                   handleEventsTest
@@ -2611,7 +2611,7 @@ main = hspec $ do
             , Project.sha = Sha "f35"
             , Project.title = "Add my test results"
             , Project.author = "rachael"
-            , Project.approval = Just (Approval "deckard" Nothing Project.Merge 0 Nothing Normal)
+            , Project.approval = Just (Approval "deckard" Nothing Project.Merge Nothing Normal)
             , Project.integrationStatus = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
             , Project.integrationAttempts = []
             , Project.needsFeedback = False
@@ -2620,7 +2620,7 @@ main = hspec $ do
         state =
           ProjectState
             { Project.pullRequests = IntMap.singleton 1 pullRequest
-            , Project.pullRequestApprovalIndex = 1
+            , Project.mergeTrain = [PullRequestId 1]
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
             , Project.paused = False
@@ -2642,7 +2642,7 @@ main = hspec $ do
             , Project.sha = Sha "f35"
             , Project.title = "Add my test results"
             , Project.author = "rachael"
-            , Project.approval = Just (Approval "deckard" Nothing Project.MergeAndTag 0 Nothing Normal)
+            , Project.approval = Just (Approval "deckard" Nothing Project.MergeAndTag Nothing Normal)
             , Project.integrationStatus = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
             , Project.integrationAttempts = []
             , Project.needsFeedback = False
@@ -2651,7 +2651,7 @@ main = hspec $ do
         state =
           ProjectState
             { Project.pullRequests = IntMap.singleton 1 pullRequest
-            , Project.pullRequestApprovalIndex = 1
+            , Project.mergeTrain = [PullRequestId 1]
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
             , Project.paused = False
@@ -2680,7 +2680,7 @@ main = hspec $ do
             , Project.sha = Sha "f35"
             , Project.title = "Add my test results"
             , Project.author = "rachael"
-            , Project.approval = Just (Approval "deckard" Nothing Project.Merge 0 Nothing Normal)
+            , Project.approval = Just (Approval "deckard" Nothing Project.Merge Nothing Normal)
             , Project.integrationStatus = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
             , Project.integrationAttempts = []
             , Project.needsFeedback = False
@@ -2689,7 +2689,7 @@ main = hspec $ do
         state =
           ProjectState
             { Project.pullRequests = IntMap.singleton 1 pullRequest
-            , Project.pullRequestApprovalIndex = 1
+            , Project.mergeTrain = [PullRequestId 1]
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
             , Project.paused = False
@@ -2728,7 +2728,7 @@ main = hspec $ do
             , Project.sha = Sha "f35"
             , Project.title = "Add my test results"
             , Project.author = "rachael"
-            , Project.approval = Just (Approval "deckard" Nothing Project.MergeAndTag 0 Nothing Normal)
+            , Project.approval = Just (Approval "deckard" Nothing Project.MergeAndTag Nothing Normal)
             , Project.integrationStatus = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
             , Project.integrationAttempts = []
             , Project.needsFeedback = False
@@ -2737,7 +2737,7 @@ main = hspec $ do
         state =
           ProjectState
             { Project.pullRequests = IntMap.singleton 1 pullRequest
-            , Project.pullRequestApprovalIndex = 1
+            , Project.mergeTrain = [PullRequestId 1]
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
             , Project.paused = False
@@ -2831,7 +2831,7 @@ main = hspec $ do
             , Project.sha = Sha "f35"
             , Project.title = "Add Leon test results"
             , Project.author = "rachael"
-            , Project.approval = Just (Approval "deckard" Nothing Project.Merge 1 Nothing Normal)
+            , Project.approval = Just (Approval "deckard" Nothing Project.Merge Nothing Normal)
             , Project.integrationStatus = Project.Integrated (Sha "38d") (Project.AnyCheck Project.BuildSucceeded)
             , Project.integrationAttempts = []
             , Project.needsFeedback = False
@@ -2845,7 +2845,7 @@ main = hspec $ do
             , Project.sha = Sha "f37"
             , Project.title = "Add my test results"
             , Project.author = "rachael"
-            , Project.approval = Just (Approval "deckard" Nothing Project.Merge 0 Nothing Normal)
+            , Project.approval = Just (Approval "deckard" Nothing Project.Merge Nothing Normal)
             , Project.integrationStatus = Project.NotIntegrated
             , Project.integrationAttempts = []
             , Project.needsFeedback = False
@@ -2857,7 +2857,7 @@ main = hspec $ do
         state =
           ProjectState
             { Project.pullRequests = prMap
-            , Project.pullRequestApprovalIndex = 2
+            , Project.mergeTrain = [PullRequestId 2, PullRequestId 1]
             , Project.mandatoryChecks = mempty
             , Project.recentlyPromoted = []
             , Project.paused = False

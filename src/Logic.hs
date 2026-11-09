@@ -576,8 +576,8 @@ tryPromotePullRequest pullRequest state =
             registerMergedPR priority
             currTime <- getDateTime
             pure $
-              Pr.updatePullRequests (unspeculateConflictsAfter pullRequest) $
-                Pr.updatePullRequests (unspeculateFailuresAfter pullRequest) $
+              Pr.updatePullRequests (unspeculateConflictsAfter state pullRequest) $
+                Pr.updatePullRequests (unspeculateFailuresAfter state pullRequest) $
                   Pr.addPromotedPullRequest pullRequest currTime $
                     Pr.setIntegrationStatus prId Promoted state
           -- If something was pushed to the target branch while the candidate was
@@ -710,12 +710,12 @@ handleResume timeouts state = do
 approvePullRequest :: PullRequestId -> Approval -> ProjectState -> Eff es ProjectState
 approvePullRequest pr approval =
   pure
+    . Pr.addApproval pr approval
     . Pr.updatePullRequest
       pr
       ( \pullRequest ->
           pullRequest
-            { Pr.approval = Just approval
-            , Pr.needsFeedback = True
+            { Pr.needsFeedback = True
             }
       )
 
@@ -888,42 +888,30 @@ doMerge
   -> Maybe Username
   -> Eff es ProjectState
 doMerge projectConfig author source state pr approvalType priority retriedBy = do
-  let
-    prId = Pr.pullRequestId pr
-    (order, state') = Pr.newApprovalOrder state
-  state'' <- approvePullRequest prId (Approval author source approvalType order retriedBy priority) state'
+  let prId = Pr.pullRequestId pr
+  state'' <- approvePullRequest prId (Approval author source approvalType retriedBy priority) state
   -- Check whether the integration branch is valid, if not, mark the integration as invalid.
   if Pr.baseBranch pr /= BaseBranch (Config.branch projectConfig)
     then pure $ Pr.setIntegrationStatus prId IncorrectBaseBranch state''
     else case priority of
       Normal -> pure state''
-      -- When we have a priority merge we put the new pull request at the front of the merge train.
-      -- To do this we give the new PR the new order number.
-      -- After this we update all PRs that are in the current merge train to be not integrated
-      -- and after the new PR in the train.
+      -- When we have a priority merge we put the new pull request at the front of the merge train,
+      -- after any failed pull requests and earlier priority pull requests at the head of the train.
+      -- To do this we move the new pull request to the front, and all other PRs that are in the
+      -- current merge train are moved behind it and set to not integrated.
       -- The current merge train is determined as all known PRs that are integrated and
       -- either not failed or after a not failed PR.
       High -> do
         let
-          train = Pr.filterPullRequestsBy Pr.isIntegratedOrSpeculativelyConflicted state''
-          setNewOrder newOrder pullRequest =
-            pullRequest
-              { Pr.integrationStatus = NotIntegrated
-              , Pr.approval = (\x -> x{Pr.approvalOrder = newOrder}) <$> Pr.approval pullRequest
-              }
-          updatePullRequest (currState, started) pull =
+          train = filter Pr.isIntegratedOrSpeculativelyConflicted (Pr.trainPullRequests state'')
+          toMove = dropWhile Pr.isLeadingPullRequest train
+          moveToBack currState pull =
             let
               pid = Pr.pullRequestId pull
-              (order', nextState) = Pr.newApprovalOrder currState
-              nextState' = Pr.updatePullRequest pid (setNewOrder order') nextState
+              currState' = Pr.updatePullRequest pid (\p -> p{Pr.integrationStatus = NotIntegrated}) currState
             in
-              if started
-                then (nextState', True)
-                else
-                  if Pr.isFailedIntegrated $ Pr.integrationStatus pull
-                    then (currState, False)
-                    else (nextState', True)
-        pure $ fst $ foldl' updatePullRequest (state'', False) train
+              maybe currState' (\approval -> Pr.addApproval pid approval currState') (Pr.approval pull)
+        pure $ foldl' moveToBack (Pr.prioritizePullRequest prId state'') toMove
 
 -- | Someone issued a `merge*` command on a PR. Depending on what the current
 -- integration state of that PR is, we might reset its state and retry, if it
@@ -981,10 +969,10 @@ handleMergeRetry projectConfig author source priority state pr
 -- | Given a pull request, mark all pull requests that follow from it
 --   in the merge train as NotIntegrated
 unintegrateAfter :: PullRequest -> ProjectState -> ProjectState
-unintegrateAfter pr0 = Pr.updatePullRequests unintegrate
+unintegrateAfter pr0 state = Pr.updatePullRequests unintegrate state
  where
   unintegrate pr
-    | pr `Pr.approvedAfter` pr0 && Pr.isIntegratedOrSpeculativelyConflicted pr =
+    | Pr.approvedAfter state pr pr0 && Pr.isIntegratedOrSpeculativelyConflicted pr =
         pr{Pr.integrationStatus = NotIntegrated}
     | otherwise =
         pr
@@ -994,11 +982,12 @@ unintegrateAfter pr0 = Pr.updatePullRequests unintegrate
 handleBuildStatusChanged :: Sha -> Context -> BuildStatus -> ProjectState -> Eff es ProjectState
 handleBuildStatusChanged buildSha context newStatus state =
   pure $
-    compose
-      [ handleBuildStatusChangedForPR context newStatus pr
-      | pr <- Pr.filterPullRequestsBy shouldUpdate state
-      ]
-      state
+    Pr.removeLeadingFailures $
+      compose
+        [ handleBuildStatusChangedForPR context newStatus pr
+        | pr <- Pr.filterPullRequestsBy shouldUpdate state
+        ]
+        state
  where
   shouldUpdate pr = case Pr.integrationStatus pr of
     Integrated candidateSha _ -> candidateSha == buildSha
@@ -1222,7 +1211,7 @@ tryIntegratePullRequest pr state =
     prId = Pr.pullRequestId pr
     PullRequestId prNumber = prId
     title = Pr.title pr
-    Approval (Username approvedBy) _source approvalType _prOrder _retriedBy priority = fromJust $ Pr.approval pr
+    Approval (Username approvedBy) _source approvalType _retriedBy priority = fromJust $ Pr.approval pr
     candidateSha = Pr.sha pr
     candidateRef = getPullRequestRef prId
     candidate = (prId, candidateRef, candidateSha)
@@ -1331,14 +1320,14 @@ pushCandidate pullRequest newHead state =
 --
 -- This function updates the conflicted bases for all pull requests that come
 -- after the given PR and sets them to need feedback.
-unspeculateConflictsAfter :: PullRequest -> PullRequest -> PullRequest
-unspeculateConflictsAfter promotedPullRequest pr
+unspeculateConflictsAfter :: ProjectState -> PullRequest -> PullRequest -> PullRequest
+unspeculateConflictsAfter state promotedPullRequest pr
   | Pr.PullRequest
       { Pr.integrationStatus = Conflicted specBase reason
       , Pr.baseBranch = realBase
       } <-
       pr
-  , specBase /= realBase && pr `Pr.approvedAfter` promotedPullRequest =
+  , specBase /= realBase && Pr.approvedAfter state pr promotedPullRequest =
       pr
         { Pr.integrationStatus = Conflicted realBase reason
         , Pr.needsFeedback = True
@@ -1352,10 +1341,10 @@ unspeculateConflictsAfter promotedPullRequest pr
 --
 -- This function simply sets them to be sent feedback again this time the build
 -- failure will be reported as a real definitive failure.
-unspeculateFailuresAfter :: PullRequest -> PullRequest -> PullRequest
-unspeculateFailuresAfter promotedPullRequest pr
+unspeculateFailuresAfter :: ProjectState -> PullRequest -> PullRequest -> PullRequest
+unspeculateFailuresAfter state promotedPullRequest pr
   | Pr.PullRequest{Pr.integrationStatus = Integrated _ (summarize -> BuildFailed _)} <- pr
-  , pr `Pr.approvedAfter` promotedPullRequest =
+  , Pr.approvedAfter state pr promotedPullRequest =
       pr{Pr.needsFeedback = True}
   | otherwise =
       pr
@@ -1386,7 +1375,7 @@ feedbackOnStatus (BaseBranch projectBaseBranchName) pr state = case Pr.classifyP
   PrStatusAwaitingApproval -> CommentFeedback "Pull request awaiting approval."
   PrStatusApproved ->
     let
-      Approval (Username approvedBy) source approvalType _position retriedBy priority = fromJust $ Pr.approval pr
+      Approval (Username approvedBy) source approvalType retriedBy priority = fromJust $ Pr.approval pr
 
       approvalCommand = Pr.displayMergeCommand (Approve approvalType)
       retriedByMsg = case retriedBy of
@@ -1518,7 +1507,7 @@ handleEvent
   -> ProjectState
   -> Eff es ProjectState
 handleEvent triggerConfig mergeWindowExemption featureFreezeWindow timeouts event state = do
-  projectState <- handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow timeouts event state >>= proceedUntilFixedPoint
+  projectState <- handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow timeouts event state >>= proceedUntilFixedPoint . Pr.removeLeadingFailures
   triggerTrainSizeUpdate projectState
   pure projectState
 

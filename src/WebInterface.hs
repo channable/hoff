@@ -27,7 +27,6 @@ import Crypto.Hash (Digest, SHA256, hash)
 import Data.Bifunctor (second)
 import Data.ByteArray.Encoding (Base (Base64, Base64URLUnpadded), convertToBase)
 import Data.FileEmbed (embedStringFile)
-import Data.List (sortOn)
 import Data.Text (Text)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.Version (showVersion)
@@ -218,9 +217,9 @@ data ClassifiedPullRequests = ClassifiedPullRequests
 classifiedPullRequests :: ProjectState -> ClassifiedPullRequests
 classifiedPullRequests state =
   ClassifiedPullRequests
-    { building = sortPrs $ filterPrs prPending ++ speculativelyFailed
-    , failed = sortPrs $ realFailed
-    , approved = sortPrs $ filterPrs (== Project.PrStatusApproved)
+    { building = filterPrs prPending ++ speculativelyFailed
+    , failed = realFailed
+    , approved = filterPrs (== Project.PrStatusApproved)
     , awaiting = reverse $ filterPrs (== Project.PrStatusAwaitingApproval)
     }
  where
@@ -228,9 +227,8 @@ classifiedPullRequests state =
   realFailed = filter (\(pr, _) -> pullRequestId pr `notElem` speculativelyFailedIds) allFailed
   speculativelyFailed = filter (\(pr, _) -> pullRequestId pr `elem` speculativelyFailedIds) allFailed
   speculativelyFailedIds = map pullRequestId $ speculativelyFailedPullRequests state
-  sortPrs = sortOn (\(pr, _) -> approvalOrder <$> Project.approval pr)
   filterPrs predicate = filter (\(_, status) -> predicate status) pullRequests
-  pullRequests = Project.classifyPullRequests state
+  pullRequests = [(pr, Project.classifyPullRequest pr) | pr <- Project.filterPullRequestsBy (const True) state]
 
 -- Render the html for the queues in a project, excluding the header and footer.
 viewProjectQueues :: ProjectInfo -> ProjectState -> Html

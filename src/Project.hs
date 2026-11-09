@@ -59,8 +59,11 @@ module Project (
   isIntegratedOrSpeculativelyConflicted,
   needsTag,
   displayMergeCommand,
-  setApproval,
-  newApprovalOrder,
+  addApproval,
+  removeLeadingFailures,
+  prioritizePullRequest,
+  isLeadingPullRequest,
+  trainPullRequests,
   setIntegrationStatus,
   setNeedsFeedback,
   updatePullRequest,
@@ -86,9 +89,9 @@ import Data.ByteString (readFile)
 import Data.ByteString.Lazy (writeFile)
 import Data.Foldable (asum)
 import Data.IntMap.Strict (IntMap)
-import Data.List (intersect, sortBy)
+import Data.List (intersect)
 import Data.Map.Strict (Map)
-import Data.Maybe (isJust, maybeToList)
+import Data.Maybe (isJust, mapMaybe, maybeToList)
 import Data.Set (Set)
 import Data.String (IsString)
 import Data.Text (Text)
@@ -218,7 +221,6 @@ data Approval = Approval
   { approver :: Username
   , approvalSource :: Maybe ReactableId
   , approvedFor :: ApprovedFor
-  , approvalOrder :: Int
   , approvalRetriedBy :: Maybe Username
   , approvalPriority :: Priority
   }
@@ -265,7 +267,7 @@ data PullRequest = PullRequest
 
 data ProjectState = ProjectState
   { pullRequests :: IntMap PullRequest
-  , pullRequestApprovalIndex :: Int
+  , mergeTrain :: [PullRequestId]
   , mandatoryChecks :: MandatoryChecks
   , recentlyPromoted :: [PromotedPullRequest]
   , paused :: Bool
@@ -318,7 +320,7 @@ instance FromJSON ProjectState where
   parseJSON = Aeson.withObject "ProjectState" $ \o ->
     ProjectState
       <$> o .: "pullRequests"
-      <*> o .: "pullRequestApprovalIndex"
+      <*> o .: "mergeTrain"
       <*> o .: "mandatoryChecks"
       <*> o .: "recentlyPromoted"
       <*> o .: "paused"
@@ -354,7 +356,7 @@ emptyProjectState :: ProjectState
 emptyProjectState =
   ProjectState
     { pullRequests = IntMap.empty
-    , pullRequestApprovalIndex = 0
+    , mergeTrain = []
     , mandatoryChecks = mempty
     , recentlyPromoted = []
     , paused = False
@@ -387,15 +389,14 @@ insertPullRequest (PullRequestId n) prBranch bsBranch prSha prTitle prAuthor sta
           , needsFeedback = False
           , pausedMessageSent = False
           }
-  in  state{pullRequests = IntMap.insert n pullRequest $ pullRequests state}
+  in  removeFromTrain (PullRequestId n) state{pullRequests = IntMap.insert n pullRequest $ pullRequests state}
 
 -- Removes the pull request detail from the project. This does not change the
 -- integration candidate, which can be equal to the deleted pull request.
 deletePullRequest :: PullRequestId -> ProjectState -> ProjectState
-deletePullRequest (PullRequestId n) state =
-  state
-    { pullRequests = IntMap.delete n $ pullRequests state
-    }
+deletePullRequest pid@(PullRequestId n) state =
+  let state' = removeFromTrain pid state
+  in  state'{pullRequests = IntMap.delete n $ pullRequests state'}
 
 -- Returns whether the pull request is part of the set of open pull requests.
 existsPullRequest :: PullRequestId -> ProjectState -> Bool
@@ -425,16 +426,21 @@ addPromotedPullRequest pr currTime state =
 filterRecentlyPromoted :: (UTCTime -> Bool) -> ProjectState -> ProjectState
 filterRecentlyPromoted p state = state{recentlyPromoted = filter (p . promotedPRTime) (recentlyPromoted state)}
 
--- Marks the pull request as approved by somebody or nobody.
-setApproval :: PullRequestId -> Maybe Approval -> ProjectState -> ProjectState
-setApproval pr newApproval = updatePullRequest pr changeApproval
- where
-  changeApproval pullRequest = pullRequest{approval = newApproval}
+-- | Approves a pull request. The approval is placed at the back of the merge
+-- train. If the pull request was already approved, it is moved to the back.
+addApproval :: PullRequestId -> Approval -> ProjectState -> ProjectState
+addApproval pr approval state =
+  let state' = removeFromTrain pr $ updatePullRequest pr (\pullRequest -> pullRequest{approval = Just approval}) state
+  in  state'{mergeTrain = mergeTrain state' ++ [pr]}
 
-newApprovalOrder :: ProjectState -> (Int, ProjectState)
-newApprovalOrder state =
-  let index = pullRequestApprovalIndex state
-  in  (index, state{pullRequestApprovalIndex = index + 1})
+-- | Removes the pull request from the merge train, if it is in it. The
+-- approval of the pull request is kept.
+removeFromTrain :: PullRequestId -> ProjectState -> ProjectState
+removeFromTrain pr state = state{mergeTrain = filter (/= pr) (mergeTrain state)}
+
+-- | The pull requests in the merge train, head first.
+trainPullRequests :: ProjectState -> [PullRequest]
+trainPullRequests state = mapMaybe (\pr -> lookupPullRequest pr state) (mergeTrain state)
 
 -- Sets the integration status for a pull request.
 setIntegrationStatus :: PullRequestId -> IntegrationStatus -> ProjectState -> ProjectState
@@ -481,21 +487,12 @@ classifyPullRequests :: ProjectState -> [(PullRequest, PullRequestStatus)]
 classifyPullRequests state =
   [(pr, classifyPullRequest pr) | pr <- IntMap.elems (pullRequests state)]
 
--- Returns the pull requests that satisfy the predicate, in ascending order. The PRs are sorted by
--- the approval order, with not yet approved PRs at the end of the list.
+-- Returns the pull requests that satisfy the predicate, in merge train order.
+-- The pull requests in the merge train come first, followed by the pull
+-- requests that are not in the merge train, in ascending order of id.
 filterPullRequestsBy :: (PullRequest -> Bool) -> ProjectState -> [PullRequest]
-filterPullRequestsBy p =
-  sortBy comp
-    . filter p
-    . IntMap.elems
-    . pullRequests
- where
-  -- Compare the approval orders, prefer a Just over a Nothing
-  comp x y = comp' (approvalOrder <$> approval x) (approvalOrder <$> approval y)
-  comp' Nothing Nothing = EQ
-  comp' (Just _) Nothing = LT
-  comp' Nothing (Just _) = GT
-  comp' (Just n) (Just m) = compare n m
+filterPullRequestsBy p state =
+  filter p $ trainPullRequests state ++ [pr | pr <- IntMap.elems (pullRequests state), pullRequestId pr `notElem` mergeTrain state]
 
 -- Returns the pull requests that have been approved, in order of ascending id.
 approvedPullRequests :: ProjectState -> [PullRequest]
@@ -507,9 +504,7 @@ approvedPullRequests = filterPullRequestsBy $ isJust . approval
 getQueuePosition :: PullRequest -> ProjectState -> Int
 getQueuePosition pr0 state =
   let
-    approvalNumber = maybe maxBound approvalOrder (approval pr0)
-    isEarlier pr = isQueued pr && maybe maxBound approvalOrder (approval pr) < approvalNumber
-    queue = filterPullRequestsBy isEarlier state
+    queue = filter isQueued $ takeWhile ((/= pullRequestId pr0) . pullRequestId) $ trainPullRequests state
     inProgress = filterPullRequestsBy isInProgress state
   in
     length (inProgress ++ queue)
@@ -568,7 +563,30 @@ speculativelyFailedPullRequests state =
   filter (isFailedIntegrated . integrationStatus) $
     dropWhile
       (not . isUnfailedIntegrated . integrationStatus)
-      (integratedPullRequests state)
+      (filter (isIntegrated . integrationStatus) $ trainPullRequests state)
+
+-- | Removes the first pull request of the merge train if its integration failed.
+-- This is a true failure, so it is no longer in the train. Failed pull requests
+-- further down the train stay in it, and are retried by rebasing the train.
+removeLeadingFailures :: ProjectState -> ProjectState
+removeLeadingFailures state = case trainPullRequests state of
+  pr : _ | isFailedIntegrated (integrationStatus pr) -> removeFromTrain (pullRequestId pr) state
+  _ -> state
+
+-- | Moves the pull request to the front of the merge train, after the failed
+-- pull requests and the priority pull requests that are at the head of the train.
+prioritizePullRequest :: PullRequestId -> ProjectState -> ProjectState
+prioritizePullRequest pid state =
+  state{mergeTrain = leading ++ [pid] ++ filter (`notElem` (pid : leading)) (mergeTrain state)}
+ where
+  leading = map pullRequestId $ takeWhile (\pr -> pullRequestId pr /= pid && isLeadingPullRequest pr) (trainPullRequests state)
+
+-- | Whether the pull request stays in front of a new priority pull request:
+-- it either failed, or it is a priority pull request itself.
+isLeadingPullRequest :: PullRequest -> Bool
+isLeadingPullRequest pr =
+  isFailedIntegrated (integrationStatus pr)
+    || maybe False ((== High) . approvalPriority) (approval pr)
 
 -- | Lists all pull requests that were integrated and did not fail.
 unfailedIntegratedPullRequests :: ProjectState -> [PullRequest]
@@ -577,10 +595,11 @@ unfailedIntegratedPullRequests = filterPullRequestsBy $ isUnfailedIntegrated . i
 -- | Lists all pull requests that were integrated, did not fail
 -- and that come before a given PR in approval order.
 unfailedIntegratedPullRequestsBefore :: PullRequest -> ProjectState -> [PullRequest]
-unfailedIntegratedPullRequestsBefore referencePullRequest = filterPullRequestsBy $
-  \pr ->
-    isUnfailedIntegrated (integrationStatus pr)
-      && referencePullRequest `approvedAfter` pr
+unfailedIntegratedPullRequestsBefore referencePullRequest state
+  | pullRequestId referencePullRequest `elem` mergeTrain state =
+      filter (isUnfailedIntegrated . integrationStatus) $
+        takeWhile ((/= pullRequestId referencePullRequest) . pullRequestId) (trainPullRequests state)
+  | otherwise = []
 
 -- | Returns the pull requests that have not been integrated yet,
 --   in order of ascending id.
@@ -651,14 +670,12 @@ awaitingPromotion pr = case integrationStatus pr of
 -- | Returns whether the first pull request was approved after the second.
 -- To be used in infix notation:
 --
--- > pr1 `approvedAfter` pr2
-approvedAfter :: PullRequest -> PullRequest -> Bool
-pr1 `approvedAfter` pr2 = case (mo1, mo2) of
-  (Just order1, Just order2) -> order1 > order2
-  _ -> False
+-- > approvedAfter state pr1 pr2
+approvedAfter :: ProjectState -> PullRequest -> PullRequest -> Bool
+approvedAfter state pr1 pr2 =
+  pullRequestId pr1 `elem` ids && pullRequestId pr2 `elem` takeWhile (/= pullRequestId pr1) ids
  where
-  mo1 = approvalOrder <$> approval pr1
-  mo2 = approvalOrder <$> approval pr2
+  ids = mergeTrain state
 
 isIntegrated :: IntegrationStatus -> Bool
 isIntegrated (Integrated _ _) = True
