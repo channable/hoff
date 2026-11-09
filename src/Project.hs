@@ -60,9 +60,9 @@ module Project (
   needsTag,
   displayMergeCommand,
   addApproval,
-  removeLeadingFailures,
+  removeLeadingFailure,
   prioritizePullRequest,
-  isLeadingPullRequest,
+  removeFromTrain,
   trainPullRequests,
   setIntegrationStatus,
   setNeedsFeedback,
@@ -568,25 +568,23 @@ speculativelyFailedPullRequests state =
 -- | Removes the first pull request of the merge train if its integration failed.
 -- This is a true failure, so it is no longer in the train. Failed pull requests
 -- further down the train stay in it, and are retried by rebasing the train.
-removeLeadingFailures :: ProjectState -> ProjectState
-removeLeadingFailures state = case trainPullRequests state of
+removeLeadingFailure :: ProjectState -> ProjectState
+removeLeadingFailure state = case trainPullRequests state of
   pr : _ | isFailedIntegrated (integrationStatus pr) -> removeFromTrain (pullRequestId pr) state
   _ -> state
 
--- | Moves the pull request to the front of the merge train, after the failed
--- pull requests and the priority pull requests that are at the head of the train.
+-- | Moves the pull request to the front of the merge train, after the priority
+-- pull requests that are at the head of the train.
 prioritizePullRequest :: PullRequestId -> ProjectState -> ProjectState
 prioritizePullRequest pid state =
-  state{mergeTrain = leading ++ [pid] ++ filter (`notElem` (pid : leading)) (mergeTrain state)}
+  state{mergeTrain = highPrio ++ [pid] ++ normalPrio}
  where
-  leading = map pullRequestId $ takeWhile (\pr -> pullRequestId pr /= pid && isLeadingPullRequest pr) (trainPullRequests state)
-
--- | Whether the pull request stays in front of a new priority pull request:
--- it either failed, or it is a priority pull request itself.
-isLeadingPullRequest :: PullRequest -> Bool
-isLeadingPullRequest pr =
-  isFailedIntegrated (integrationStatus pr)
-    || maybe False ((== High) . approvalPriority) (approval pr)
+  others = filter (/= pid) (mergeTrain state)
+  isHigh i = case lookupPullRequest i state of
+    Just PullRequest{approval = Just a} -> approvalPriority a == High
+    _ -> False
+  highPrio = takeWhile isHigh others
+  normalPrio = dropWhile isHigh others
 
 -- | Lists all pull requests that were integrated and did not fail.
 unfailedIntegratedPullRequests :: ProjectState -> [PullRequest]

@@ -45,6 +45,7 @@ import Control.Monad (foldM, unless, void, when, (>=>))
 import Control.Monad.STM (atomically)
 import Data.Either.Extra (maybeToEither)
 import Data.Foldable (foldl')
+
 import Data.IntSet (IntSet)
 import Data.Maybe (fromJust, fromMaybe, isJust)
 import Data.Text (Text)
@@ -609,7 +610,7 @@ handlePullRequestClosed
   -> Eff es ProjectState
 handlePullRequestClosed closingReason pid state =
   case Pr.lookupPullRequest pid state of
-    Nothing -> pure state
+    Nothing -> pure $ Pr.removeFromTrain pid state
     Just pr -> do
       let status = Pr.integrationStatus pr
       when (Pr.isUnfailedIntegrated status) $
@@ -707,17 +708,8 @@ handleResume timeouts state = do
   handleStalePromotions timeouts currentTime (resume state)
 
 -- Mark the pull request as approved, and leave a comment to acknowledge that.
-approvePullRequest :: PullRequestId -> Approval -> ProjectState -> Eff es ProjectState
-approvePullRequest pr approval =
-  pure
-    . Pr.addApproval pr approval
-    . Pr.updatePullRequest
-      pr
-      ( \pullRequest ->
-          pullRequest
-            { Pr.needsFeedback = True
-            }
-      )
+approvePullRequest :: PullRequestId -> Approval -> ProjectState -> ProjectState
+approvePullRequest pr approval = Pr.addApproval pr approval . Pr.setNeedsFeedback pr True
 
 handleCommentAdded
   :: forall es
@@ -888,30 +880,19 @@ doMerge
   -> Maybe Username
   -> Eff es ProjectState
 doMerge projectConfig author source state pr approvalType priority retriedBy = do
-  let prId = Pr.pullRequestId pr
-  state'' <- approvePullRequest prId (Approval author source approvalType retriedBy priority) state
+  let
+    prId = Pr.pullRequestId pr
+    state'' = approvePullRequest prId (Approval author source approvalType retriedBy priority) state
   -- Check whether the integration branch is valid, if not, mark the integration as invalid.
   if Pr.baseBranch pr /= BaseBranch (Config.branch projectConfig)
     then pure $ Pr.setIntegrationStatus prId IncorrectBaseBranch state''
     else case priority of
       Normal -> pure state''
-      -- When we have a priority merge we put the new pull request at the front of the merge train,
-      -- after any failed pull requests and earlier priority pull requests at the head of the train.
-      -- To do this we move the new pull request to the front, and all other PRs that are in the
-      -- current merge train are moved behind it and set to not integrated.
-      -- The current merge train is determined as all known PRs that are integrated and
-      -- either not failed or after a not failed PR.
-      High -> do
-        let
-          train = filter Pr.isIntegratedOrSpeculativelyConflicted (Pr.trainPullRequests state'')
-          toMove = dropWhile Pr.isLeadingPullRequest train
-          moveToBack currState pull =
-            let
-              pid = Pr.pullRequestId pull
-              currState' = Pr.updatePullRequest pid (\p -> p{Pr.integrationStatus = NotIntegrated}) currState
-            in
-              maybe currState' (\approval -> Pr.addApproval pid approval currState') (Pr.approval pull)
-        pure $ foldl' moveToBack (Pr.prioritizePullRequest prId state'') toMove
+      -- When we have a priority merge we put the new pull request at the front
+      -- of the merge train, after any earlier priority pull requests at the
+      -- head of the train. We set all PRs behind it to 'not integrated'
+      High ->
+        pure $ unintegrateAfter pr $ Pr.prioritizePullRequest prId state''
 
 -- | Someone issued a `merge*` command on a PR. Depending on what the current
 -- integration state of that PR is, we might reset its state and retry, if it
@@ -969,20 +950,20 @@ handleMergeRetry projectConfig author source priority state pr
 -- | Given a pull request, mark all pull requests that follow from it
 --   in the merge train as NotIntegrated
 unintegrateAfter :: PullRequest -> ProjectState -> ProjectState
-unintegrateAfter pr0 state = Pr.updatePullRequests unintegrate state
+unintegrateAfter pr0 state = foldl' unintegrate state (Pr.trainPullRequests state)
  where
-  unintegrate pr
+  unintegrate s pr
     | Pr.approvedAfter state pr pr0 && Pr.isIntegratedOrSpeculativelyConflicted pr =
-        pr{Pr.integrationStatus = NotIntegrated}
+        Pr.setIntegrationStatus (Pr.pullRequestId pr) NotIntegrated s
     | otherwise =
-        pr
+        s
 
 -- | If there is an integration candidate, and its integration sha matches that of the build,
 --   then update the build status for that pull request. Otherwise do nothing.
 handleBuildStatusChanged :: Sha -> Context -> BuildStatus -> ProjectState -> Eff es ProjectState
 handleBuildStatusChanged buildSha context newStatus state =
   pure $
-    Pr.removeLeadingFailures $
+    Pr.removeLeadingFailure $
       compose
         [ handleBuildStatusChangedForPR context newStatus pr
         | pr <- Pr.filterPullRequestsBy shouldUpdate state
@@ -1507,7 +1488,7 @@ handleEvent
   -> ProjectState
   -> Eff es ProjectState
 handleEvent triggerConfig mergeWindowExemption featureFreezeWindow timeouts event state = do
-  projectState <- handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow timeouts event state >>= proceedUntilFixedPoint . Pr.removeLeadingFailures
+  projectState <- handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow timeouts event state >>= proceedUntilFixedPoint . Pr.removeLeadingFailure
   triggerTrainSizeUpdate projectState
   pure projectState
 
