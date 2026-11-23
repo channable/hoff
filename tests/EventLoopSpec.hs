@@ -445,7 +445,7 @@ withTestEnv' body = do
 integrationShas :: ProjectState -> [Sha]
 integrationShas state =
   [ sha
-  | pr <- Project.unfailedIntegratedPullRequests state
+  | pr <- Project.trainPullRequests state
   , Integrated sha _ <- [Project.integrationStatus pr]
   ]
 
@@ -1061,7 +1061,7 @@ eventLoopSpec = parallel $ do
 
         -- The second pull request should still be pending, awaiting the build
         -- result.
-        map Project.pullRequestId (Project.unfailedIntegratedPullRequests state) `shouldBe` [pr4]
+        Project.mergeTrain state `shouldBe` [pr4]
         let
           Just pullRequest4 = Project.lookupPullRequest pr4 state
           Integrated _ buildStatus = Project.integrationStatus pullRequest4
@@ -1112,7 +1112,7 @@ eventLoopSpec = parallel $ do
 
         -- The push should have failed, hence there should still be an
         -- integration candidate.
-        Project.unfailedIntegratedPullRequests state' `shouldSatisfy` (not . null)
+        Project.mergeTrain state' `shouldSatisfy` (not . null)
 
         -- Again notify build success, now for the new commit.
         let [rebasedSha'] = integrationShas state'
@@ -1125,7 +1125,7 @@ eventLoopSpec = parallel $ do
 
         -- After the second build success, the pull request should have been
         -- integrated properly, so there should not be a new candidate.
-        Project.unfailedIntegratedPullRequests state'' `shouldBe` []
+        Project.mergeTrain state'' `shouldBe` []
 
       history
         `shouldBe` [ "*   Merge #6"
@@ -1439,7 +1439,7 @@ eventLoopSpec = parallel $ do
         -- The pull request should not be integrated. Moreover, the presence of
         -- orphan fixups should make the PR ineligible for being a candidate for integration.
         -- That is, we expect no candidates for integration.
-        Project.unfailedIntegratedPullRequests state' `shouldBe` []
+        Project.mergeTrain state' `shouldBe` []
 
       -- Here we expect that the fixup commit is not present.
       history
@@ -1468,7 +1468,7 @@ eventLoopSpec = parallel $ do
             , Logic.CommentAdded pr8 "rachael" Nothing "@bot merge"
             ]
 
-        map Project.pullRequestId (Project.unfailedIntegratedPullRequests state) `shouldBe` [pr8]
+        Project.mergeTrain state `shouldBe` [pr8]
 
         let [rebasedSha] = integrationShas state
 
@@ -1482,7 +1482,7 @@ eventLoopSpec = parallel $ do
             , Logic.CommentAdded pr6 "rachael" Nothing "@bot merge"
             ]
 
-        Project.unfailedIntegratedPullRequests state' `shouldBe` []
+        Project.mergeTrain state' `shouldBe` []
 
         let Just pullRequest' = Project.lookupPullRequest pr6 state'
         Project.integrationStatus pullRequest'
@@ -1524,7 +1524,7 @@ eventLoopSpec = parallel $ do
             , Logic.CommentAdded pr9 "rachael" Nothing "@bot merge"
             ]
 
-        Project.unfailedIntegratedPullRequests state `shouldBe` []
+        Project.mergeTrain state `shouldBe` []
 
         let Just pullRequest = Project.lookupPullRequest pr9 state
         Project.integrationStatus pullRequest
@@ -1558,7 +1558,7 @@ eventLoopSpec = parallel $ do
 
         -- The real commit should have been integrated successfully (the empty
         -- commit is dropped, but the real one survives the rebase).
-        map Project.pullRequestId (Project.unfailedIntegratedPullRequests state) `shouldBe` [pr10]
+        Project.mergeTrain state `shouldBe` [pr10]
 
         let [rebasedSha] = integrationShas state
 

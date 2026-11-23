@@ -31,14 +31,10 @@ module Project (
   PullRequestId (..),
   PullRequestStatus (..),
   Owner,
-  approvedPullRequests,
-  integratedPullRequests,
-  unfailedIntegratedPullRequests,
-  unfailedIntegratedPullRequestsBefore,
+  unintegrateAfter,
   speculativelyFailedPullRequests,
   candidatePullRequests,
   classifyPullRequest,
-  classifyPullRequests,
   deletePullRequest,
   emptyProjectState,
   isInProgress,
@@ -59,17 +55,20 @@ module Project (
   isIntegratedOrSpeculativelyConflicted,
   needsTag,
   displayMergeCommand,
-  setApproval,
-  newApprovalOrder,
+  addApproval,
+  approve,
+  removeFromTrain,
+  trainPullRequests,
+  trainBefore,
+  sortedPullRequests,
   setIntegrationStatus,
   setNeedsFeedback,
   updatePullRequest,
   updatePullRequests,
-  addPromotedPullRequest,
+  promotePullRequest,
   filterRecentlyPromoted,
   wasIntegrationAttemptFor,
   filterPullRequestsBy,
-  approvedAfter,
   isIntegrated,
   isFailedIntegrated,
   isUnfailedIntegrated,
@@ -84,11 +83,10 @@ where
 import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey, (.!=), (.:), (.:?))
 import Data.ByteString (readFile)
 import Data.ByteString.Lazy (writeFile)
-import Data.Foldable (asum)
+import Data.Foldable (asum, foldl')
 import Data.IntMap.Strict (IntMap)
-import Data.List (intersect, sortBy)
 import Data.Map.Strict (Map)
-import Data.Maybe (isJust, maybeToList)
+import Data.Maybe (mapMaybe, maybeToList)
 import Data.Set (Set)
 import Data.String (IsString)
 import Data.Text (Text)
@@ -218,7 +216,6 @@ data Approval = Approval
   { approver :: Username
   , approvalSource :: Maybe ReactableId
   , approvedFor :: ApprovedFor
-  , approvalOrder :: Int
   , approvalRetriedBy :: Maybe Username
   , approvalPriority :: Priority
   }
@@ -265,7 +262,13 @@ data PullRequest = PullRequest
 
 data ProjectState = ProjectState
   { pullRequests :: IntMap PullRequest
-  , pullRequestApprovalIndex :: Int
+  , -- All PRs that are approved are added to the merge train. Normal priority PRs are added to the
+    -- end, High priority PRs behind existing High priority PRs. Approved PRs that have a wrong base
+    -- branch (immediately) or wrong fixup commits (after rebase) are kicked from the train. PRs that
+    -- fail to rebase or fail tests are kicked from the train once they are at the front of the train:
+    -- before that they can potentially still succeed when the PR in front of them gets kicked from
+    -- the train.
+    mergeTrain :: [PullRequestId]
   , mandatoryChecks :: MandatoryChecks
   , recentlyPromoted :: [PromotedPullRequest]
   , paused :: Bool
@@ -318,7 +321,7 @@ instance FromJSON ProjectState where
   parseJSON = Aeson.withObject "ProjectState" $ \o ->
     ProjectState
       <$> o .: "pullRequests"
-      <*> o .: "pullRequestApprovalIndex"
+      <*> o .: "mergeTrain"
       <*> o .: "mandatoryChecks"
       <*> o .: "recentlyPromoted"
       <*> o .: "paused"
@@ -354,7 +357,7 @@ emptyProjectState :: ProjectState
 emptyProjectState =
   ProjectState
     { pullRequests = IntMap.empty
-    , pullRequestApprovalIndex = 0
+    , mergeTrain = []
     , mandatoryChecks = mempty
     , recentlyPromoted = []
     , paused = False
@@ -392,10 +395,8 @@ insertPullRequest (PullRequestId n) prBranch bsBranch prSha prTitle prAuthor sta
 -- Removes the pull request detail from the project. This does not change the
 -- integration candidate, which can be equal to the deleted pull request.
 deletePullRequest :: PullRequestId -> ProjectState -> ProjectState
-deletePullRequest (PullRequestId n) state =
-  state
-    { pullRequests = IntMap.delete n $ pullRequests state
-    }
+deletePullRequest pid@(PullRequestId n) state =
+  removeFromTrain pid $ state{pullRequests = IntMap.delete n $ pullRequests state}
 
 -- Returns whether the pull request is part of the set of open pull requests.
 existsPullRequest :: PullRequestId -> ProjectState -> Bool
@@ -416,25 +417,92 @@ updatePullRequests f state =
     { pullRequests = IntMap.map f $ pullRequests state
     }
 
-addPromotedPullRequest :: PullRequest -> UTCTime -> ProjectState -> ProjectState
-addPromotedPullRequest pr currTime state =
-  case promotionSha pr of
-    Just promotedSha -> state{recentlyPromoted = PromotedPullRequest promotedSha currTime : recentlyPromoted state}
-    Nothing -> error "Can't add promoted pull request that is not being promoted."
+promotePullRequest :: PullRequest -> UTCTime -> ProjectState -> ProjectState
+promotePullRequest pr currTime state =
+  let
+    prId = pullRequestId pr
+    state' = setIntegrationStatus prId Promoted state
+    state'' = case promotionSha pr of
+      Just promotedSha -> state'{recentlyPromoted = PromotedPullRequest promotedSha currTime : recentlyPromoted state'}
+      Nothing -> error "Can't add promoted pull request that is not being promoted."
+  in
+    unspeculateTrainHead $ deleteFromTrain prId state''
+
+-- After promoting a PR, we have to make sure the new head of the train loses its speculative
+-- failure status and promote it to a real failure. After this we send a message about the failure
+-- and kick it from the merge train (in `Logic.proceedCandidate`)
+unspeculateTrainHead :: ProjectState -> ProjectState
+unspeculateTrainHead state = case mergeTrain state of
+  -- No merge train, no problems
+  [] -> state
+  -- Update the new head from speculative failure or speculative conflict to real failure or conflict
+  (pid : _) -> updatePullRequest pid (updatePRFailedIntegrated . updatePRConflicted) state
+ where
+  updatePRFailedIntegrated :: PullRequest -> PullRequest
+  updatePRFailedIntegrated pr =
+    if isFailedIntegrated (integrationStatus pr)
+      then pr{needsFeedback = True}
+      else pr
+
+  updatePRConflicted :: PullRequest -> PullRequest
+  updatePRConflicted pr = case integrationStatus pr of
+    (Conflicted base reason)
+      | base /= baseBranch pr ->
+          pr
+            { integrationStatus = Conflicted (baseBranch pr) reason
+            , needsFeedback = True
+            }
+    _ -> pr
 
 filterRecentlyPromoted :: (UTCTime -> Bool) -> ProjectState -> ProjectState
 filterRecentlyPromoted p state = state{recentlyPromoted = filter (p . promotedPRTime) (recentlyPromoted state)}
 
--- Marks the pull request as approved by somebody or nobody.
-setApproval :: PullRequestId -> Maybe Approval -> ProjectState -> ProjectState
-setApproval pr newApproval = updatePullRequest pr changeApproval
- where
-  changeApproval pullRequest = pullRequest{approval = newApproval}
+addApproval :: PullRequestId -> Approval -> ProjectState -> ProjectState
+addApproval pr approval = updatePullRequest pr (\pullRequest -> pullRequest{approval = Just approval, needsFeedback = True})
 
-newApprovalOrder :: ProjectState -> (Int, ProjectState)
-newApprovalOrder state =
-  let index = pullRequestApprovalIndex state
-  in  (index, state{pullRequestApprovalIndex = index + 1})
+-- | Approves a pull request. The approval is placed at the back of the merge train, or behind the
+-- priority PRs in the merge, depending on the Priority. If the pull request was already approved,
+-- it is moved to the back for the respective train section.
+approve :: PullRequestId -> Approval -> ProjectState -> ProjectState
+approve pr approval state =
+  let
+    state' = addApproval pr approval state
+    otherPRs = filter (/= pr) (mergeTrain state')
+    isHighPriority p = case lookupPullRequest p state' of
+      Just PullRequest{approval = Just a} -> approvalPriority a == High
+      _ -> False
+    highPrio = takeWhile isHighPriority otherPRs
+    normalPrio = dropWhile isHighPriority otherPRs
+  in
+    case approvalPriority approval of
+      Normal -> state'{mergeTrain = highPrio ++ normalPrio ++ [pr]}
+      High ->
+        let state'' = state'{mergeTrain = highPrio ++ [pr] ++ normalPrio}
+        in  unintegrateAfter pr state''
+
+-- | Given a pull request, mark all pull requests that follow from it
+--   in the merge train as NotIntegrated
+unintegrateAfter :: PullRequestId -> ProjectState -> ProjectState
+unintegrateAfter pr0 state = foldl' unintegrate state (trainAfter pr0 state)
+ where
+  unintegrate :: ProjectState -> PullRequestId -> ProjectState
+  unintegrate s pid = case lookupPullRequest pid state of
+    Just pr
+      | isIntegratedOrSpeculativelyConflicted pr ->
+          setIntegrationStatus pid NotIntegrated s
+    _ -> s
+
+-- | Removes the pull request from the merge train, if it is in it. The
+-- approval of the pull request is kept.
+removeFromTrain :: PullRequestId -> ProjectState -> ProjectState
+removeFromTrain pid state = deleteFromTrain pid $ unintegrateAfter pid state
+
+deleteFromTrain :: PullRequestId -> ProjectState -> ProjectState
+deleteFromTrain pid state = state{mergeTrain = filter (/= pid) (mergeTrain state)}
+
+-- | The pull requests in the merge train, in order
+trainPullRequests :: ProjectState -> [PullRequest]
+trainPullRequests state = mapMaybe (\pr -> lookupPullRequest pr state) (mergeTrain state)
 
 -- Sets the integration status for a pull request.
 setIntegrationStatus :: PullRequestId -> IntegrationStatus -> ProjectState -> ProjectState
@@ -475,59 +543,29 @@ classifyPullRequest pr = case approval pr of
     PromoteAndTag{} -> PrStatusAwaitingPromotion
     Promoted -> PrStatusIntegrated
 
--- Classify every pull request into one status. Orders pull requests by id in
--- ascending order.
-classifyPullRequests :: ProjectState -> [(PullRequest, PullRequestStatus)]
-classifyPullRequests state =
-  [(pr, classifyPullRequest pr) | pr <- IntMap.elems (pullRequests state)]
-
--- Returns the pull requests that satisfy the predicate, in ascending order. The PRs are sorted by
--- the approval order, with not yet approved PRs at the end of the list.
+-- Returns the pull requests that satisfy the predicate, in the order defined in
+-- `sortedPullRequests`
 filterPullRequestsBy :: (PullRequest -> Bool) -> ProjectState -> [PullRequest]
-filterPullRequestsBy p =
-  sortBy comp
-    . filter p
-    . IntMap.elems
-    . pullRequests
- where
-  -- Compare the approval orders, prefer a Just over a Nothing
-  comp x y = comp' (approvalOrder <$> approval x) (approvalOrder <$> approval y)
-  comp' Nothing Nothing = EQ
-  comp' (Just _) Nothing = LT
-  comp' Nothing (Just _) = GT
-  comp' (Just n) (Just m) = compare n m
+filterPullRequestsBy p = filter p . sortedPullRequests
 
--- Returns the pull requests that have been approved, in order of ascending id.
-approvedPullRequests :: ProjectState -> [PullRequest]
-approvedPullRequests = filterPullRequestsBy $ isJust . approval
+-- Return all PRs, in order of the merge train, the remainder in the PR number order
+sortedPullRequests :: ProjectState -> [PullRequest]
+sortedPullRequests state = trainPullRequests state ++ [pr | pr <- IntMap.elems (pullRequests state), pullRequestId pr `notElem` mergeTrain state]
 
 -- Returns the number of pull requests that will be rebased and checked on CI
 -- before the PR with the given id will be rebased, in case no other pull
--- requests get approved in the mean time (PRs with a lower id may skip ahead).
-getQueuePosition :: PullRequest -> ProjectState -> Int
-getQueuePosition pr0 state =
-  let
-    approvalNumber = maybe maxBound approvalOrder (approval pr0)
-    isEarlier pr = isQueued pr && maybe maxBound approvalOrder (approval pr) < approvalNumber
-    queue = filterPullRequestsBy isEarlier state
-    inProgress = filterPullRequestsBy isInProgress state
-  in
-    length (inProgress ++ queue)
+-- requests get approved in the mean time (priority PRs can skip ahead).
+getQueuePosition :: PullRequestId -> ProjectState -> Int
+getQueuePosition pid = length . trainBefore pid
 
--- Returns whether a pull request is queued for merging, but not already in
--- progress (pending build results).
-isQueued :: PullRequest -> Bool
-isQueued pr = case approval pr of
-  Nothing -> False
-  Just _ -> case integrationStatus pr of
-    NotIntegrated -> True
-    Outdated -> True
-    IncorrectBaseBranch -> False
-    Conflicted _ _ -> False
-    Integrated _ _ -> False
-    Promote _ _ -> False
-    PromoteAndTag{} -> False
-    Promoted -> False
+trainBefore :: PullRequestId -> ProjectState -> [PullRequestId]
+trainBefore pr0 = takeWhile (/= pr0) . mergeTrain
+
+-- As trainBefore, but also making sure we drop the pr itself
+trainAfter :: PullRequestId -> ProjectState -> [PullRequestId]
+trainAfter pr0 state = case dropWhile (/= pr0) $ mergeTrain state of
+  (_ : prs) -> prs
+  prs -> prs
 
 -- Returns whether a pull request is in the process of being integrated (pending
 -- build results).
@@ -555,9 +593,6 @@ wasIntegrationAttemptFor commit pr = case integrationStatus pr of
   Integrated candidate _buildStatus -> commit `elem` (candidate : integrationAttempts pr)
   _ -> commit `elem` (integrationAttempts pr)
 
-integratedPullRequests :: ProjectState -> [PullRequest]
-integratedPullRequests = filterPullRequestsBy $ isIntegrated . integrationStatus
-
 -- | Lists all PR ids that are speculative failures.
 --
 -- In other words, this lists all failed PRs
@@ -568,34 +603,12 @@ speculativelyFailedPullRequests state =
   filter (isFailedIntegrated . integrationStatus) $
     dropWhile
       (not . isUnfailedIntegrated . integrationStatus)
-      (integratedPullRequests state)
-
--- | Lists all pull requests that were integrated and did not fail.
-unfailedIntegratedPullRequests :: ProjectState -> [PullRequest]
-unfailedIntegratedPullRequests = filterPullRequestsBy $ isUnfailedIntegrated . integrationStatus
-
--- | Lists all pull requests that were integrated, did not fail
--- and that come before a given PR in approval order.
-unfailedIntegratedPullRequestsBefore :: PullRequest -> ProjectState -> [PullRequest]
-unfailedIntegratedPullRequestsBefore referencePullRequest = filterPullRequestsBy $
-  \pr ->
-    isUnfailedIntegrated (integrationStatus pr)
-      && referencePullRequest `approvedAfter` pr
-
--- | Returns the pull requests that have not been integrated yet,
---   in order of ascending id.
-unintegratedPullRequests :: ProjectState -> [PullRequest]
-unintegratedPullRequests = filterPullRequestsBy $ (\x -> x == NotIntegrated || x == Outdated) . integrationStatus
+      (filter (isIntegrated . integrationStatus) $ trainPullRequests state)
 
 -- | Returns the pull requests that have been approved, but for which integration
 --   and building has not yet been attempted.
 candidatePullRequests :: ProjectState -> [PullRequest]
-candidatePullRequests state =
-  let
-    approved = approvedPullRequests state
-    unintegrated = unintegratedPullRequests state
-  in
-    approved `intersect` unintegrated
+candidatePullRequests state = filter ((\x -> x == NotIntegrated || x == Outdated) . integrationStatus) $ trainPullRequests state
 
 -- | A string representation of a merge command, without the optional @ on
 -- friday@ merge window suffix.
@@ -647,18 +660,6 @@ awaitingPromotion pr = case integrationStatus pr of
   Promote _ _ -> True
   PromoteAndTag{} -> True
   _ -> False
-
--- | Returns whether the first pull request was approved after the second.
--- To be used in infix notation:
---
--- > pr1 `approvedAfter` pr2
-approvedAfter :: PullRequest -> PullRequest -> Bool
-pr1 `approvedAfter` pr2 = case (mo1, mo2) of
-  (Just order1, Just order2) -> order1 > order2
-  _ -> False
- where
-  mo1 = approvalOrder <$> approval pr1
-  mo2 = approvalOrder <$> approval pr2
 
 isIntegrated :: IntegrationStatus -> Bool
 isIntegrated (Integrated _ _) = True

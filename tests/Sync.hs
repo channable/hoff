@@ -31,6 +31,10 @@ import Types (PullRequestId (..), Username (..))
 import GithubApi qualified
 import Project qualified
 
+-- Some tests expect the version of `Project.approve` that doesn't set the `needsFeedback` flag
+approveWithoutFeedback :: PullRequestId -> Approval -> Project.ProjectState -> Project.ProjectState
+approveWithoutFeedback pr app state = Project.setNeedsFeedback pr False $ Project.approve pr app state
+
 data ActionFlat
   = AGetPullRequest PullRequestId
   | AGetOpenPullRequests
@@ -294,9 +298,9 @@ syncSpec =
       let
         prId = PullRequestId 1
         integratedSha = Sha "84c"
-        approval = Approval (Username "deckard") Nothing Project.Merge 0 Nothing Normal
+        approval = Approval (Username "deckard") Nothing Project.Merge Nothing Normal
         state0 =
-          Project.setApproval prId (Just approval) $
+          approveWithoutFeedback prId approval $
             Project.setIntegrationStatus prId (Integrated integratedSha (Project.AnyCheck BuildPending)) $
               insertInitialPr prId Project.emptyProjectState
         results =
@@ -315,9 +319,9 @@ syncSpec =
       let
         prId = PullRequestId 1
         integratedSha = Sha "84c"
-        approval = Approval (Username "deckard") Nothing Project.Merge 0 Nothing Normal
+        approval = Approval (Username "deckard") Nothing Project.Merge Nothing Normal
         state0 =
-          Project.setApproval prId (Just approval) $
+          approveWithoutFeedback prId approval $
             Project.setIntegrationStatus prId (Promote testTime integratedSha) $
               insertInitialPr prId Project.emptyProjectState
         results =
@@ -344,9 +348,9 @@ syncSpec =
       let
         prId = PullRequestId 1
         integratedSha = Sha "84c"
-        approval = Approval (Username "deckard") Nothing Project.Merge 0 Nothing Normal
+        approval = Approval (Username "deckard") Nothing Project.Merge Nothing Normal
         state0 =
-          Project.setApproval prId (Just approval) $
+          Project.approve prId approval $
             Project.setIntegrationStatus prId (Integrated integratedSha (Project.AnyCheck BuildPending)) $
               insertInitialPr prId Project.emptyProjectState
         results =
