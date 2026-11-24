@@ -565,7 +565,7 @@ trainBefore pr0 = takeWhile (/= pr0) . mergeTrain
 trainAfter :: PullRequestId -> ProjectState -> [PullRequestId]
 trainAfter pr0 state = case dropWhile (/= pr0) $ mergeTrain state of
   (_ : prs) -> prs
-  prs -> prs
+  _ -> []
 
 -- Returns whether a pull request is in the process of being integrated (pending
 -- build results).
