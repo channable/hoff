@@ -309,6 +309,17 @@ When the rebase failure is because of an orphaned `fixup!` commit,
 the rebase failure is reported immediatelly
 as this is not dependent on previous PRs in the train.
 
+**Limiting concurrent builds.**
+
+By default, Hoff speculatively rebases and builds every approved PR in the merge train. If you want
+to limit CI resource usage, you can set the optional `maximumBuilds` field in a project's
+configuration (see `package/example-config.json`):
+
+When the merge train contains more approved PRs than `maximumBuilds`, Hoff only integrates and
+builds the first `maximumBuilds` PRs. The remaining PRs stay in the approved queue until a preceding
+PR is promoted or removed from the train (for example due to a build failure, rebase conflict, or
+being closed). Setting `maximumBuilds` to `1` disables speculative parallel builds entirely.
+
 
 ## Further reading
 
