@@ -1079,6 +1079,91 @@ eventLoopSpec = parallel $ do
       -- The conflicted branch should not have been deleted.
       branches `shouldContain` [Branch "alternative"]
 
+    it "rebases onto last successful PR in train after a speculative rebase failure" $ do
+      (history, branches, _tagRefs, _tagAnns) <- withTestEnv' $ \shas runLoop _git -> do
+        let
+          [_c0, _c1, _c2, _c3, c3', c4, _c5, c6, _c7, _c7f, _c8, _cEmpty, _cReal] = shas
+          pr3 = PullRequestId 3
+          pr4 = PullRequestId 4
+          pr6 = PullRequestId 6
+          br3 = Branch "alternative"
+          br4 = Branch "ahead"
+          br6 = Branch "intro"
+
+        -- pr4 integrates cleanly onto master; pr3 fails its speculative rebase
+        -- onto pr4's integration branch (and never pushes its own test branch);
+        -- pr6 must rebase onto pr4's integration branch rather than pr3's
+        -- nonexistent branch.
+        state <-
+          runLoop
+            Project.emptyProjectState
+            [ Logic.PullRequestOpened pr4 br4 baseBranch c4 "Add Tyrell response" "deckard" Nothing
+            , Logic.PullRequestOpened pr3 br3 baseBranch c3' "Write alternative ending" "deckard" Nothing
+            , Logic.PullRequestOpened pr6 br6 baseBranch c6 "Add Leon test results" "deckard" Nothing
+            , Logic.CommentAdded pr4 "rachael" Nothing "@bot merge"
+            , Logic.CommentAdded pr3 "rachael" Nothing "@bot merge"
+            , Logic.CommentAdded pr6 "rachael" Nothing "@bot merge"
+            ]
+
+        Project.mergeTrain state `shouldBe` [pr4, pr3, pr6]
+
+        let Just pullRequest4 = Project.lookupPullRequest pr4 state
+        Project.integrationStatus pullRequest4
+          `shouldSatisfy` \case
+            Integrated _ (Project.AnyCheck BuildPending) -> True
+            _ -> False
+
+        let Just pullRequest3 = Project.lookupPullRequest pr3 state
+        Project.integrationStatus pullRequest3
+          `shouldSatisfy` \case
+            Conflicted base Git.RebaseFailed -> base /= baseBranch
+            _ -> False
+
+        let Just pullRequest6 = Project.lookupPullRequest pr6 state
+        Project.integrationStatus pullRequest6
+          `shouldSatisfy` \case
+            Integrated _ (Project.AnyCheck BuildPending) -> True
+            _ -> False
+
+        -- Complete pr4's build: pr4 merges, pr3 is evicted as conflicted on
+        -- master, and pr6 is re-integrated onto the updated master.
+        let [rebasedSha4, _rebasedSha6] = integrationShas state
+        state' <-
+          runLoop
+            state
+            [ Logic.BuildStatusChanged rebasedSha4 "default" BuildSucceeded
+            , Logic.PullRequestCommitChanged pr4 rebasedSha4
+            ]
+
+        Project.mergeTrain state' `shouldBe` [pr6]
+        let [rebasedSha6'] = integrationShas state'
+
+        state'' <-
+          runLoop
+            state'
+            [ Logic.BuildStatusChanged rebasedSha6' "default" BuildSucceeded
+            , Logic.PullRequestCommitChanged pr6 rebasedSha6'
+            ]
+
+        Project.mergeTrain state'' `shouldBe` []
+
+      history
+        `shouldBe` [ "*   Merge #6"
+                   , "|\\"
+                   , "| * c6"
+                   , "| * c5"
+                   , "|/"
+                   , "*   Merge #4"
+                   , "|\\"
+                   , "| * c4"
+                   , "|/"
+                   , "* c3"
+                   , "* c2"
+                   , "* c1"
+                   , "* c0"
+                   ]
+      branches `shouldContain` [Branch "alternative"]
+
     it "restarts the sequence after a rejected push" $ do
       history <- withTestEnv $ \shas runLoop git -> do
         let

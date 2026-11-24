@@ -1192,9 +1192,12 @@ tryIntegratePullRequest pr state =
 
     mergeMessage = Text.unlines mergeMessageLines
     preceding = Pr.trainBefore (Pr.pullRequestId pr) state
+    -- Find the first PR we can usefully rebase on. We can't rebase on PRs that are not integrated,
+    -- rebasing on a failed build is throwing away CI time
+    lastSuccessfulRebase = filter (\p -> fromMaybe False $ Pr.isInProgress <$> Pr.lookupPullRequest p state) preceding
   in
     do
-      result <- tryIntegrate mergeMessage candidate preceding
+      result <- tryIntegrate mergeMessage candidate lastSuccessfulRebase
       case result of
         -- Wrong fixups can just be yoted from the merge train
         Left (IntegrationFailure targetBranch WrongFixups) -> do

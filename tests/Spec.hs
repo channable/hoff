@@ -4275,7 +4275,7 @@ main = hspec $ do
                       \Priority: Normal\n\
                       \Auto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
-                      [PullRequestId 1, PullRequestId 2]
+                      [PullRequestId 1]
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3cd behind 2 other PRs, waiting for CI …"
                    , ATryForcePush (Branch "fst") (Sha "1ab")
                    , ATryPromote (Sha "1ab")
@@ -4367,7 +4367,7 @@ main = hspec $ do
                       \Priority: Normal\n\
                       \Auto-deploy: false\n"
                       (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
-                      [PullRequestId 1, PullRequestId 2]
+                      [PullRequestId 1]
                    , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3cd behind 2 other PRs, waiting for CI …"
                    , ALeaveComment
                       (PullRequestId 1)
