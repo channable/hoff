@@ -311,7 +311,11 @@ handleEventTestFF = Logic.handleEvent testProjectConfig testTriggerConfig testme
 -- Handle events (advancing the state until a fixed point in between) and
 -- simulate their side effects.
 handleEventsTest :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => [Event] -> ProjectState -> Eff es ProjectState
-handleEventsTest events state = foldlM (flip $ Logic.handleEvent testProjectConfig testTriggerConfig testmergeWindowExemptionConfig Nothing testTimeouts) state events
+handleEventsTest = handleEventsTestWithConfig testProjectConfig
+
+handleEventsTestWithConfig :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Config.ProjectConfiguration -> [Event] -> ProjectState -> Eff es ProjectState
+handleEventsTestWithConfig projectConfig events state =
+  foldlM (flip $ Logic.handleEvent projectConfig testTriggerConfig testmergeWindowExemptionConfig Nothing testTimeouts) state events
 
 -- Handle events (advancing the state until a fixed point in between) and simulate their side
 -- effects. Set a timeout of 0 to make sure all actions are done immediately
@@ -3076,6 +3080,16 @@ main = hspec $ do
       Right cfg <- Config.loadConfiguration "package/example-config.json"
       let project = Config.projects cfg !! 1
       Config.safeForFriday project `shouldBe` Just True
+
+    it "correctly assumes a missing 'maximumBuilds' field to be Nothing" $ do
+      Right cfg <- Config.loadConfiguration "package/example-config.json"
+      let project = head $ Config.projects cfg
+      Config.maximumBuilds project `shouldBe` Nothing
+
+    it "correctly parses the 'maximumBuilds' field into a Just Int when it's present" $ do
+      Right cfg <- Config.loadConfiguration "package/example-config.json"
+      let project = Config.projects cfg !! 1
+      Config.maximumBuilds project `shouldBe` Just 3
 
   describe "EventLoop.convertGithubEvent" $ do
     let testPullRequestPayload action =
@@ -6427,3 +6441,155 @@ main = hspec $ do
                       []
                    , ALeaveComment prId "<!-- Hoff: ignore -->\nRebased as def2345, waiting for CI …"
                    ]
+
+    it "limits concurrent builds to ProjectConfiguration.maximumBuilds and starts the next build when the first is promoted" $ do
+      let
+        projConf = testProjectConfig{Config.maximumBuilds = Just 2}
+        state =
+          Project.insertPullRequest (PullRequestId 1) (Branch "fst") masterBranch (Sha "ab1") "First PR" (Username "tyrell") $
+            Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael") $
+              Project.insertPullRequest (PullRequestId 3) (Branch "trd") masterBranch (Sha "ef3") "Third PR" (Username "sebastian") $
+                Project.emptyProjectState
+        approveEvents =
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
+          ]
+        results =
+          defaultResults
+            { resultIntegrate =
+                [ Right (Sha "1ab")
+                , Right (Sha "2cd")
+                , Right (Sha "3ef")
+                ]
+            }
+        (midState, midActions) = runActionCustomConfig projConf results $ handleEventsTestWithConfig projConf approveEvents state
+
+      -- Only the first two PRs should be integrated; the third waits in the queue.
+      midActions
+        `shouldBe` [ AIsReviewer "deckard"
+                   , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, rebasing now."
+                   , ATryIntegrate
+                      "Merge #1: First PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
+                      (PullRequestId 1, Branch "refs/pull/1/head", Sha "ab1")
+                      []
+                   , ALeaveComment (PullRequestId 1) "<!-- Hoff: ignore -->\nRebased as 1ab, waiting for CI …"
+                   , AIsReviewer "deckard"
+                   , ALeaveComment
+                      (PullRequestId 2)
+                      "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, \
+                      \waiting for rebase behind one pull request."
+                   , ATryIntegrate
+                      "Merge #2: Second PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
+                      (PullRequestId 2, Branch "refs/pull/2/head", Sha "cd2")
+                      [PullRequestId 1]
+                   , ALeaveComment (PullRequestId 2) "<!-- Hoff: ignore -->\nSpeculatively rebased as 2cd behind 1 other PR, waiting for CI …"
+                   , AIsReviewer "deckard"
+                   , ALeaveComment
+                      (PullRequestId 3)
+                      "<!-- Hoff: ignore -->\nPull request approved for merge by @deckard, \
+                      \waiting for rebase behind 2 pull requests."
+                   ]
+      classifiedPullRequestIds midState
+        `shouldBe` ClassifiedPullRequestIds
+          { building = [PullRequestId 1, PullRequestId 2]
+          , failed = []
+          , approved = [PullRequestId 3]
+          , awaiting = []
+          }
+
+      -- Once PR#1 succeeds and is promoted, PR#3 should be integrated behind PR#2.
+      let
+        promoteEvents =
+          [ BuildStatusChanged (Sha "1ab") "default" Project.BuildSucceeded
+          , PullRequestCommitChanged (PullRequestId 1) (Sha "1ab")
+          , PullRequestClosed (PullRequestId 1)
+          ]
+        (finalState, promoteActions) =
+          runActionCustomConfig projConf (defaultResults{resultIntegrate = [Right (Sha "3ef")]}) $
+            handleEventsTestWithConfig projConf promoteEvents midState
+
+      promoteActions
+        `shouldBe` [ ATryForcePush (Branch "fst") (Sha "1ab")
+                   , ATryPromote (Sha "1ab")
+                   , ACleanupTestBranch (PullRequestId 1)
+                   , ATryIntegrate
+                      "Merge #3: Third PR\n\nApproved-by: deckard\nPriority: Normal\nAuto-deploy: false\n"
+                      (PullRequestId 3, Branch "refs/pull/3/head", Sha "ef3")
+                      [PullRequestId 2]
+                   , ALeaveComment (PullRequestId 3) "<!-- Hoff: ignore -->\nSpeculatively rebased as 3ef behind 1 other PR, waiting for CI …"
+                   ]
+      classifiedPullRequestIds finalState
+        `shouldBe` ClassifiedPullRequestIds
+          { building = [PullRequestId 2, PullRequestId 3]
+          , failed = []
+          , approved = []
+          , awaiting = []
+          }
+
+    it "starts the next queued build when a building PR fails and is removed from the train" $ do
+      let
+        projConf = testProjectConfig{Config.maximumBuilds = Just 2}
+        state =
+          Project.insertPullRequest (PullRequestId 1) (Branch "fst") masterBranch (Sha "ab1") "First PR" (Username "tyrell") $
+            Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael") $
+              Project.insertPullRequest (PullRequestId 3) (Branch "trd") masterBranch (Sha "ef3") "Third PR" (Username "sebastian") $
+                Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge"
+          , BuildStatusChanged (Sha "1ab") "default" (Project.BuildFailed Nothing)
+          ]
+        results =
+          defaultResults
+            { resultIntegrate =
+                [ Right (Sha "1ab")
+                , Right (Sha "2cd")
+                , Right (Sha "22e")
+                , Right (Sha "3ef")
+                ]
+            }
+        (finalState, _actions) = runActionCustomConfig projConf results $ handleEventsTestWithConfig projConf events state
+
+      classifiedPullRequestIds finalState
+        `shouldBe` ClassifiedPullRequestIds
+          { building = [PullRequestId 2, PullRequestId 3]
+          , failed = [PullRequestId 1]
+          , approved = []
+          , awaiting = []
+          }
+
+    it "respects priority when maximumBuilds limits the train" $ do
+      let
+        projConf = testProjectConfig{Config.maximumBuilds = Just 2}
+        state =
+          Project.insertPullRequest (PullRequestId 1) (Branch "fst") masterBranch (Sha "ab1") "First PR" (Username "tyrell") $
+            Project.insertPullRequest (PullRequestId 2) (Branch "snd") masterBranch (Sha "cd2") "Second PR" (Username "rachael") $
+              Project.insertPullRequest (PullRequestId 3) (Branch "trd") masterBranch (Sha "ef3") "Third PR" (Username "sebastian") $
+                Project.emptyProjectState
+        events =
+          [ CommentAdded (PullRequestId 1) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 2) "deckard" Nothing "@bot merge"
+          , CommentAdded (PullRequestId 3) "deckard" Nothing "@bot merge with priority"
+          ]
+        results =
+          defaultResults
+            { resultIntegrate =
+                [ Right (Sha "1ab")
+                , Right (Sha "2cd")
+                , Right (Sha "3ef")
+                , Right (Sha "1gh")
+                ]
+            }
+        (finalState, _actions) = runActionCustomConfig projConf results $ handleEventsTestWithConfig projConf events state
+
+      -- PR#3 jumps to the front of the train; PR#1 is re-integrated behind PR#3,
+      -- while PR#2 is now 3rd in the train and waits in approved.
+      classifiedPullRequestIds finalState
+        `shouldBe` ClassifiedPullRequestIds
+          { building = [PullRequestId 1, PullRequestId 3]
+          , failed = []
+          , approved = [PullRequestId 2]
+          , awaiting = []
+          }
