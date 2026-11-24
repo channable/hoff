@@ -168,7 +168,7 @@ runLogicEventLoop
           Logic.ClockTick _ -> pure ()
           _ -> logInfoN $ "logic loop received event (" <> repo <> "): " <> showText event
         state1 <-
-          Logic.handleEvent triggerConfig mergeWindowExemptionConfig featureFreezeWindow timeouts event state0
+          Logic.handleEvent projectConfig triggerConfig mergeWindowExemptionConfig featureFreezeWindow timeouts event state0
         liftIO $ publish state1
         runLoop state1
 

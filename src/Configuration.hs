@@ -44,6 +44,10 @@ data ProjectConfiguration = ProjectConfiguration
   , deploySubprojects :: Maybe [Text] -- The subprojects which the `deploy` command should be enabled for
   , safeForFriday :: Maybe Bool -- Whether it's safe to deploy this project on Friday without an "on Friday" check. default False
   , allowPlainMerge :: Maybe Bool -- Whether to allow plain merges without explicitly saying the PR shouldn't be deployed. default True
+  , -- Maximum amount of PRs in the merge train that will be processed at a given time. If the merge
+    -- train contains more PRs than than this number, the last few won't be processed until a PR
+    -- before it gets promoted or falls of the train otherwise.
+    maximumBuilds :: Maybe Int
   }
   deriving (Generic)
 

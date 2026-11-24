@@ -302,21 +302,21 @@ runAction = runActionCustom defaultResults
 -- Handle an event, then advance the state until a fixed point,
 -- and simulate its side effects.
 handleEventTest :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Event -> ProjectState -> Eff es ProjectState
-handleEventTest = Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing testTimeouts
+handleEventTest = Logic.handleEvent testProjectConfig testTriggerConfig testmergeWindowExemptionConfig Nothing testTimeouts
 
 -- Like the above, but with a feature freeze period configured
 handleEventTestFF :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => Event -> ProjectState -> Eff es ProjectState
-handleEventTestFF = Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig testFeatureFreezeWindow testTimeouts
+handleEventTestFF = Logic.handleEvent testProjectConfig testTriggerConfig testmergeWindowExemptionConfig testFeatureFreezeWindow testTimeouts
 
 -- Handle events (advancing the state until a fixed point in between) and
 -- simulate their side effects.
 handleEventsTest :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => [Event] -> ProjectState -> Eff es ProjectState
-handleEventsTest events state = foldlM (flip $ Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing testTimeouts) state events
+handleEventsTest events state = foldlM (flip $ Logic.handleEvent testProjectConfig testTriggerConfig testmergeWindowExemptionConfig Nothing testTimeouts) state events
 
 -- Handle events (advancing the state until a fixed point in between) and simulate their side
 -- effects. Set a timeout of 0 to make sure all actions are done immediately
 handleEventsTestNoTimeout :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es) => [Event] -> ProjectState -> Eff es ProjectState
-handleEventsTestNoTimeout events state = foldlM (flip $ Logic.handleEvent testTriggerConfig testmergeWindowExemptionConfig Nothing (Config.Timeouts (-1) (-1) (-1))) state events
+handleEventsTestNoTimeout events state = foldlM (flip $ Logic.handleEvent testProjectConfig testTriggerConfig testmergeWindowExemptionConfig Nothing (Config.Timeouts (-1) (-1) (-1))) state events
 
 -- | Like 'classifiedPullRequests' but just with ids.
 -- This should match 'WebInterface.ClassifiedPullRequests'
@@ -470,7 +470,7 @@ main = hspec $ do
         event = PullRequestCommitChanged (PullRequestId 1) (Sha "000")
         state0 = singlePullRequestState (PullRequestId 1) (Branch "p") masterBranch (Sha "000") "cindy"
         state1 = Project.approve (PullRequestId 1) (Approval "daniel" Nothing Project.Merge Nothing Normal) state0
-        (state2, _actions) = runAction $ Logic.proceedUntilFixedPoint state1
+        (state2, _actions) = runAction $ Logic.proceedUntilFixedPoint testProjectConfig state1
         (state3, actions) = runAction $ handleEventTest event state2
         prAt3 = fromJust $ Project.lookupPullRequest (PullRequestId 1) state3
       state3 `shouldBe` state2
@@ -2560,7 +2560,7 @@ main = hspec $ do
             { resultIntegrate = [Right (Sha "38c")]
             , resultPush = [PushRejected "test"]
             }
-        (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
+        (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint testProjectConfig state
         [pullRequest] = Project.trainPullRequests state'
       Project.integrationStatus pullRequest `shouldBe` Project.Integrated (Sha "38c") (Project.AnyCheck Project.BuildPending)
       Project.pullRequestId pullRequest `shouldBe` PullRequestId 1
@@ -2588,7 +2588,7 @@ main = hspec $ do
             { resultIntegrate = [Right (Sha "38c"), Right (Sha "49d")]
             , resultPush = [PushRejected "test"]
             }
-        (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
+        (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint testProjectConfig state
         (pullRequest : _) = Project.trainPullRequests state'
       Project.integrationStatus pullRequest `shouldBe` Project.Integrated (Sha "38c") (Project.AnyCheck Project.BuildPending)
       Project.pullRequestId pullRequest `shouldBe` PullRequestId 2
@@ -2631,7 +2631,7 @@ main = hspec $ do
             , Project.lastSyncTime = testTime
             }
         results = defaultResults{resultIntegrate = [Right (Sha "38e")]}
-        actions = snd $ runActionCustom results $ Logic.proceedUntilFixedPoint state
+        actions = snd $ runActionCustom results $ Logic.proceedUntilFixedPoint testProjectConfig state
       actions
         `shouldBe` [ ATryForcePush (Branch "results/rachael") (Sha "38d")
                    ]
@@ -2666,7 +2666,7 @@ main = hspec $ do
             { resultIntegrate = [Right (Sha "38e")]
             , resultGetLatestVersion = [Left (TagName "abcdef")]
             }
-        actions = snd $ runActionCustom results $ Logic.proceedUntilFixedPoint state
+        actions = snd $ runActionCustom results $ Logic.proceedUntilFixedPoint testProjectConfig state
       actions
         `shouldBe` [ ALeaveComment (PullRequestId 1) "@deckard Sorry, I could not tag your PR. The previous tag `abcdef` seems invalid"
                    , ATryForcePush (Branch "results/rachael") (Sha "38d")
@@ -2706,7 +2706,7 @@ main = hspec $ do
             { resultIntegrate = [Right (Sha "38e")]
             , resultPush = [PushRejected "test"]
             }
-        (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
+        (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint testProjectConfig state
         [pullRequest'] = Project.trainPullRequests state'
 
       Project.integrationStatus pullRequest' `shouldBe` Project.Integrated (Sha "38e") (Project.AnyCheck Project.BuildPending)
@@ -2755,7 +2755,7 @@ main = hspec $ do
             , resultPush = [PushRejected "test"]
             , resultGetChangelog = [Just "changelog"]
             }
-        (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint state
+        (state', actions) = runActionCustom results $ Logic.proceedUntilFixedPoint testProjectConfig state
         [pullRequest'] = Project.trainPullRequests state'
 
       Project.integrationStatus pullRequest' `shouldBe` Project.Integrated (Sha "38e") (Project.AnyCheck Project.BuildPending)
@@ -2869,7 +2869,7 @@ main = hspec $ do
             }
         -- Proceeding should pick the next pull request as candidate.
         results = defaultResults{resultIntegrate = [Right (Sha "38e")]}
-        actions = snd $ runActionCustom results $ Logic.proceedUntilFixedPoint state
+        actions = snd $ runActionCustom results $ Logic.proceedUntilFixedPoint testProjectConfig state
       actions
         `shouldBe` [ ATryForcePush (Branch "results/leon") (Sha "38d")
                    , ATryIntegrate

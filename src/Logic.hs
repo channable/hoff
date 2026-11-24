@@ -1106,12 +1106,13 @@ updateBuildStatus state pr =
 -- action.
 proceed
   :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
-  => ProjectState
+  => ProjectConfiguration
+  -> ProjectState
   -> Eff es ProjectState
-proceed =
+proceed config =
   provideFeedback
     >=> proceedFirstCandidate
-    >=> tryIntegrateFirstPullRequest
+    >=> tryIntegrateFirstPullRequest config
 
 -- | Proceeds with the candidate that was approved first
 -- by pushing it to be the new master if the build succeeded.
@@ -1127,8 +1128,8 @@ proceedFirstCandidate state = case Pr.trainPullRequests state of
 -- | Try to integrate the pull request that was approved first
 -- if there's one.
 -- (cf. 'tryIntegratePullRequest')
-tryIntegrateFirstPullRequest :: Action :> es => ProjectState -> Eff es ProjectState
-tryIntegrateFirstPullRequest state = case Pr.candidatePullRequests state of
+tryIntegrateFirstPullRequest :: Action :> es => ProjectConfiguration -> ProjectState -> Eff es ProjectState
+tryIntegrateFirstPullRequest config state = case Pr.candidatePullRequests (Config.maximumBuilds config) state of
   (pr : _) -> tryIntegratePullRequest pr state
   _ -> pure state
 
@@ -1283,13 +1284,14 @@ pushCandidate pullRequest newHead state =
 -- side effects if it does not change the state.
 proceedUntilFixedPoint
   :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
-  => ProjectState
+  => ProjectConfiguration
+  -> ProjectState
   -> Eff es ProjectState
-proceedUntilFixedPoint state = do
-  newState <- proceed state
+proceedUntilFixedPoint config state = do
+  newState <- proceed config state
   if newState == state
     then return state
-    else proceedUntilFixedPoint newState
+    else proceedUntilFixedPoint config newState
 
 -- | Feedback on a successfully parsed command.
 data Feedback
@@ -1432,15 +1434,16 @@ provideFeedback state =
 
 handleEvent
   :: (Action :> es, RetrieveEnvironment :> es, TimeOperation :> es)
-  => TriggerConfiguration
+  => ProjectConfiguration
+  -> TriggerConfiguration
   -> MergeWindowExemptionConfiguration
   -> Maybe FeatureFreezeWindow
   -> Timeouts
   -> Event
   -> ProjectState
   -> Eff es ProjectState
-handleEvent triggerConfig mergeWindowExemption featureFreezeWindow timeouts event state = do
-  projectState <- handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow timeouts event state >>= proceedUntilFixedPoint
+handleEvent projectConfig triggerConfig mergeWindowExemption featureFreezeWindow timeouts event state = do
+  projectState <- handleEventInternal triggerConfig mergeWindowExemption featureFreezeWindow timeouts event state >>= proceedUntilFixedPoint projectConfig
   triggerTrainSizeUpdate projectState
   pure projectState
 

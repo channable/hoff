@@ -229,6 +229,7 @@ dummyProject =
     , deploySubprojects = Just ["aaa", "bbb"]
     , safeForFriday = Just True
     , allowPlainMerge = Just True
+    , maximumBuilds = Nothing
     }
 
 dummyTrigger :: TriggerConfiguration

@@ -227,6 +227,7 @@ buildProjectConfig repoDir stateFile =
     , Config.deploySubprojects = Nothing
     , Config.safeForFriday = Nothing
     , Config.allowPlainMerge = Just True
+    , Config.maximumBuilds = Nothing
     }
 
 -- Dummy user configuration used in test environment.
