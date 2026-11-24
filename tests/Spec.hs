@@ -6588,7 +6588,7 @@ main = hspec $ do
       -- while PR#2 is now 3rd in the train and waits in approved.
       classifiedPullRequestIds finalState
         `shouldBe` ClassifiedPullRequestIds
-          { building = [PullRequestId 1, PullRequestId 3]
+          { building = [PullRequestId 3, PullRequestId 1]
           , failed = []
           , approved = [PullRequestId 2]
           , awaiting = []
