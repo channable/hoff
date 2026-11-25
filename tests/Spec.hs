@@ -15,7 +15,7 @@
 
 import Data.Aeson (decode, eitherDecode, encode)
 import Data.ByteString.Lazy (readFile)
-import Data.Either (isRight)
+import Data.Either (isLeft, isRight)
 import Data.Foldable (foldlM, for_)
 import Data.Function ((&))
 import Data.List (group)
@@ -3090,6 +3090,13 @@ main = hspec $ do
       Right cfg <- Config.loadConfiguration "package/example-config.json"
       let project = Config.projects cfg !! 1
       Config.maximumBuilds project `shouldBe` Just 3
+
+    it "rejects non-positive 'maximumBuilds' values when decoding" $ do
+      let projectJson n =
+            "{\"owner\":\"o\",\"repository\":\"r\",\"branch\":\"b\",\"testBranch\":\"tb\",\"checkout\":\"c\",\"stateFile\":\"s\",\"maximumBuilds\":" <> n <> "}"
+      fmap Config.maximumBuilds (eitherDecode @Config.ProjectConfiguration (projectJson "0")) `shouldSatisfy` isLeft
+      fmap Config.maximumBuilds (eitherDecode @Config.ProjectConfiguration (projectJson "-1")) `shouldSatisfy` isLeft
+      fmap Config.maximumBuilds (eitherDecode @Config.ProjectConfiguration (projectJson "1")) `shouldBe` Right (Just 1)
 
   describe "EventLoop.convertGithubEvent" $ do
     let testPullRequestPayload action =

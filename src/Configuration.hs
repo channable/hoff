@@ -23,7 +23,7 @@ module Configuration (
 )
 where
 
-import Data.Aeson (FromJSON, eitherDecodeStrict')
+import Data.Aeson (FromJSON (parseJSON), defaultOptions, eitherDecodeStrict', genericParseJSON)
 import Data.ByteString (readFile)
 import Data.Maybe (fromMaybe)
 import Data.Set (Set)
@@ -143,7 +143,12 @@ data Configuration = Configuration
 
 instance FromJSON Configuration
 instance FromJSON ChecksConfiguration
-instance FromJSON ProjectConfiguration
+instance FromJSON ProjectConfiguration where
+  parseJSON val = do
+    projectConfig <- genericParseJSON defaultOptions val
+    case maximumBuilds projectConfig of
+      Just n | n <= 0 -> fail $ "maximumBuilds must be a positive integer, got " ++ show n
+      _ -> return projectConfig
 instance FromJSON TlsConfiguration
 instance FromJSON TriggerConfiguration
 instance FromJSON UserConfiguration
