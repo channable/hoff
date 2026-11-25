@@ -34,6 +34,7 @@ testProjectConfig =
     , Config.deploySubprojects = Just ["aaa", "bbb"]
     , Config.safeForFriday = Nothing
     , Config.allowPlainMerge = Just True
+    , Config.maximumBuilds = Nothing
     }
 
 testTime :: T.UTCTime

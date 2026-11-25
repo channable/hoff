@@ -213,7 +213,7 @@ syncSpec =
             }
         (state', actions) =
           runSyncWithHandle results $
-            Logic.handleEvent testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize state0
+            Logic.handleEvent testProjectConfig testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize state0
 
       state' `shouldBe` state0
       actions `shouldBe` [AGetOpenPullRequests, AGetPullRequest prId]
@@ -228,7 +228,7 @@ syncSpec =
             }
         (state', actions) =
           runSyncWithHandle results $
-            Logic.handleEvent testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize Project.emptyProjectState
+            Logic.handleEvent testProjectConfig testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize Project.emptyProjectState
 
       state' `shouldSatisfy` Project.existsPullRequest prId
       let pr = lookupPr prId state'
@@ -251,7 +251,7 @@ syncSpec =
             }
         (state, _actions) =
           runSyncWithHandle results $
-            Logic.handleEvent testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize state0
+            Logic.handleEvent testProjectConfig testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize state0
 
       state `shouldBe` Project.emptyProjectState
 
@@ -265,7 +265,7 @@ syncSpec =
             }
         (state', actions) =
           runSyncWithHandle results $
-            Logic.handleEvent testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize state0
+            Logic.handleEvent testProjectConfig testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize state0
 
       state' `shouldBe` state0
       actions `shouldBe` [AGetOpenPullRequests]
@@ -290,7 +290,7 @@ syncSpec =
             }
         (_state, actions) =
           runSyncWithHandle results $
-            Logic.handleEvent testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize state0
+            Logic.handleEvent testProjectConfig testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize state0
 
       actions `shouldBe` [AGetOpenPullRequests, AGetPullRequest prId]
 
@@ -311,7 +311,7 @@ syncSpec =
             }
         (_state, actions) =
           runSyncWithHandle results $
-            Logic.handleEvent testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize state0
+            Logic.handleEvent testProjectConfig testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize state0
 
       actions `shouldBe` [AGetOpenPullRequests, AGetPullRequest prId, AGetBuildStatus integratedSha, ATryForcePush (Branch "existing") integratedSha]
 
@@ -340,7 +340,7 @@ syncSpec =
             }
         (_state, actions) =
           runSyncWithHandle results $
-            Logic.handleEvent testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize state0
+            Logic.handleEvent testProjectConfig testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize state0
 
       actions `shouldBe` [AGetOpenPullRequests, AGetPullRequest prId, ATryPromote integratedSha, ACleanupTestBranch prId]
 
@@ -360,6 +360,6 @@ syncSpec =
             }
         (_state, actions) =
           runSyncWithHandle results $
-            Logic.handleEvent testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize state0
+            Logic.handleEvent testProjectConfig testTriggerConfig (Config.MergeWindowExemptionConfiguration []) Nothing testTimeouts Synchronize state0
 
       actions `shouldBe` [AGetOpenPullRequests, AGetPullRequest prId, AGetBuildStatus integratedSha, ALeaveComment prId "message"]

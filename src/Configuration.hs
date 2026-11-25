@@ -23,7 +23,7 @@ module Configuration (
 )
 where
 
-import Data.Aeson (FromJSON, eitherDecodeStrict')
+import Data.Aeson (FromJSON (parseJSON), defaultOptions, eitherDecodeStrict', genericParseJSON)
 import Data.ByteString (readFile)
 import Data.Maybe (fromMaybe)
 import Data.Set (Set)
@@ -44,6 +44,10 @@ data ProjectConfiguration = ProjectConfiguration
   , deploySubprojects :: Maybe [Text] -- The subprojects which the `deploy` command should be enabled for
   , safeForFriday :: Maybe Bool -- Whether it's safe to deploy this project on Friday without an "on Friday" check. default False
   , allowPlainMerge :: Maybe Bool -- Whether to allow plain merges without explicitly saying the PR shouldn't be deployed. default True
+  , -- Maximum amount of PRs in the merge train that will be processed at a given time. If the merge
+    -- train contains more PRs than than this number, the last few won't be processed until a PR
+    -- before it gets promoted or falls of the train otherwise.
+    maximumBuilds :: Maybe Int
   }
   deriving (Generic)
 
@@ -139,7 +143,12 @@ data Configuration = Configuration
 
 instance FromJSON Configuration
 instance FromJSON ChecksConfiguration
-instance FromJSON ProjectConfiguration
+instance FromJSON ProjectConfiguration where
+  parseJSON val = do
+    projectConfig <- genericParseJSON defaultOptions val
+    case maximumBuilds projectConfig of
+      Just n | n <= 0 -> fail $ "maximumBuilds must be a positive integer, got " ++ show n
+      _ -> return projectConfig
 instance FromJSON TlsConfiguration
 instance FromJSON TriggerConfiguration
 instance FromJSON UserConfiguration

@@ -607,8 +607,12 @@ speculativelyFailedPullRequests state =
 
 -- | Returns the pull requests that have been approved, but for which integration
 --   and building has not yet been attempted.
-candidatePullRequests :: ProjectState -> [PullRequest]
-candidatePullRequests state = filter ((\x -> x == NotIntegrated || x == Outdated) . integrationStatus) $ trainPullRequests state
+candidatePullRequests :: Maybe Int -> ProjectState -> [PullRequest]
+candidatePullRequests maximumBuilds state =
+  let processablePRs = case maximumBuilds of
+        Just n -> take n $ trainPullRequests state
+        Nothing -> trainPullRequests state
+  in  filter ((\x -> x == NotIntegrated || x == Outdated) . integrationStatus) processablePRs
 
 -- | A string representation of a merge command, without the optional @ on
 -- friday@ merge window suffix.
