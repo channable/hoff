@@ -1461,6 +1461,21 @@ main = hspec $ do
       fromJust (Project.lookupPullRequest prId state')
         `shouldSatisfy` (\pr -> Project.approval pr == Just (Approval (Username "deckard") Nothing Project.Merge 0 Nothing Normal))
 
+    it "rejects 'merge on Friday' during a feature freeze period" $ do
+      let
+        prId = PullRequestId 1
+        state = singlePullRequestState prId (Branch "p") masterBranch (Sha "abc1234") "tyrell"
+
+        event = CommentAdded prId "deckard" Nothing "@bot merge on Friday"
+
+        results = defaultResults{resultIntegrate = [Right (Sha "def2345")], resultGetDateTime = repeat (T.UTCTime (T.fromMondayStartWeek 2021 2 5) (T.secondsToDiffTime 0))}
+        (_, actions) = runActionCustom results $ handleEventTestFF event state
+
+      actions
+        `shouldBe` [ AIsReviewer (Username "deckard")
+                   , ALeaveComment prId "Your merge request has been denied because we are in a feature-freeze period. Run 'merge as hotfix' instead."
+                   ]
+
     it "refuses 'merge' (without hotfix) during a feature freeze period" $ do
       let
         prId = PullRequestId 1
