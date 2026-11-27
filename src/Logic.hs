@@ -793,7 +793,13 @@ handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId a
                 verifyMergeType _ action = action
 
                 verifyMergeWindow :: MergeCommand -> MergeWindow -> Eff es ProjectState -> Eff es ProjectState
+                -- Authors marked exempt from the feature freeze window are allowed to merge, regardless of the merge
+                -- window type specified in their command.
+                -- This means that they can both merge on Fridays and during feature freeze periods with a plain "merge"
+                -- command, but can also merge on non-Fridays with "on Friday" and outside feature freeze periods with
+                -- "as hotfix".
                 verifyMergeWindow _ _ action | exempted author = action
+                -- If a merge command "as hotfix" is given, allow merging iff a feature freeze period is active.
                 verifyMergeWindow command DuringFeatureFreeze action
                   | featureFreezeActive = action
                   | otherwise = do
@@ -806,6 +812,22 @@ handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId a
                               <> "' instead."
                           )
                       pure state
+
+                -- Otherwise, if a feature freeze is active, the author is not exempt from feature freezes, and no "as
+                -- hotfix" modifier was used, reject the merge.
+                verifyMergeWindow command _ _ | featureFreezeActive = do
+                  () <-
+                    leaveComment
+                      prId
+                      ( "Your merge request has been denied because \
+                        \we are in a feature-freeze period. Run '"
+                          <> Pr.displayMergeCommand command
+                          <> " as hotfix' instead."
+                      )
+                  pure state
+
+                -- If the "on Friday" modifier is used and it is in fact Friday, allow the merge.
+                -- If the modifier is used and it is not Friday, reject the command.
                 verifyMergeWindow command OnFriday action
                   | day == Friday = action
                   | otherwise = do
@@ -818,17 +840,10 @@ handleCommentAdded triggerConfig mergeWindowExemption featureFreezeWindow prId a
                               <> "' instead."
                           )
                       pure state
+
+                -- Lastly, if no modifier is used, it is Friday and the project is not safe for Fridays, reject the
+                -- merge, otherwise allow it.
                 verifyMergeWindow command AnyDay action
-                  | featureFreezeActive = do
-                      () <-
-                        leaveComment
-                          prId
-                          ( "Your merge request has been denied because \
-                            \we are in a feature-freeze period. Run '"
-                              <> Pr.displayMergeCommand command
-                              <> " as hotfix' instead."
-                          )
-                      pure state
                   | day == Friday && safeForFriday projectConfig /= Just True = do
                       () <-
                         leaveComment
